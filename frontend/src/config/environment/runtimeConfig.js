@@ -1,0 +1,27 @@
+/**
+ * Enterprise Runtime System Defaults & Constants
+ */
+
+export const RUNTIME_CONFIG = {
+  PAGINATION: {
+    DEFAULT_PAGE_SIZE: 15,
+    PAGE_SIZE_OPTIONS: [10, 15, 25, 50, 100]
+  },
+  POLLING: {
+    QUEUE_REFETCH_INTERVAL_MS: 30000,
+    APPOINTMENT_REFETCH_INTERVAL_MS: 60000,
+    DASHBOARD_REFETCH_INTERVAL_MS: 120000
+  },
+  NETWORK: {
+    REQUEST_TIMEOUT_MS: 15000,
+    MAX_RETRIES: 2
+  },
+  FORMATTING: {
+    DATE_FORMAT: 'DD/MM/YYYY',
+    TIME_FORMAT: 'hh:mm A',
+    CURRENCY_SYMBOL: '₹',
+    TIMEZONE: 'Asia/Kolkata'
+  }
+};
+
+export default RUNTIME_CONFIG;

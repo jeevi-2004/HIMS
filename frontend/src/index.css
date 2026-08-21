@@ -1,0 +1,258 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    @apply bg-[#F8FAFC] text-[#111827] font-sans antialiased;
+    font-family: 'Poppins', sans-serif;
+    min-height: 100vh;
+    overflow-y: auto;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Poppins', sans-serif;
+    @apply text-[#111827] font-semibold;
+  }
+}
+
+/* Custom premium scrollbar (Light theme) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(47, 99, 242, 0.2);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(47, 99, 242, 0.4);
+}
+
+/* Premium Enterprise Card Utility */
+.enterprise-card {
+  @apply bg-white border border-[#E5E7EB] rounded-[20px] p-6 hover:shadow-md transition-all duration-300;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.02), 0 8px 10px -6px rgba(0, 0, 0, 0.03);
+}
+
+/* Enterprise Input Fields */
+.enterprise-input {
+  @apply w-full bg-white border border-[#E5E7EB] rounded-xl px-4 py-2.5 text-[#111827] placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2F63F2]/10 focus:border-[#2F63F2] transition-all duration-200 text-sm box-border;
+}
+
+/* Loader skeletons */
+.skeleton-pulse {
+  background: linear-gradient(
+    90deg,
+    rgba(241, 245, 249, 0.8) 25%,
+    rgba(226, 232, 240, 0.8) 37%,
+    rgba(241, 245, 249, 0.8) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-loading 1.4s ease infinite;
+}
+
+@keyframes skeleton-loading {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Sticky th mapping */
+.sticky-th {
+  @apply sticky top-0 bg-slate-50 z-10 font-semibold text-[#6B7280] border-b border-[#E5E7EB];
+}
+
+/* Pin Keypad transitions */
+.pin-key-active {
+  @apply active:scale-95 transition-transform;
+}
+
+/* Custom Print Styles for Doctor Consultation Prescription Pad (1-Page Fit) */
+@media print {
+  /* Hide non-printable layout elements, toasts, banners & action controls */
+  nav, sidebar, aside, header, footer,
+  .print\:hidden, .no-print,
+  button:not(.print-keep), [role="button"], input[type="file"],
+  .toast, [class*="toaster"], [class*="toast-"] {
+    display: none !important;
+  }
+
+  /* Page Setup: A4 Portrait with compact margins */
+  @page {
+    size: A4 portrait;
+    margin: 8mm 10mm;
+  }
+
+  html, body, #root {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Expand main container to full width on paper */
+  .printable-prescription-pad {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+
+  /* Compact spacing for print elements */
+  .printable-prescription-pad .space-y-8 > :not([hidden]) ~ :not([hidden]),
+  .printable-prescription-pad .space-y-6 > :not([hidden]) ~ :not([hidden]),
+  .printable-prescription-pad .space-y-4 > :not([hidden]) ~ :not([hidden]),
+  .printable-prescription-pad .space-y-3 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0.35rem !important;
+  }
+
+  /* OPD Consultation Receipt Specific Print Isolation Rules (Scoped to thermal receipt printing) */
+  .printable-receipt-container {
+    display: none;
+  }
+
+  @media print {
+    /* Hide main app only when printing a standalone thermal receipt portal */
+    body.printing-receipt #root,
+    body.printing-receipt nav, 
+    body.printing-receipt aside, 
+    body.printing-receipt header, 
+    body.printing-receipt footer {
+      display: none !important;
+    }
+
+    body.printing-receipt .printable-receipt-container {
+      display: block !important;
+      visibility: visible !important;
+      position: absolute !important;
+      left: 50% !important;
+      top: 10px !important;
+      transform: translateX(-50%) !important;
+      width: 85mm !important;
+      max-width: 100% !important;
+      margin: 0 auto !important;
+      padding: 12px !important;
+      background: #ffffff !important;
+      color: #000000 !important;
+      border: none !important;
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+      z-index: 999999 !important;
+    }
+
+    .printable-receipt-container * {
+      visibility: visible !important;
+    }
+  }
+
+  /* Ensure inputs and selects render cleanly as plain text */
+  .printable-prescription-pad input,
+  .printable-prescription-pad select,
+  .printable-prescription-pad textarea {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    resize: none !important;
+    appearance: none !important;
+    font-weight: 600 !important;
+  }
+
+  /* Prescription Table formatting for print */
+  .printable-prescription-pad table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin-top: 4px !important;
+  }
+
+  .printable-prescription-pad th,
+  .printable-prescription-pad td {
+    padding: 3px 6px !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+    font-size: 10.5px !important;
+  }
+
+  .printable-prescription-pad th {
+    background-color: #f8fafc !important;
+    color: #1e293b !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+  }
+
+  /* Prevent page breaks inside key blocks */
+  .printable-prescription-pad tr,
+  .printable-prescription-pad .print-keep-together {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+}
+
+/* Primary Action Button - Primary Blue Button */
+.btn-primary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background-color: #2F63F2;
+  color: #ffffff;
+  border: 1px solid #2F63F2;
+  border-radius: 10px;
+  height: 34px;
+  padding: 0 14px;
+  font-size: 0.75rem; /* text-xs */
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  transition: all 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px 0 rgba(47, 99, 242, 0.15);
+}
+
+.btn-primary-action:hover {
+  background-color: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #ffffff;
+  box-shadow: 0 4px 8px -1px rgba(47, 99, 242, 0.25);
+}
+
+.btn-primary-action:active {
+  transform: scale(0.97);
+}
+
+/* Icon moves 2px right on hover */
+.btn-primary-action:hover svg,
+.btn-primary-action:hover .calendar-icon {
+  transform: translateX(2px);
+}
+
+.btn-primary-action svg,
+.btn-primary-action .calendar-icon {
+  transition: transform 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  color: currentColor;
+}
