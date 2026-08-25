@@ -87,39 +87,99 @@ const login = async (req, res, next) => {
     } 
     // 2. Hospital User login path
     else if (hospitalCode && mobileNumber && pin) {
+      const Hospital = require('../models/Hospital');
       const { getTenantConnection } = require('../utils/dbManager');
       const { tenantLocalStorage } = require('../utils/tenantModel');
-      const conn = await getTenantConnection(hospitalCode);
+
+      const cleanHospitalCode = (hospitalCode || '').toString().trim().toUpperCase();
+      const rawMobile = (mobileNumber || '').toString().trim();
+      let cleanMobile = rawMobile.replace(/[\s\-\(\)]/g, '');
+      if (cleanMobile.startsWith('+91')) cleanMobile = cleanMobile.substring(3);
+      else if (cleanMobile.length > 10 && cleanMobile.startsWith('91')) cleanMobile = cleanMobile.substring(2);
+
+      // Verify hospital exists in central database and is strictly ACTIVE
+      const hospitalObj = await Hospital.findOne({ code: cleanHospitalCode });
+      if (!hospitalObj) {
+        return res.status(401).json({
+          success: false,
+          message: `Invalid hospital code "${cleanHospitalCode}". No registered hospital found with this code.`
+        });
+      }
+
+      if (hospitalObj.status === 'pending') {
+        return res.status(403).json({
+          success: false,
+          message: `Hospital account "${cleanHospitalCode}" is awaiting subscription plan activation. Please contact Super Admin.`
+        });
+      }
+
+      if (hospitalObj.status === 'inactive') {
+        return res.status(403).json({
+          success: false,
+          message: `Hospital account "${cleanHospitalCode}" is currently inactive. Please contact your system administrator for assistance.`
+        });
+      }
+
+      if (hospitalObj.status !== 'active') {
+        return res.status(403).json({
+          success: false,
+          message: `Hospital account "${cleanHospitalCode}" is currently inactive. Please contact your system administrator for assistance.`
+        });
+      }
+
+      const conn = await getTenantConnection(cleanHospitalCode);
 
       return tenantLocalStorage.run({ connection: conn }, async () => {
         const cc = req.body.countryCode || '+91';
-        const cleanMobile = (mobileNumber || '').toString().trim();
 
-        let user = await User.findOne({ 
-          countryCode: cc,
-          mobileNumber: cleanMobile 
+        // 1. Search for user by mobile number in tenant database
+        let user = await User.findOne({
+          $or: [
+            { mobileNumber: cleanMobile },
+            { mobileNumber: rawMobile },
+            { mobileNumber: `${cc}${cleanMobile}` }
+          ]
         }).populate('roleId');
 
+        // 2. Auto-seed tenant database and create DOCTOR_ADMIN account if missing
         if (!user) {
-          user = await User.findOne({ mobileNumber: cleanMobile }).populate('roleId');
+          try {
+            const { seedTenantAdminUser } = require('./adminController');
+            await seedTenantAdminUser(hospitalObj);
+            user = await User.findOne({
+              $or: [
+                { mobileNumber: cleanMobile },
+                { mobileNumber: rawMobile },
+                { mobileNumber: `${cc}${cleanMobile}` }
+              ]
+            }).populate('roleId');
+          } catch (seedErr) {
+            console.error('[Login Auto-Seed Error]:', seedErr);
+          }
         }
 
         if (!user) {
-          return res.status(401).json({ success: false, message: 'Invalid hospital code, mobile number, or PIN' });
+          return res.status(401).json({
+            success: false,
+            message: `Mobile number "${rawMobile}" is not registered under hospital "${cleanHospitalCode}".`
+          });
         }
 
         const isMatch = await user.matchPin(pin);
         if (!isMatch) {
-          return res.status(401).json({ success: false, message: 'Invalid hospital code, mobile number, or PIN' });
+          return res.status(401).json({
+            success: false,
+            message: `Invalid 4-digit security PIN for mobile number ${rawMobile}. Default PIN is 1234.`
+          });
         }
 
         // Check status
         if (user.status !== 'active') {
-          return res.status(403).json({ success: false, message: 'Account is deactivated' });
+          return res.status(403).json({ success: false, message: 'Account is deactivated. Please contact Super Admin.' });
         }
 
         // Generate JWT
-        const token = signToken(user._id, hospitalCode.toUpperCase());
+        const token = signToken(user._id, cleanHospitalCode);
 
         // Save session in DB
         const expiresAt = new Date();
@@ -285,6 +345,24 @@ const createUser = async (req, res, next) => {
 
     const cleanDeptId = (!departmentId || departmentId === '') ? null : departmentId;
 
+    // Resolve target hospital and default branch assignment
+    const targetHospId = hospitalId || req.user?.hospitalId;
+    let finalBranchId = branchId;
+
+    if (targetHospId) {
+      const Hospital = require('../models/Hospital');
+      const hospObj = await Hospital.findById(targetHospId);
+      if (hospObj) {
+        const isMultiBranchEnabled = hospObj.featureModules?.Branches === true ||
+          (hospObj.featureModules?.get && hospObj.featureModules.get('Branches') === true);
+
+        if (!isMultiBranchEnabled && hospObj.defaultBranchId) {
+          // Force branchId to defaultBranchId (Main Facility) in Single Facility Mode
+          finalBranchId = hospObj.defaultBranchId;
+        }
+      }
+    }
+
     const { 
       doctorProfile, 
       nurseProfile, 
@@ -303,7 +381,7 @@ const createUser = async (req, res, next) => {
       pin,
       roleId,
       hospitalId,
-      branchId,
+      branchId: finalBranchId,
       departmentId: cleanDeptId,
       hospitalCode: hospitalCode ? hospitalCode.toUpperCase() : undefined,
       employeeCode,

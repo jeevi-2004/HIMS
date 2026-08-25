@@ -354,6 +354,7 @@ const ReceptionistLiveQueue = () => {
                     <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
                       <th className="py-3 px-4">Token</th>
                       <th className="py-3 px-4">Patient</th>
+                      <th className="py-3 px-4">Slot / Type</th>
                       <th className="py-3 px-4">Time</th>
                       <th className="py-3 px-4">Payment</th>
                       <th className="py-3 px-4">Status</th>
@@ -397,6 +398,16 @@ const ReceptionistLiveQueue = () => {
                               <div className="text-[10px] text-slate-400 font-medium">
                                 UHID: {app.patientId?.uhid || 'N/A'}
                               </div>
+                            </td>
+
+                            <td className="py-3 px-4">
+                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border ${
+                                app.consultationType === 'Appointment' || app.isFutureBooking
+                                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                  : 'bg-slate-100 text-slate-700 border-slate-200'
+                              }`}>
+                                {app.consultationType === 'Appointment' || app.isFutureBooking ? `Slot ${app.time || ''}` : 'Walk-In'}
+                              </span>
                             </td>
 
                             <td className="py-3 px-4 font-mono text-slate-600">

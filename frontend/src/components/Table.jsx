@@ -21,8 +21,9 @@ const renderActionIcon = (iconProp, row) => {
         return res;
       }
       TargetComponent = res;
-    } catch {
-      TargetComponent = iconProp;
+    } catch (e) {
+      console.error('Error resolving action icon:', e);
+      return null;
     }
   }
 

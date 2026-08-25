@@ -58,6 +58,20 @@ const AppointmentSchema = new mongoose.Schema({
     enum: ['Cash', 'UPI', 'Card', 'Credit'],
     default: 'Cash'
   },
+  appointmentSlot: {
+    startTime: String,
+    endTime: String,
+    slotId: String
+  },
+  bookingSource: {
+    type: String,
+    enum: ['RECEPTION', 'DOCTOR', 'PATIENT_PORTAL'],
+    default: 'RECEPTION'
+  },
+  isFutureBooking: {
+    type: Boolean,
+    default: false
+  },
   chiefComplaint: {
     type: String
   },
@@ -99,7 +113,7 @@ const AppointmentSchema = new mongoose.Schema({
   workflow: {
     queueState: {
       type: String,
-      enum: ['WAITING', 'READY', 'CALLED', 'IN_CONSULTATION', 'CONSULTATION_COMPLETED', 'SENT_TO_PHARMACY', 'COMPLETED', 'SKIPPED', 'CANCELLED', 'NO_SHOW'],
+      enum: ['SCHEDULED', 'WAITING', 'READY', 'CALLED', 'IN_CONSULTATION', 'CONSULTATION_COMPLETED', 'SENT_TO_PHARMACY', 'COMPLETED', 'SKIPPED', 'CANCELLED', 'NO_SHOW'],
       default: 'WAITING'
     },
     paymentState: {

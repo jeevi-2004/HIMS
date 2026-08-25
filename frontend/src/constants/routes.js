@@ -24,6 +24,7 @@ export const ROUTES = {
     BASE: '/reception',
     DASHBOARD: '/reception/dashboard',
     APPOINTMENTS: '/reception/appointments',
+    BOOK_APPOINTMENTS: '/reception/appointment-booking',
     QUEUE: '/reception/queue',
     PRINT_QUEUE: '/reception/print-queue',
     BILLING: '/reception/billing',

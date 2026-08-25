@@ -13,6 +13,205 @@ const { generateHospitalCode, generateBranchCode } = require('../utils/helpers')
 // HOSPITAL MANAGEMENT
 // ==========================================
 
+// Helper function to seed tenant permissions, roles, and Doctor Admin user account
+const seedTenantAdminUser = async (hospital) => {
+  if (!hospital || !hospital.code) return null;
+  const { getTenantConnection } = require('../utils/dbManager');
+  const { tenantLocalStorage } = require('../utils/tenantModel');
+  const conn = await getTenantConnection(hospital.code);
+
+  let adminUser = null;
+  await tenantLocalStorage.run({ connection: conn }, async () => {
+    const Permission = require('../models/Permission');
+    const Role = require('../models/Role');
+    const User = require('../models/User');
+
+    // Seed default permissions inside tenant database
+    const countPermissions = await Permission.countDocuments();
+    if (countPermissions === 0) {
+      const permissionsData = [
+        { name: 'user:create', module: 'auth', description: 'Create branch staff and admins' },
+        { name: 'user:read', module: 'auth', description: 'Read user rosters' },
+        { name: 'user:write', module: 'auth', description: 'Modify users' },
+        { name: 'pin:reset', module: 'auth', description: 'Reset staff PINs' },
+        { name: 'branch:create', module: 'branch', description: 'Establish hospital branches' },
+        { name: 'branch:read', module: 'branch', description: 'View branches' },
+        { name: 'department:create', module: 'department', description: 'Add departments' },
+        { name: 'department:read', module: 'department', description: 'View department details' },
+        { name: 'opd:view', module: 'opd', description: 'Access outpatient panels' },
+        { name: 'opd:write', module: 'opd', description: 'Consult patients & write diagnoses' },
+        { name: 'ipd:view', module: 'ipd', description: 'Access inpatient panels' },
+        { name: 'ipd:write', module: 'ipd', description: 'Record ward updates & discharge reports' },
+        { name: 'prescription:write', module: 'opd', description: 'Write prescriptions for patients' },
+        { name: 'patient:create', module: 'reception', description: 'Register new patients' },
+        { name: 'patient:read', module: 'reception', description: 'Search patient database' },
+        { name: 'appointment:create', module: 'reception', description: 'Book medical appointments' },
+        { name: 'appointment:read', module: 'reception', description: 'View schedules' },
+        { name: 'pharmacy:view', module: 'pharmacy', description: 'Access pharmacy dispensing dashboards' },
+        { name: 'pharmacy:inventory', module: 'pharmacy', description: 'Manage pharmacy stocks' },
+        { name: 'billing:view', module: 'finance', description: 'Check receipts' },
+        { name: 'billing:manage', module: 'finance', description: 'Generate invoices & take payments' }
+      ];
+      await Permission.insertMany(permissionsData);
+    }
+
+    // Seed default roles inside tenant database
+    let adminRole = await Role.findOne({ name: 'DOCTOR_ADMIN' });
+    if (!adminRole) {
+      adminRole = await Role.findOne({ name: 'HOSPITAL_ADMIN' });
+      if (adminRole) {
+        adminRole.name = 'DOCTOR_ADMIN';
+        adminRole.description = 'Doctor Admin. Hospital Owner and consulting doctor. Full administrative and clinical permissions.';
+        adminRole.permissions = [
+          'user:create', 'user:read', 'user:write', 'pin:reset',
+          'branch:create', 'branch:read', 'branch:write',
+          'department:create', 'department:read', 'department:write',
+          'opd:view', 'opd:write', 'ipd:view', 'ipd:write', 'prescription:write',
+          'patient:create', 'patient:read', 'appointment:create', 'appointment:read',
+          'pharmacy:view', 'pharmacy:inventory', 'billing:view', 'billing:manage'
+        ];
+        await adminRole.save();
+      } else {
+        adminRole = await Role.create({
+          name: 'DOCTOR_ADMIN',
+          description: 'Doctor Admin. Hospital Owner and consulting doctor. Full administrative and clinical permissions.',
+          permissions: [
+            'user:create', 'user:read', 'user:write', 'pin:reset',
+            'branch:create', 'branch:read', 'branch:write',
+            'department:create', 'department:read', 'department:write',
+            'opd:view', 'opd:write', 'ipd:view', 'ipd:write', 'prescription:write',
+            'patient:create', 'patient:read', 'appointment:create', 'appointment:read',
+            'pharmacy:view', 'pharmacy:inventory', 'billing:view', 'billing:manage'
+          ]
+        });
+      }
+    }
+
+    // Delete BRANCH_ADMIN role if it exists
+    await Role.deleteOne({ name: 'BRANCH_ADMIN' });
+
+    const defaultRoles = [
+      {
+        name: 'DOCTOR',
+        description: 'Medical Practitioner. OPD, consultations, diagnoses and prescribing.',
+        permissions: ['opd:view', 'opd:write', 'prescription:write', 'patient:read']
+      },
+      {
+        name: 'RECEPTIONIST',
+        description: 'Front Desk Operator. Registers patients and manages queues.',
+        permissions: ['patient:create', 'patient:read', 'appointment:create', 'appointment:read']
+      },
+      {
+        name: 'PHARMACIST',
+        description: 'Pharmacy Operator. Dispenses medication and manages medicine inventory.',
+        permissions: ['pharmacy:view', 'pharmacy:inventory']
+      },
+      {
+        name: 'NURSE',
+        description: 'Clinical Nurse. Patient care and vitals entry.',
+        permissions: ['patient:read', 'appointment:read', 'opd:view']
+      },
+      {
+        name: 'LABORATORY',
+        description: 'Laboratory technician. Pathology & diagnostic testing.',
+        permissions: ['patient:read', 'opd:view']
+      },
+      {
+        name: 'BILLING',
+        description: 'Cashier / Billing desk operator. Processes patient invoices.',
+        permissions: ['billing:view', 'billing:manage']
+      }
+    ];
+
+    for (const r of defaultRoles) {
+      const existing = await Role.findOne({ name: r.name });
+      if (!existing) {
+        await Role.create(r);
+      } else {
+        existing.permissions = r.permissions;
+        existing.description = r.description;
+        await existing.save();
+      }
+    }
+
+    const targetMobiles = [
+      hospital.ownerMobile,
+      hospital.adminMobile,
+      hospital.contactNumber
+    ].map(m => (m || '').toString().trim()).filter(Boolean);
+
+    const primaryMobile = targetMobiles[0] || '9876543210';
+    const defaultPin = hospital.adminPin || '1234';
+    const adminDisplayName = hospital.ownerName && hospital.ownerName.trim() ? hospital.ownerName.trim() : `${hospital.name} Admin`;
+
+    // Seed default Facility inside tenant database based on hospital City Name (Option A: City Only)
+    const Branch = require('../models/Branch');
+    const cityName = (hospital.address?.city || '').toString().trim();
+    const defaultFacilityName = cityName || 'Main Facility';
+
+    let mainBranch = await Branch.findOne({ isDefault: true });
+    if (!mainBranch) {
+      mainBranch = await Branch.findOne({ name: defaultFacilityName }) ||
+        await Branch.findOne({ name: `${cityName} Branch` }) ||
+        await Branch.findOne({ name: 'Main Facility' });
+    }
+    if (!mainBranch) {
+      const mainCode = `${(hospital.code || 'HOSP').replace(/[^A-Z0-9]/gi, '')}-MAIN`;
+      mainBranch = await Branch.create({
+        name: defaultFacilityName,
+        code: mainCode,
+        isDefault: true,
+        status: 'active',
+        contactNumber: primaryMobile,
+        address: hospital.address || { street: '', city: cityName, state: '', zip: '', country: 'India' }
+      });
+    } else {
+      if (cityName && (mainBranch.name === 'Main Facility' || mainBranch.name === `${cityName} Branch` || !mainBranch.name)) {
+        mainBranch.name = defaultFacilityName;
+      }
+      if (!mainBranch.isDefault) {
+        mainBranch.isDefault = true;
+      }
+      await mainBranch.save();
+    }
+
+    // Ensure all configured admin numbers can log in as DOCTOR_ADMIN
+    for (const mob of targetMobiles) {
+      let existingUser = await User.findOne({ mobileNumber: mob });
+      if (!existingUser) {
+        const empCode = `VZE-${(hospital.code || 'HOSP').replace(/[^A-Z0-9]/gi, '')}-ADMIN`;
+        existingUser = await User.create({
+          name: adminDisplayName,
+          countryCode: hospital.ownerCountryCode || hospital.adminCountryCode || hospital.contactCountryCode || '+91',
+          mobileNumber: mob,
+          pin: defaultPin,
+          roleId: adminRole._id,
+          hospitalId: hospital._id,
+          branchId: mainBranch._id,
+          hospitalCode: hospital.code.toUpperCase(),
+          employeeCode: empCode,
+          status: 'active'
+        });
+      } else {
+        existingUser.name = adminDisplayName;
+        existingUser.hospitalCode = hospital.code.toUpperCase();
+        existingUser.pin = defaultPin;
+        existingUser.branchId = mainBranch._id;
+        existingUser.status = 'active';
+        await existingUser.save();
+      }
+      if (!adminUser) adminUser = existingUser;
+    }
+
+    hospital.adminMobile = primaryMobile;
+    hospital.adminPin = defaultPin;
+    hospital.defaultBranchId = mainBranch._id;
+    await hospital.save();
+  });
+
+  return adminUser;
+};
+
 const createHospital = async (req, res, next) => {
   const { name, code: customCode, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo } = req.body;
   try {
@@ -44,6 +243,14 @@ const createHospital = async (req, res, next) => {
       databaseName,
       logo
     });
+
+    // Auto-seed tenant DB permissions, roles, and DOCTOR_ADMIN user on creation
+    try {
+      await seedTenantAdminUser(hospital);
+    } catch (seedErr) {
+      console.error('Error auto-seeding tenant admin user during createHospital:', seedErr);
+    }
+
     await logAudit(req.user._id, 'CREATE_HOSPITAL', 'HOSPITAL', { hospitalId: hospital._id, code }, req);
     res.status(201).json({ success: true, data: hospital });
   } catch (error) {
@@ -75,25 +282,36 @@ const createBranch = async (req, res, next) => {
   const { name, hospitalId, address, contactNumber } = req.body;
   const targetHospitalId = hospitalId || req.user?.hospitalId;
   try {
+    const targetHospital = await Hospital.findById(targetHospitalId);
+    if (!targetHospital) {
+      return res.status(404).json({ success: false, message: 'Hospital context not found' });
+    }
+
     // Auth check: Doctor Admin can only create branches for their own hospital
     if (req.user?.roleId?.name === 'DOCTOR_ADMIN' && (!req.user.hospitalId || req.user.hospitalId.toString() !== targetHospitalId?.toString())) {
       return res.status(403).json({ success: false, message: 'Unauthorized hospital context' });
     }
 
-    let hospitalCode = 'VZH';
-    if (targetHospitalId) {
-      const hospital = await Hospital.findById(targetHospitalId);
-      if (hospital?.code) {
-        hospitalCode = hospital.code;
-      }
+    // Feature check: Verify Multi-Branch (Branches: true) feature is enabled by Super Admin
+    const isMultiBranchEnabled = targetHospital.featureModules?.Branches === true ||
+      (targetHospital.featureModules?.get && targetHospital.featureModules.get('Branches') === true);
+
+    if (!isMultiBranchEnabled) {
+      return res.status(403).json({
+        success: false,
+        message: 'Multi-Branch feature is disabled for your hospital. Please contact Super Admin to enable Multi-Branch module.'
+      });
     }
 
+    const hospitalCode = targetHospital.code || 'VZH';
     const code = await generateBranchCode(targetHospitalId, hospitalCode);
     const branch = await Branch.create({
       name,
       code,
       address,
-      contactNumber
+      contactNumber,
+      isDefault: false,
+      status: 'active'
     });
     await logAudit(req.user._id, 'CREATE_BRANCH', 'BRANCH', { branchId: branch._id, code }, req);
     res.status(201).json({ success: true, data: branch });
@@ -113,6 +331,26 @@ const getBranches = async (req, res, next) => {
     }
 
     const branches = await Branch.find(query);
+
+    // Auto-update any default branch named "Main Facility" to the hospital's registered city name if available
+    try {
+      const hospitalId = req.user.hospitalId?._id || req.user.hospitalId;
+      if (hospitalId) {
+        const hospital = await Hospital.findById(hospitalId);
+        const cityName = hospital?.address?.city?.trim();
+        if (cityName) {
+          for (const b of branches) {
+            if (b.isDefault && (b.name === 'Main Facility' || b.name === `${cityName} Branch` || !b.name)) {
+              b.name = cityName;
+              await b.save();
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[getBranches City Rename Error]:', e);
+    }
+
     res.status(200).json({ success: true, data: branches });
   } catch (error) {
     next(error);
@@ -275,6 +513,24 @@ const getAuditLogs = async (req, res, next) => {
   }
 };
 
+const getLoginHistory = async (req, res, next) => {
+  try {
+    let query = {};
+    if (req.user?.roleId?.name === 'DOCTOR_ADMIN') {
+      const userIds = await User.find({ hospitalId: req.user.hospitalId }).select('_id');
+      query.userId = { $in: userIds.map(u => u._id) };
+    }
+    const logs = await AuditLog.find(query)
+      .populate('userId', 'name employeeCode mobileNumber email')
+      .sort({ createdAt: -1 })
+      .limit(100);
+
+    res.status(200).json({ success: true, data: logs });
+  } catch (error) {
+    res.status(200).json({ success: true, data: [] });
+  }
+};
+
 /**
  * @desc    Activate Hospital Plan & Create Primary Admin User
  * @route   PUT /api/admin/hospitals/:id/activate
@@ -303,170 +559,12 @@ const activateHospitalPlan = async (req, res, next) => {
     await hospital.save();
 
     // 2. Connect dynamically to the new tenant DB and seed it
-    const { getTenantConnection } = require('../utils/dbManager');
-    const { tenantLocalStorage } = require('../utils/tenantModel');
-    const conn = await getTenantConnection(hospital.code);
-
-    let adminUser;
-    await tenantLocalStorage.run({ connection: conn }, async () => {
-      const Permission = require('../models/Permission');
-      const Role = require('../models/Role');
-
-      // Seed default permissions inside tenant database
-      const countPermissions = await Permission.countDocuments();
-      if (countPermissions === 0) {
-        const permissionsData = [
-          { name: 'user:create', module: 'auth', description: 'Create branch staff and admins' },
-          { name: 'user:read', module: 'auth', description: 'Read user rosters' },
-          { name: 'user:write', module: 'auth', description: 'Modify users' },
-          { name: 'pin:reset', module: 'auth', description: 'Reset staff PINs' },
-          { name: 'branch:create', module: 'branch', description: 'Establish hospital branches' },
-          { name: 'branch:read', module: 'branch', description: 'View branches' },
-          { name: 'department:create', module: 'department', description: 'Add departments' },
-          { name: 'department:read', module: 'department', description: 'View department details' },
-          { name: 'opd:view', module: 'opd', description: 'Access outpatient panels' },
-          { name: 'opd:write', module: 'opd', description: 'Consult patients & write diagnoses' },
-          { name: 'ipd:view', module: 'ipd', description: 'Access inpatient panels' },
-          { name: 'ipd:write', module: 'ipd', description: 'Record ward updates & discharge reports' },
-          { name: 'prescription:write', module: 'opd', description: 'Write prescriptions for patients' },
-          { name: 'patient:create', module: 'reception', description: 'Register new patients' },
-          { name: 'patient:read', module: 'reception', description: 'Search patient database' },
-          { name: 'appointment:create', module: 'reception', description: 'Book medical appointments' },
-          { name: 'appointment:read', module: 'reception', description: 'View schedules' },
-          { name: 'pharmacy:view', module: 'pharmacy', description: 'Access pharmacy dispensing dashboards' },
-          { name: 'pharmacy:inventory', module: 'pharmacy', description: 'Manage pharmacy stocks' },
-          { name: 'billing:view', module: 'finance', description: 'Check receipts' },
-          { name: 'billing:manage', module: 'finance', description: 'Generate invoices & take payments' }
-        ];
-        await Permission.insertMany(permissionsData);
-      }
-
-      // Seed default roles inside tenant database
-      let adminRole = await Role.findOne({ name: 'DOCTOR_ADMIN' });
-      if (!adminRole) {
-        adminRole = await Role.findOne({ name: 'HOSPITAL_ADMIN' });
-        if (adminRole) {
-          adminRole.name = 'DOCTOR_ADMIN';
-          adminRole.description = 'Doctor Admin. Hospital Owner and consulting doctor. Full administrative and clinical permissions.';
-          adminRole.permissions = [
-            'user:create', 'user:read', 'user:write', 'pin:reset',
-            'branch:create', 'branch:read', 'branch:write',
-            'department:create', 'department:read', 'department:write',
-            'opd:view', 'opd:write', 'ipd:view', 'ipd:write', 'prescription:write',
-            'patient:create', 'patient:read', 'appointment:create', 'appointment:read',
-            'pharmacy:view', 'pharmacy:inventory', 'billing:view', 'billing:manage'
-          ];
-          await adminRole.save();
-        } else {
-          adminRole = await Role.create({
-            name: 'DOCTOR_ADMIN',
-            description: 'Doctor Admin. Hospital Owner and consulting doctor. Full administrative and clinical permissions.',
-            permissions: [
-              'user:create', 'user:read', 'user:write', 'pin:reset',
-              'branch:create', 'branch:read', 'branch:write',
-              'department:create', 'department:read', 'department:write',
-              'opd:view', 'opd:write', 'ipd:view', 'ipd:write', 'prescription:write',
-              'patient:create', 'patient:read', 'appointment:create', 'appointment:read',
-              'pharmacy:view', 'pharmacy:inventory', 'billing:view', 'billing:manage'
-            ]
-          });
-        }
-      }
-
-      // Delete BRANCH_ADMIN role if it exists
-      await Role.deleteOne({ name: 'BRANCH_ADMIN' });
-
-      const defaultRoles = [
-        {
-          name: 'DOCTOR',
-          description: 'Medical Practitioner. OPD, consultations, diagnoses and prescribing.',
-          permissions: ['opd:view', 'opd:write', 'prescription:write', 'patient:read']
-        },
-        {
-          name: 'RECEPTIONIST',
-          description: 'Front Desk Operator. Registers patients and manages queues.',
-          permissions: ['patient:create', 'patient:read', 'appointment:create', 'appointment:read']
-        },
-        {
-          name: 'PHARMACIST',
-          description: 'Pharmacy Operator. Dispenses medication and manages medicine inventory.',
-          permissions: ['pharmacy:view', 'pharmacy:inventory']
-        },
-        {
-          name: 'NURSE',
-          description: 'Clinical Nurse. Patient care and vitals entry.',
-          permissions: ['patient:read', 'appointment:read', 'opd:view']
-        },
-        {
-          name: 'LABORATORY',
-          description: 'Laboratory technician. Pathology & diagnostic testing.',
-          permissions: ['patient:read', 'opd:view']
-        },
-        {
-          name: 'BILLING',
-          description: 'Cashier / Billing desk operator. Processes patient invoices.',
-          permissions: ['billing:view', 'billing:manage']
-        }
-      ];
-
-      for (const r of defaultRoles) {
-        const existing = await Role.findOne({ name: r.name });
-        if (!existing) {
-          await Role.create(r);
-        } else {
-          existing.permissions = r.permissions;
-          existing.description = r.description;
-          await existing.save();
-        }
-      }
-
-      const targetMobile = (hospital.ownerMobile || hospital.adminMobile || hospital.contactNumber || '').toString().trim();
-      if (!targetMobile) {
-        throw new Error('Hospital has no contact or owner mobile number configured for admin account');
-      }
-
-      const defaultPin = hospital.adminPin || '1234';
-      const adminDisplayName = hospital.ownerName && hospital.ownerName.trim() ? hospital.ownerName.trim() : `${hospital.name} Admin`;
-
-      // 1. Try finding Doctor Admin by hospitalId + DOCTOR_ADMIN role
-      adminUser = await User.findOne({ hospitalId: hospital._id, roleId: adminRole._id });
-
-      // 2. Fallback by mobileNumber
-      if (!adminUser) {
-        adminUser = await User.findOne({ mobileNumber: targetMobile });
-      }
-
-      if (!adminUser) {
-        const empCode = `VZE-${(hospital.code || 'HOSP').replace(/[^A-Z0-9]/gi, '')}-ADMIN`;
-        adminUser = await User.create({
-          name: adminDisplayName,
-          countryCode: hospital.ownerCountryCode || hospital.adminCountryCode || hospital.contactCountryCode || '+91',
-          mobileNumber: targetMobile,
-          pin: defaultPin,
-          roleId: adminRole._id,
-          hospitalId: hospital._id,
-          hospitalCode: hospital.code.toUpperCase(),
-          employeeCode: empCode,
-          status: 'active'
-        });
-      } else {
-        adminUser.name = adminDisplayName;
-        adminUser.hospitalCode = hospital.code.toUpperCase();
-        adminUser.countryCode = hospital.ownerCountryCode || hospital.adminCountryCode || hospital.contactCountryCode || '+91';
-        adminUser.pin = defaultPin;
-        adminUser.status = 'active';
-        await adminUser.save();
-      }
-      
-      hospital.adminMobile = targetMobile;
-      hospital.adminPin = defaultPin;
-      await hospital.save();
-    });
+    const adminUser = await seedTenantAdminUser(hospital);
 
     await logAudit(req.user._id, 'ACTIVATE_HOSPITAL_PLAN', 'HOSPITAL', {
       hospitalId: hospital._id,
       planName: hospital.planName,
-      adminUserId: adminUser._id
+      adminUserId: adminUser?._id
     }, req);
 
     res.status(200).json({
@@ -970,7 +1068,7 @@ const getBillingSettings = async (req, res, next) => {
       collectMedicineInPharmacy: true,
       enableConsolidatedBilling: true,
       prescriptionDelivery: 'internal_pharmacy',
-      enableEmergencyModule: true,
+      enableEmergencyModule: false,
       allowUnknownPatients: true,
       emergencyQueuePriority: 'OVERRIDE',
       emergencyTokenPrefix: 'EMG',
@@ -1044,7 +1142,7 @@ const updateBillingSettings = async (req, res, next) => {
       collectMedicineInPharmacy: validatedSettings.collectMedicineInPharmacy,
       enableConsolidatedBilling: enableConsolidatedBilling !== undefined ? enableConsolidatedBilling : true,
       prescriptionDelivery: prescriptionDelivery || 'internal_pharmacy',
-      enableEmergencyModule: enableEmergencyModule !== undefined ? enableEmergencyModule : true,
+      enableEmergencyModule: enableEmergencyModule !== undefined ? enableEmergencyModule : false,
       allowUnknownPatients: allowUnknownPatients !== undefined ? allowUnknownPatients : true,
       emergencyQueuePriority: emergencyQueuePriority || 'OVERRIDE',
       emergencyTokenPrefix: emergencyTokenPrefix || 'EMG',
@@ -1271,6 +1369,7 @@ const duplicatePrintTemplate = async (req, res, next) => {
 };
 
 module.exports = {
+  seedTenantAdminUser,
   createHospital,
   getHospitals,
   activateHospitalPlan,
@@ -1283,6 +1382,7 @@ module.exports = {
   getRoles,
   getPermissions,
   getAuditLogs,
+  getLoginHistory,
   getPlans,
   createPlan,
   updatePlan,

@@ -24,6 +24,15 @@ const BranchSchema = new mongoose.Schema({
   contactNumber: {
     type: String,
     required: [true, 'Contact number is required']
+  },
+  isDefault: {
+    type: Boolean,
+    default: false
+  },
+  status: {
+    type: String,
+    enum: ['active', 'inactive'],
+    default: 'active'
   }
 }, {
   timestamps: true

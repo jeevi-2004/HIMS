@@ -7,6 +7,7 @@ import { ROLE_GROUPS } from '../../constants/roles';
 // Reception Module Lazy-Loaded Page Components
 const ReceptionistDashboard = lazy(() => import('../../pages/ReceptionistDashboard'));
 const ReceptionistAppointments = lazy(() => import('../../pages/ReceptionistAppointments'));
+const AppointmentBookingModule = lazy(() => import('./pages/AppointmentBookingModule'));
 const ReceptionistLiveQueue = lazy(() => import('../../pages/ReceptionistLiveQueue'));
 const ReceptionistPrintQueue = lazy(() => import('../../pages/ReceptionistPrintQueue'));
 const ReceptionistReports = lazy(() => import('../../pages/ReceptionistReports'));
@@ -35,6 +36,14 @@ export const receptionRoutes = (
       element={
         <WorkspaceRoute allowedRoles={RECEPTION_ROLES}>
           <ReceptionistAppointments />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path={ROUTES.RECEPTION.BOOK_APPOINTMENTS} 
+      element={
+        <WorkspaceRoute allowedRoles={RECEPTION_ROLES}>
+          <AppointmentBookingModule />
         </WorkspaceRoute>
       } 
     />

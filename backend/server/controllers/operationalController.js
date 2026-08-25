@@ -14,6 +14,7 @@ const ClinicalDiagnosis = require('../models/ClinicalDiagnosis');
 const logAudit = require('../utils/auditLogger');
 const { tenantLocalStorage } = require('../utils/tenantModel');
 const { WorkflowEngine, QUEUE_STATES, PAYMENT_STATES, PHARMACY_STATES } = require('../services/WorkflowEngine');
+const QueueOrchestrationEngine = require('../services/QueueOrchestrationEngine');
 
 // Generate Unique Health Identification (UHID)
 const generateUHID = async () => {
@@ -169,7 +170,8 @@ const updatePatient = async (req, res, next) => {
 const bookAppointment = async (req, res, next) => {
   const { 
     patientId, doctorId, date, time, consultationType, 
-    billingStatus, consultationFee, paymentMethod, chiefComplaint, isEmergency 
+    billingStatus, consultationFee, paymentMethod, chiefComplaint, isEmergency,
+    appointmentSlot, bookingSource
   } = req.body;
   try {
     const isEmgApp = Boolean(isEmergency);
@@ -182,26 +184,59 @@ const bookAppointment = async (req, res, next) => {
     const priority = isEmgApp ? 'EMERGENCY' : 'NORMAL';
 
     // Generate Daily Reset, Branch-Scoped Sequential Token Number
-    const startOfDay = new Date(date);
+    const dateStr = String(date || '').split('T')[0] || new Date().toISOString().split('T')[0];
+    const startOfDay = new Date(dateStr);
     startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
+    const endOfDay = new Date(dateStr);
     endOfDay.setHours(23, 59, 59, 999);
+    const targetBookingDate = new Date(`${dateStr}T12:00:00.000Z`);
 
-    const count = await Appointment.countDocuments({
-      branchId: req.user.branchId,
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const isFutureBooking = startOfDay > todayStart;
+
+    // Check for existing double-booking on same doctor, date, and time slot
+    if (doctorId && time) {
+      const normTime = String(time).trim();
+      const existingBooking = await Appointment.findOne({
+        doctorId,
+        date: { $gte: startOfDay, $lte: endOfDay },
+        time: normTime,
+        status: { $ne: 'Cancelled' },
+        'workflow.queueState': { $ne: 'CANCELLED' }
+      });
+
+      if (existingBooking) {
+        return res.status(400).json({
+          success: false,
+          message: `Time slot (${normTime}) is already booked for this doctor on the selected date. Please select another available slot.`
+        });
+      }
+    }
+
+    const countFilter = {
       date: { $gte: startOfDay, $lte: endOfDay },
       tokenType: tokenType
-    });
+    };
+    if (req.user.branchId) {
+      countFilter.branchId = req.user.branchId;
+    }
+
+    const isScheduledApp = isFutureBooking || String(consultationType || '').toLowerCase() === 'appointment';
+
+    const count = await Appointment.countDocuments(countFilter);
 
     const index = count + 1;
-    const tokenNumber = `${tokenPrefix}${String(index).padStart(3, '0')}`;
+    const generatedTokenNumber = `${tokenPrefix}${String(index).padStart(3, '0')}`;
+    const tokenNumber = isScheduledApp ? '' : generatedTokenNumber;
 
     const rawBillingStatus = String(billingStatus || '').trim();
     const effectiveBillingStatus = (rawBillingStatus === 'Pending' || !rawBillingStatus) ? 'Unpaid' : rawBillingStatus;
 
     const { workflow, metadata, history } = WorkflowEngine.initializeWorkflow({
       billingStatus: effectiveBillingStatus,
-      consultationType: consultationType || 'Walk-In',
+      consultationType: consultationType || (isScheduledApp ? 'Appointment' : 'Walk-In'),
       isEmergency: isEmgApp
     }, req.user);
 
@@ -209,13 +244,16 @@ const bookAppointment = async (req, res, next) => {
       metadata.paymentCollectedBy = req.user._id;
     }
 
+    const initialStatus = isEmgApp ? 'Arrived' : (isScheduledApp ? 'Scheduled' : 'Waiting');
+    const initialQueueState = isEmgApp ? 'WAITING' : (isScheduledApp ? 'SCHEDULED' : (workflow?.queueState || 'WAITING'));
+
     const appointment = await Appointment.create({
       patientId,
       doctorId,
-      date: new Date(date),
-      time,
+      date: targetBookingDate,
+      time: time || '09:00 AM',
       tokenNumber,
-      consultationType: consultationType || 'Walk-In',
+      consultationType: consultationType || (isFutureBooking ? 'Appointment' : 'Walk-In'),
       chiefComplaint,
       isEmergency: isEmgApp,
       priorityLevel: priority,
@@ -224,12 +262,15 @@ const bookAppointment = async (req, res, next) => {
       queueType: tokenType,
       consultationFee: consultationFee || 500,
       paymentMethod: paymentMethod || 'Cash',
-      status: isEmgApp ? 'Arrived' : (req.body.status || 'Scheduled'),
-      queueStatus: 'Waiting',
+      status: initialStatus,
+      queueStatus: initialStatus,
       billingStatus: effectiveBillingStatus,
+      appointmentSlot: appointmentSlot || null,
+      bookingSource: bookingSource || 'RECEPTION',
+      isFutureBooking: isFutureBooking,
       workflow: {
         ...workflow,
-        queueState: isEmgApp ? 'WAITING' : workflow?.queueState
+        queueState: initialQueueState
       },
       workflowMetadata: metadata,
       hospitalId: req.user.hospitalId,
@@ -255,6 +296,24 @@ const bookAppointment = async (req, res, next) => {
 const getAppointments = async (req, res, next) => {
   const { doctorId, date, status } = req.query;
   try {
+    // Heal any appointments with no tokenNumber that were mistakenly mutated to Waiting
+    try {
+      await Appointment.updateMany(
+        {
+          $or: [{ tokenNumber: { $exists: false } }, { tokenNumber: '' }, { tokenNumber: null }],
+          status: 'Waiting',
+          'workflow.timestamps.checkedInAt': { $exists: false }
+        },
+        {
+          $set: {
+            status: 'Scheduled',
+            queueStatus: 'Scheduled',
+            'workflow.queueState': 'SCHEDULED'
+          }
+        }
+      );
+    } catch (healErr) {}
+
     let query = {};
     
     // Scoped queries
@@ -268,19 +327,43 @@ const getAppointments = async (req, res, next) => {
     const filterToDate = req.query.toDate || date;
 
     if (filterFromDate || filterToDate) {
-      const startOfDay = new Date(filterFromDate || filterToDate);
-      startOfDay.setHours(0, 0, 0, 0);
+      const cleanFrom = String(filterFromDate || filterToDate).replace(/[^0-9\-T:]/g, '');
+      const cleanTo = String(filterToDate || filterFromDate).replace(/[^0-9\-T:]/g, '');
 
-      const endOfDay = new Date(filterToDate || filterFromDate);
-      endOfDay.setHours(23, 59, 59, 999);
+      const fromStr = cleanFrom.split('T')[0];
+      const toStr = cleanTo.split('T')[0];
 
-      if (req.query.daysLimit) {
-        const limit = parseInt(req.query.daysLimit) || 0;
-        endOfDay.setDate(endOfDay.getDate() + limit);
-        endOfDay.setHours(23, 59, 59, 999);
+      if (fromStr && toStr && fromStr.length === 10 && toStr.length === 10) {
+        const [yFrom, mFrom, dFrom] = fromStr.split('-').map(Number);
+        const [yTo, mTo, dTo] = toStr.split('-').map(Number);
+
+        const localStartOfDay = new Date(yFrom, mFrom - 1, dFrom, 0, 0, 0, 0);
+        const localEndOfDay = new Date(yTo, mTo - 1, dTo, 23, 59, 59, 999);
+
+        const utcStartOfDay = new Date(`${fromStr}T00:00:00.000Z`);
+        const utcEndOfDay = new Date(`${toStr}T23:59:59.999Z`);
+
+        if (!isNaN(localStartOfDay.getTime()) && !isNaN(localEndOfDay.getTime())) {
+          const minStart = new Date(Math.min(localStartOfDay.getTime(), utcStartOfDay.getTime()));
+          const maxEnd = new Date(Math.max(localEndOfDay.getTime(), utcEndOfDay.getTime()));
+
+          if (req.query.daysLimit) {
+            const limit = parseInt(req.query.daysLimit) || 0;
+            maxEnd.setDate(maxEnd.getDate() + limit);
+          }
+
+          if (req.query.includeUpcomingScheduled === 'true' || req.query.includeScheduled === 'true') {
+            query.$or = [
+              { date: { $gte: minStart, $lte: maxEnd } },
+              { status: 'Scheduled', date: { $gte: minStart } },
+              { queueStatus: 'Scheduled', date: { $gte: minStart } },
+              { 'workflow.queueState': 'SCHEDULED', date: { $gte: minStart } }
+            ];
+          } else {
+            query.date = { $gte: minStart, $lte: maxEnd };
+          }
+        }
       }
-
-      query.date = { $gte: startOfDay, $lte: endOfDay };
     }
     
     if (status) {
@@ -336,6 +419,16 @@ const getAppointments = async (req, res, next) => {
         }
         emgIndex++;
       }
+
+      if (!appObj.tokenNumber || appObj.tokenNumber === '') {
+        if (appObj.status !== 'Completed' && appObj.status !== 'In Consultation' && appObj.status !== 'Sent to Pharmacy' && appObj.status !== 'Cancelled') {
+          appObj.status = 'Scheduled';
+          appObj.queueStatus = 'Scheduled';
+          if (!appObj.workflow) appObj.workflow = {};
+          appObj.workflow.queueState = 'SCHEDULED';
+        }
+      }
+
       return appObj;
     });
 
@@ -2300,12 +2393,117 @@ const getDoctorPresence = async (req, res, next) => {
   }
 };
 
+const checkInAppointment = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    let appointment = await Appointment.findById(id)
+      .populate('patientId', 'name uhid age gender mobileNumber bloodGroup allergies')
+      .populate('doctorId', 'name employeeCode departmentId');
+
+    if (!appointment) {
+      return res.status(404).json({ success: false, message: 'Appointment record not found.' });
+    }
+
+    if (appointment.status === 'Cancelled' || appointment.workflow?.queueState === 'CANCELLED') {
+      return res.status(400).json({ success: false, message: 'Cancelled appointments cannot be checked in.' });
+    }
+
+    const currentQState = (appointment.workflow?.queueState || '').toUpperCase();
+    const isAlreadyCheckedIn = Boolean(appointment.tokenNumber) && 
+      (currentQState === 'WAITING' || currentQState === 'CHECKED_IN' || currentQState === 'CALLED' || currentQState === 'IN_CONSULTATION' || appointment.status === 'Waiting' || appointment.status === 'In Consultation');
+
+    if (isAlreadyCheckedIn) {
+      return res.status(200).json({
+        success: true,
+        message: `Patient is already checked in. Token: ${appointment.tokenNumber}`,
+        data: appointment,
+        alreadyCheckedIn: true
+      });
+    }
+
+    // Generate OPD Token for Today
+    const Hospital = require('../models/Hospital');
+    const hospital = await Hospital.findById(req.user.hospitalId);
+    const configuredOpPrefix = hospital?.queueRulesSettings?.tokenPrefix || 'OP';
+    const isEmgApp = Boolean(appointment.isEmergency);
+    const tokenPrefix = isEmgApp ? (hospital?.billingWorkflowSettings?.emergencyTokenPrefix || 'EMG') : configuredOpPrefix;
+    const tokenType = isEmgApp ? 'EMERGENCY' : 'NORMAL';
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    const startOfDay = new Date(dateStr);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(dateStr);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const countFilter = {
+      date: { $gte: startOfDay, $lte: endOfDay },
+      tokenType: tokenType,
+      tokenNumber: { $exists: true, $ne: '' }
+    };
+    if (req.user.branchId) {
+      countFilter.branchId = req.user.branchId;
+    }
+
+    const count = await Appointment.countDocuments(countFilter);
+    const index = count + 1;
+    const tokenNumber = `${tokenPrefix}${String(index).padStart(3, '0')}`;
+
+    appointment.tokenNumber = tokenNumber;
+    appointment.status = 'Waiting';
+    appointment.queueStatus = 'Waiting';
+    if (!appointment.workflow) {
+      appointment.workflow = {};
+    }
+    appointment.workflow.queueState = 'WAITING';
+    appointment.workflow.timestamps = {
+      ...(appointment.workflow.timestamps || {}),
+      checkedInAt: new Date()
+    };
+    appointment.markModified('workflow');
+    appointment.updatedBy = req.user._id;
+
+    if (!appointment.workflowHistory) appointment.workflowHistory = [];
+    appointment.workflowHistory.push({
+      fromState: 'SCHEDULED',
+      toState: 'WAITING',
+      stateType: 'queueState',
+      changedBy: req.user._id,
+      changedByName: req.user.name || 'Receptionist',
+      changedByRole: req.user.role || 'RECEPTIONIST',
+      timestamp: new Date(),
+      note: `Patient checked in. Assigned Token: ${tokenNumber}`
+    });
+
+    await appointment.save();
+
+    // Emit Real-Time Event
+    try {
+      const WorkflowEventHub = require('../services/WorkflowEventHub');
+      WorkflowEventHub.publish('PatientCheckedIn', {
+        ...appointment.toObject(),
+        performedBy: req.user.name || 'Receptionist'
+      });
+    } catch (e) {}
+
+    await logAudit(req.user._id, 'CHECK_IN_APPOINTMENT', 'OPD', { appointmentId: appointment._id, tokenNumber }, req);
+
+    return res.status(200).json({
+      success: true,
+      message: `Patient successfully checked in! OPD Token: ${tokenNumber}`,
+      data: appointment
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   registerPatient,
   getPatients,
   searchPatients,
   updatePatient,
   bookAppointment,
+  checkInAppointment,
   getAppointments,
   enterVitals,
   updateQueueStatus,

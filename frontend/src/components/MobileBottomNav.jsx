@@ -178,7 +178,7 @@ const MobileBottomNav = () => {
       icon: Plus,
       label: 'TOKEN',
       active: false,
-      onClick: () => setQuickSheetOpen(true),
+      onClick: () => handleQuickAction('GENERATE_TOKEN'),
       gradient: 'from-[#3563F6] to-[#4F75FF]',
       shadow: 'shadow-blue-500/35'
     };
@@ -254,10 +254,10 @@ const MobileBottomNav = () => {
                 <div>
                   <h3 className="text-base font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
                     <Zap className="w-4 h-4 text-[#3563F6]" />
-                    <span>{isDoctor ? 'Quick Doctor Actions' : 'Quick Reception Actions'}</span>
+                    <span>{isDoctor ? 'Quick Doctor Actions' : 'Quick Token Actions'}</span>
                   </h3>
                   <p className="text-[11px] font-semibold text-slate-500 mt-0.5">
-                    {isDoctor ? 'Fast shortcuts for clinical workflow' : 'Fast single-tap shortcuts for intake desk'}
+                    {isDoctor ? 'Fast shortcuts for clinical workflow' : 'Fast single-tap shortcuts for OPD token generation'}
                   </p>
                 </div>
                 <button 
@@ -309,60 +309,6 @@ const MobileBottomNav = () => {
                         </div>
                       </div>
                       <ChevronRight className="w-4 h-4 text-rose-400 transition-colors" />
-                    </button>
-
-                    {/* 3. Search Patient */}
-                    <button
-                      type="button"
-                      onClick={() => handleQuickAction('SEARCH_PATIENT')}
-                      className="w-full flex items-center justify-between p-3.5 bg-slate-50 hover:bg-indigo-50/70 border border-slate-200 hover:border-indigo-300 rounded-2xl transition-all text-left group active:scale-98 cursor-pointer min-h-[56px]"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform">
-                          <Search className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h4 className="text-xs font-extrabold text-slate-900 group-hover:text-indigo-600">Search Patient</h4>
-                          <p className="text-[10px] text-slate-500 font-medium">Lookup patient by Name, Mobile, or UHID</p>
-                        </div>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 transition-colors" />
-                    </button>
-
-                    {/* 4. Live Doctor Queue */}
-                    <button
-                      type="button"
-                      onClick={() => handleQuickAction('LIVE_QUEUE')}
-                      className="w-full flex items-center justify-between p-3.5 bg-slate-50 hover:bg-purple-50/70 border border-slate-200 hover:border-purple-300 rounded-2xl transition-all text-left group active:scale-98 cursor-pointer min-h-[56px]"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-purple-600 text-white flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform">
-                          <Activity className="w-5 h-5 animate-pulse" />
-                        </div>
-                        <div>
-                          <h4 className="text-xs font-extrabold text-slate-900 group-hover:text-purple-600">Live Doctor Queue</h4>
-                          <p className="text-[10px] text-slate-500 font-medium">Monitor consulting rooms & queue status</p>
-                        </div>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-600 transition-colors" />
-                    </button>
-
-                    {/* 5. Reports & Analytics */}
-                    <button
-                      type="button"
-                      onClick={() => handleQuickAction('REPORTS')}
-                      className="w-full flex items-center justify-between p-3.5 bg-slate-50 hover:bg-emerald-50/70 border border-slate-200 hover:border-emerald-300 rounded-2xl transition-all text-left group active:scale-98 cursor-pointer min-h-[56px]"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform">
-                          <FileBarChart2 className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h4 className="text-xs font-extrabold text-slate-900 group-hover:text-emerald-600">Reports & Analytics</h4>
-                          <p className="text-[10px] text-slate-500 font-medium">Intake volume, doctor load & revenue</p>
-                        </div>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-600 transition-colors" />
                     </button>
                   </>
                 ) : (

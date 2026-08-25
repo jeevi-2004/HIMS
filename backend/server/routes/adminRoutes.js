@@ -13,6 +13,7 @@ const {
   getRoles,
   getPermissions,
   getAuditLogs,
+  getLoginHistory,
   getPlans,
   createPlan,
   updatePlan,
@@ -117,5 +118,6 @@ router.get('/permissions', authorize(USER_ROLES.SUPER_ADMIN), getPermissions);
 
 // Security & Audit Logs (Admins only)
 router.get('/audit-logs', authorize(...ROLE_GROUPS.ADMIN), getAuditLogs);
+router.get('/login-history', authorize(...ROLE_GROUPS.ADMIN), getLoginHistory);
 
 module.exports = router;

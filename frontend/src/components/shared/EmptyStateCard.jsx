@@ -12,7 +12,7 @@ const EmptyStateCard = React.memo(({
   return (
     <div className={`bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-3 my-4 max-w-md mx-auto shadow-card-soft ${className}`}>
       <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 mx-auto">
-        <Icon className="w-6 h-6" />
+        {React.isValidElement(Icon) ? Icon : <Icon className="w-6 h-6" />}
       </div>
       <div className="space-y-1">
         <h3 className="text-sm font-bold text-slate-800">{title}</h3>

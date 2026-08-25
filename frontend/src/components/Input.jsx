@@ -88,7 +88,7 @@ const Input = forwardRef(({
       <div className="relative flex items-center">
         {Icon && (
           <div className="absolute left-3.5 text-[#6B7280] pointer-events-none">
-            <Icon className="w-5 h-5" />
+            {React.isValidElement(Icon) ? Icon : <Icon className="w-5 h-5" />}
           </div>
         )}
         <input {...inputProps} />

@@ -78,6 +78,17 @@ const protect = async (req, res, next) => {
     };
 
     if (decoded.hospitalCode) {
+      const Hospital = require('../models/Hospital');
+      const hospObj = await Hospital.findOne({ code: decoded.hospitalCode.toUpperCase() });
+      if (!hospObj || hospObj.status !== 'active') {
+        return res.status(403).json({
+          success: false,
+          message: hospObj?.status === 'pending'
+            ? `Hospital account "${decoded.hospitalCode}" is awaiting subscription plan activation. Please contact Super Admin.`
+            : `Hospital account "${decoded.hospitalCode}" is currently inactive. Please contact your system administrator for assistance.`
+        });
+      }
+
       const conn = await getTenantConnection(decoded.hospitalCode);
       await tenantLocalStorage.run({ connection: conn }, executeInContext);
     } else {

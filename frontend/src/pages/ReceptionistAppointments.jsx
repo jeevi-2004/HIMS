@@ -179,10 +179,18 @@ const CompactAppointmentCard = ({
   onCallNext,
   onCompleteConsultation,
   onOpenPayment,
-  onOpenBottomSheet
+  onCollectPayment,
+  onPrintToken,
+  onOpenBottomSheet,
+  onViewDetail,
+  onEditProfile
 }) => {
   const { billingSettings, workflow, getAppointmentActions, getQueueEvaluation } = useBillingSettings();
   const isReceptionFeeCollector = billingSettings?.feeCollectionRole === 'Reception';
+
+  const handlePayment = onCollectPayment || onOpenPayment;
+  const handleToken = onPrintToken || onOpenBottomSheet;
+  const handleDetail = onViewDetail || onOpenBottomSheet;
 
   const statusColors = {
     'Waiting': 'bg-blue-50 text-blue-700 border-blue-200 font-bold',
@@ -211,7 +219,7 @@ const CompactAppointmentCard = ({
           icon: null,
           style: 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500 shadow-xs',
           disabled: false,
-          onClick: () => onOpenPayment(row)
+          onClick: () => handlePayment?.(row)
         };
       }
       return {
@@ -228,7 +236,7 @@ const CompactAppointmentCard = ({
         icon: null,
         style: 'bg-[#3563F6] hover:bg-blue-700 text-white border-[#3563F6] shadow-xs',
         disabled: false,
-        onClick: () => onOpenBottomSheet(row)
+        onClick: () => handleToken?.(row)
       };
     }
     if (isCalled) {
@@ -255,7 +263,7 @@ const CompactAppointmentCard = ({
         icon: Eye,
         style: 'border-[#3563F6] text-[#3563F6] bg-white hover:bg-blue-50 font-bold',
         disabled: false,
-        onClick: () => onOpenBottomSheet(row)
+        onClick: () => handleDetail?.(row)
       };
     }
     if (status === 'Skipped') {
@@ -336,7 +344,7 @@ const CompactAppointmentCard = ({
 
         <button
           type="button"
-          onClick={() => onOpenBottomSheet(row)}
+          onClick={() => handleDetail?.(row)}
           className="min-h-[48px] px-4 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1 transition-all active:scale-98 cursor-pointer"
         >
           <span>More</span>
@@ -1027,8 +1035,15 @@ const ReceptionistAppointments = () => {
       setPanelConsultationFee(500);
       setIsTokenPanelOpen(false);
 
-      // Refetch Queue Data
-      queryClient.invalidateQueries(['appointments']);
+      // Auto focus on Active Queue and Today view
+      setDateRangeChip('TODAY');
+      setFilterFromDate(todayStr);
+      setFilterToDate(todayStr);
+      setWorkspaceTab('ACTIVE_QUEUE');
+      setStatusFilter('ALL');
+
+      // Refetch Queue Data across all queries
+      await queryClient.invalidateQueries({ queryKey: ['appointments'] });
       refetch();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to generate token');
@@ -1065,7 +1080,7 @@ const ReceptionistAppointments = () => {
       let url = `/operations/appointments?`;
       if (filterDoctor) url += `doctorId=${filterDoctor}&`;
       if (filterFromDate) {
-        url += `date=${filterFromDate}&`;
+        url += `date=${filterFromDate}&includeUpcomingScheduled=true&`;
         const daysLimit = getDaysLimit(filterFromDate, filterToDate);
         if (daysLimit > 0) url += `daysLimit=${daysLimit}&`;
       }
@@ -1127,6 +1142,29 @@ const ReceptionistAppointments = () => {
     }
   });
 
+  // Check-In Scheduled Patient Mutation
+  const checkInMutation = useMutation({
+    mutationFn: async (appointmentId) => {
+      const res = await api.put(`/operations/appointments/${appointmentId}/check-in`);
+      return res.data;
+    },
+    onSuccess: (res) => {
+      toast.success(res.message || 'Patient checked in successfully!');
+      queryClient.invalidateQueries(['appointments']);
+      queryClient.invalidateQueries(['todayQueue']);
+      queryClient.invalidateQueries(['liveQueueAppointments']);
+      refetch();
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.message || 'Check-in failed. Please try again.');
+    }
+  });
+
+  const handleCheckIn = (app) => {
+    if (!app || !app._id) return;
+    checkInMutation.mutate(app._id);
+  };
+
   // Calculate Doctor Queue States (Single Active Doctor Consultation)
   const doctorQueueState = useMemo(() => {
     const map = {};
@@ -1153,44 +1191,65 @@ const ReceptionistAppointments = () => {
 
   // KPI Summary Counts
   const kpiCounts = useMemo(() => {
-    let emergency = 0;
+    let scheduled = 0;
     let waiting = 0;
     let called = 0;
     let inConsultation = 0;
     let sentToPharmacy = 0;
     let completed = 0;
+    let emergency = 0;
 
     appointments.forEach((app) => {
       const st = app.status || app.queueStatus || 'Waiting';
+      const qState = (app.workflow?.queueState || '').toUpperCase();
       const isEmg = app.isEmergency || app.priorityLevel === 'EMERGENCY' || app.priority === 'EMERGENCY' || (app.consultationType || '').toLowerCase() === 'emergency';
+      const isScheduled = st === 'Scheduled' || qState === 'SCHEDULED' || (!app.tokenNumber && st !== 'Completed' && st !== 'In Consultation' && st !== 'Sent to Pharmacy' && st !== 'Cancelled' && st !== 'Admitted');
 
       if (isEmg && st !== 'Completed' && st !== 'In Consultation' && st !== 'Cancelled' && st !== 'Sent to Pharmacy') {
         emergency++;
       }
-      if (st === 'In Consultation' || st === 'Admitted') inConsultation++;
-      else if (st === 'Called') called++;
-      else if (st === 'Sent to Pharmacy') sentToPharmacy++;
-      else if (st === 'Completed') completed++;
-      else if (st === 'Waiting' || st === 'Scheduled') waiting++;
+      if (isScheduled) scheduled++;
+      else if (st === 'In Consultation' || st === 'Admitted' || qState === 'IN_CONSULTATION') inConsultation++;
+      else if (st === 'Called' || qState === 'CALLED') called++;
+      else if (st === 'Sent to Pharmacy' || qState === 'SENT_TO_PHARMACY' || app.pharmacyStatus === 'SENT' || app.pharmacyStatus === 'DISPENSING') sentToPharmacy++;
+      else if (st === 'Completed' || qState === 'COMPLETED' || app.pharmacyStatus === 'DISPENSED') completed++;
+      else if (st === 'Waiting' || qState === 'WAITING' || qState === 'CHECKED_IN') waiting++;
     });
 
-    return { emergency, waiting, called, inConsultation, sentToPharmacy, completed };
+    return { scheduled, waiting, called, inConsultation, sentToPharmacy, completed, emergency };
   }, [appointments]);
 
   // Filtered Appointments List by Status & Search Query
   const filteredAppointments = useMemo(() => {
     return appointments.filter((app) => {
       const st = app.status || app.queueStatus || 'Waiting';
+      const qState = (app.workflow?.queueState || '').toUpperCase();
+      const isScheduled = st === 'Scheduled' || qState === 'SCHEDULED' || (!app.tokenNumber && st !== 'Completed' && st !== 'In Consultation' && st !== 'Sent to Pharmacy' && st !== 'Cancelled' && st !== 'Admitted');
 
-      // 1. Status Filter
+      // Workspace Segmented Tab Filter
+      if (workspaceTab === 'SCHEDULED') {
+        if (!isScheduled) return false;
+      } else if (workspaceTab === 'ACTIVE_QUEUE') {
+        if (isScheduled) return false;
+        if (st === 'Completed' || st === 'Cancelled' || qState === 'COMPLETED' || qState === 'CANCELLED') return false;
+      } else if (workspaceTab === 'IN_CONSULTATION') {
+        if (st !== 'In Consultation' && st !== 'Admitted' && qState !== 'IN_CONSULTATION') return false;
+      } else if (workspaceTab === 'PHARMACY') {
+        if (st !== 'Sent to Pharmacy' && qState !== 'SENT_TO_PHARMACY' && app.pharmacyStatus !== 'SENT' && app.pharmacyStatus !== 'DISPENSING') return false;
+      } else if (workspaceTab === 'COMPLETED') {
+        if (st !== 'Completed' && qState !== 'COMPLETED' && app.pharmacyStatus !== 'DISPENSED') return false;
+      }
+
+      // Status Chip Filter (if set)
       let statusMatch = true;
       if (statusFilter === 'EMERGENCY') statusMatch = app.isEmergency || app.priorityLevel === 'EMERGENCY' || app.priority === 'EMERGENCY' || (app.consultationType || '').toLowerCase() === 'emergency';
-      else if (statusFilter === 'WAITING') statusMatch = st === 'Waiting' || st === 'Scheduled';
-      else if (statusFilter === 'CALLED') statusMatch = st === 'Called';
-      else if (statusFilter === 'IN_CONSULTATION') statusMatch = st === 'In Consultation' || st === 'Admitted';
-      else if (statusFilter === 'SENT_TO_PHARMACY') statusMatch = st === 'Sent to Pharmacy';
-      else if (statusFilter === 'COMPLETED') statusMatch = st === 'Completed';
-      else if (statusFilter === 'SKIPPED') statusMatch = st === 'Skipped';
+      else if (statusFilter === 'SCHEDULED') statusMatch = isScheduled;
+      else if (statusFilter === 'WAITING') statusMatch = (st === 'Waiting' || qState === 'WAITING' || qState === 'CHECKED_IN') && !isScheduled;
+      else if (statusFilter === 'CALLED') statusMatch = st === 'Called' || qState === 'CALLED';
+      else if (statusFilter === 'IN_CONSULTATION') statusMatch = st === 'In Consultation' || st === 'Admitted' || qState === 'IN_CONSULTATION';
+      else if (statusFilter === 'SENT_TO_PHARMACY') statusMatch = st === 'Sent to Pharmacy' || qState === 'SENT_TO_PHARMACY';
+      else if (statusFilter === 'COMPLETED') statusMatch = st === 'Completed' || qState === 'COMPLETED';
+      else if (statusFilter === 'SKIPPED') statusMatch = st === 'Skipped' || qState === 'SKIPPED';
 
       if (!statusMatch) return false;
 
@@ -1208,7 +1267,7 @@ const ReceptionistAppointments = () => {
 
       return true;
     });
-  }, [appointments, statusFilter, searchQuery]);
+  }, [appointments, workspaceTab, statusFilter, searchQuery]);
 
   // Group By Date toggle state
   const [groupByDate, setGroupByDate] = useState(false);
@@ -1386,7 +1445,7 @@ const ReceptionistAppointments = () => {
               <span className="whitespace-nowrap">Token</span>
             </button>
 
-            {billingSettings?.enableEmergencyModule !== false && (
+            {billingSettings?.enableEmergencyModule === true && (
               <button
                 type="button"
                 onClick={() => setIsEmergencyDrawerOpen(true)}
@@ -1399,6 +1458,53 @@ const ReceptionistAppointments = () => {
           </div>
         </div>
 
+        {/* Mobile Voice Call & Language Selector Bar */}
+        <div className="flex items-center justify-between gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200/80">
+          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 flex-1 min-h-[36px]">
+            <Languages className="w-4 h-4 text-[#3563F6] shrink-0" />
+            <select
+              value={voiceLangMode}
+              onChange={(e) => {
+                const mode = e.target.value;
+                setVoiceLangMode(mode);
+                voiceAnnouncement.updateSettings({ languageMode: mode });
+                const modeLabels = { BOTH: 'English + Tamil', EN_ONLY: 'English Only', TA_ONLY: 'Tamil Only' };
+                toast.success(`Voice Announcement set to ${modeLabels[mode] || mode}`);
+              }}
+              title="Voice Call Announcement Language"
+              className="text-xs font-bold text-slate-800 bg-transparent border-none outline-none cursor-pointer w-full"
+            >
+              <option value="BOTH">English + Tamil</option>
+              <option value="EN_ONLY">English Only</option>
+              <option value="TA_ONLY">Tamil Only</option>
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              const activeCall = (appointments || []).find(a => (a.status || a.queueStatus) === 'Called' || (a.status || a.queueStatus) === 'In Consultation');
+              if (activeCall) {
+                voiceAnnouncement.announceCall({
+                  tokenNumber: activeCall.tokenNumber,
+                  tokenNo: activeCall.tokenNumber,
+                  patientName: activeCall.patientId?.name || 'Patient',
+                  doctorName: activeCall.doctorId?.name || 'Doctor',
+                  roomNo: activeCall.doctorId?.roomNo || activeCall.doctorId?.doctorProfile?.roomNo || 'Consultation Room'
+                });
+                toast.success(`Voice Calling Token #${activeCall.tokenNumber}...`);
+              } else {
+                toast('No active patient call in queue to announce', { icon: '🔊' });
+              }
+            }}
+            title="Replay Voice Announcement"
+            className="flex items-center gap-1.5 font-bold text-xs px-3 py-1.5 rounded-lg border border-[#3563F6]/30 bg-[#3563F6]/10 hover:bg-[#3563F6]/20 text-[#3563F6] transition-all active:scale-98 cursor-pointer shrink-0 min-h-[36px]"
+          >
+            <Megaphone className="w-4 h-4 shrink-0" />
+            <span className="font-extrabold">Voice Call</span>
+          </button>
+        </div>
+
         {/* Sticky Search Bar */}
         <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -1409,33 +1515,6 @@ const ReceptionistAppointments = () => {
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#3563F6]/20 focus:border-[#3563F6] focus:bg-white transition-all min-h-[44px]"
           />
-        </div>
-
-        {/* Responsive Grid Status Filter Chips */}
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 w-full py-1">
-          {[
-            { key: 'ALL', label: 'All' },
-            { key: 'WAITING', label: 'Waiting' },
-            { key: 'CALLED', label: 'Called' },
-            { key: 'IN_CONSULTATION', label: 'Consulting' },
-            { key: 'COMPLETED', label: 'Completed' },
-            { key: 'SKIPPED', label: 'Skipped' }
-          ].map((chip) => {
-            const active = statusFilter === chip.key;
-            return (
-              <button
-                key={chip.key}
-                type="button"
-                onClick={() => setStatusFilter(chip.key)}
-                className={`px-2 py-2 rounded-xl text-[11px] font-bold text-center transition-all min-h-[38px] flex items-center justify-center border w-full cursor-pointer ${active
-                  ? 'bg-[#3563F6] text-white border-[#3563F6] shadow-xs'
-                  : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                  }`}
-              >
-                <span className="truncate">{chip.label}</span>
-              </button>
-            );
-          })}
         </div>
       </div>
 
@@ -1524,7 +1603,7 @@ const ReceptionistAppointments = () => {
             <span className="whitespace-nowrap">{isTokenPanelOpen ? 'Hide Registration' : 'Generate Token'}</span>
           </button>
 
-          {billingSettings?.enableEmergencyModule !== false && (
+          {billingSettings?.enableEmergencyModule === true && (
             <button
               type="button"
               onClick={() => setIsEmergencyDrawerOpen(true)}
@@ -1939,7 +2018,7 @@ const ReceptionistAppointments = () => {
         <div className="flex-1 min-w-0 w-full space-y-6">
 
           {/* 1. TOP QUEUE KPI SUMMARY CARDS (CLICKABLE) */}
-          {billingSettings?.enableEmergencyModule !== false && (
+          {billingSettings?.enableEmergencyModule === true && (
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 font-sans">
               {/* 🚨 Emergency Stat Card */}
               <button
@@ -2056,8 +2135,22 @@ const ReceptionistAppointments = () => {
               )}
             </div>
 
-            {/* PATIENT LIST SEGMENTED TABS (RESPONSIVE 5-COLUMN GRID) */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/80 w-full">
+            {/* PATIENT LIST SEGMENTED TABS (RESPONSIVE 6-COLUMN GRID) */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/80 w-full">
+              <button
+                type="button"
+                onClick={() => { setWorkspaceTab('SCHEDULED'); setStatusFilter('ALL'); }}
+                className={`w-full px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 min-h-[40px] ${workspaceTab === 'SCHEDULED'
+                  ? 'bg-white text-amber-700 shadow-xs border border-slate-200/60 font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                  }`}
+              >
+                <span className="truncate">📅 Scheduled</span>
+                <span className="bg-amber-100 text-amber-800 text-[10px] font-mono px-1.5 py-0.5 rounded-full font-bold shrink-0">
+                  {kpiCounts.scheduled}
+                </span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => { setWorkspaceTab('ACTIVE_QUEUE'); setStatusFilter('ALL'); }}
@@ -2203,12 +2296,20 @@ const ReceptionistAppointments = () => {
                               key: 'tokenNumber',
                               label: 'Token',
                               render: (row) => {
+                                const isScheduled = row.status === 'Scheduled' || row.queueStatus === 'Scheduled' || row.workflow?.queueState === 'SCHEDULED';
+                                if (isScheduled || !row.tokenNumber) {
+                                  return (
+                                    <span className="font-bold font-mono text-xs px-2.5 py-0.5 rounded-lg border text-slate-400 bg-slate-100 border-slate-200">
+                                      —
+                                    </span>
+                                  );
+                                }
                                 const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.consultationType || '').toLowerCase() === 'emergency' || (row.tokenNumber || '').startsWith('EMG') || (row.patientId?.name || '').toLowerCase().includes('unknown');
                                 return (
                                   <span className={`font-bold font-mono text-xs px-2.5 py-0.5 rounded-lg border ${
                                     isEmg ? 'text-rose-700 bg-rose-50 border-rose-300 ring-2 ring-rose-500/20 font-extrabold' : 'text-[#2F63F2] bg-[#2F63F2]/10 border-[#2F63F2]/20'
                                   }`}>
-                                    {row.tokenNumber || 'N/A'}
+                                    {row.tokenNumber}
                                   </span>
                                 );
                               }
@@ -2497,8 +2598,16 @@ const ReceptionistAppointments = () => {
                                 }
                               }
                             },
-                            {
-                              label: 'Edit Appointment',
+                             {
+                               label: 'Check In',
+                               icon: UserCheck,
+                               isPrimary: true,
+                               className: 'bg-[#2F63F2] text-white hover:bg-[#1E4FD9] font-bold shadow-xs',
+                               show: (row) => row.status === 'Scheduled' || row.queueStatus === 'Scheduled' || row.workflow?.queueState === 'SCHEDULED',
+                               onClick: (row) => handleCheckIn(row)
+                             },
+                             {
+                               label: 'Edit Appointment',
                               icon: Calendar,
                               isPrimary: false,
                               show: (row) => row.status === 'Waiting' || row.status === 'Scheduled' || row.status === 'Called' || row.status === 'Skipped',
@@ -2568,12 +2677,20 @@ const ReceptionistAppointments = () => {
                     key: 'tokenNumber',
                     label: 'Token',
                     render: (row) => {
+                      const isScheduled = row.status === 'Scheduled' || row.queueStatus === 'Scheduled' || row.workflow?.queueState === 'SCHEDULED';
+                      if (isScheduled || !row.tokenNumber) {
+                        return (
+                          <span className="font-bold font-mono text-xs px-2.5 py-0.5 rounded-lg border text-slate-400 bg-slate-100 border-slate-200">
+                            —
+                          </span>
+                        );
+                      }
                       const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.consultationType || '').toLowerCase() === 'emergency' || (row.tokenNumber || '').startsWith('EMG') || (row.patientId?.name || '').toLowerCase().includes('unknown');
                       return (
                         <span className={`font-bold font-mono text-xs px-2.5 py-0.5 rounded-lg border ${
                           isEmg ? 'text-rose-700 bg-rose-50 border-rose-300 ring-2 ring-rose-500/20 font-extrabold' : 'text-[#2F63F2] bg-[#2F63F2]/10 border-[#2F63F2]/20'
                         }`}>
-                          {row.tokenNumber || 'N/A'}
+                          {row.tokenNumber}
                         </span>
                       );
                     }
@@ -2671,6 +2788,14 @@ const ReceptionistAppointments = () => {
                 ]}
                 data={workspaceFilteredAppointments}
                 actions={[
+                  {
+                    label: 'Check In',
+                    icon: UserCheck,
+                    isPrimary: true,
+                    className: 'bg-[#2F63F2] text-white hover:bg-[#1E4FD9] font-bold shadow-xs',
+                    show: (row) => row.status === 'Scheduled' || row.queueStatus === 'Scheduled' || row.workflow?.queueState === 'SCHEDULED',
+                    onClick: (row) => handleCheckIn(row)
+                  },
                   {
                     label: (row) => {
                       const billingStatus = row.billingStatus || 'Unpaid';
@@ -2914,31 +3039,37 @@ const ReceptionistAppointments = () => {
       />
 
       {/* VIEW CONSULTATION / PRESCRIPTION / BILL / TOKEN MODAL */}
-      {viewDetailModalData && (
-        <Modal
-          isOpen={!!viewDetailModalData}
-          onClose={() => setViewDetailModalData(null)}
-          title={viewDetailModalData.title}
-          maxWidth="max-w-[550px]"
-        >
-          <div className="space-y-4 text-left font-sans text-xs">
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-              <div className="flex justify-between items-center border-b border-slate-200 pb-2">
-                <span className="font-bold text-slate-900 text-sm">{viewDetailModalData.row.patientId?.name || 'N/A'}</span>
-                <span className="font-mono font-bold text-xs text-[#2F63F2]">
-                  Token #{viewDetailModalData.row.tokenNumber || 'N/A'}
-                </span>
+      {viewDetailModalData && (() => {
+        const modalApp = viewDetailModalData.row || viewDetailModalData;
+        const modalTitle = viewDetailModalData.title || 'APPOINTMENT DETAILS';
+        const modalContent = viewDetailModalData.content || `Appointment record for ${modalApp.patientId?.name || 'Patient'}. Doctor: Dr. ${modalApp.doctorId?.name || 'Unassigned'}. Time: ${modalApp.time || 'N/A'}. Status: ${modalApp.status || modalApp.queueStatus || 'Scheduled'}.`;
+
+        return (
+          <Modal
+            isOpen={!!viewDetailModalData}
+            onClose={() => setViewDetailModalData(null)}
+            title={modalTitle}
+            maxWidth="max-w-[550px]"
+          >
+            <div className="space-y-4 text-left font-sans text-xs">
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+                <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                  <span className="font-bold text-slate-900 text-sm">{modalApp.patientId?.name || 'N/A'}</span>
+                  <span className="font-mono font-bold text-xs text-[#2F63F2]">
+                    Token #{modalApp.tokenNumber || 'N/A'}
+                  </span>
+                </div>
+                <p className="text-slate-600 font-mono pt-1">{modalContent}</p>
               </div>
-              <p className="text-slate-600 font-mono pt-1">{viewDetailModalData.content}</p>
+              <div className="flex justify-end pt-2">
+                <Button onClick={() => setViewDetailModalData(null)} variant="secondary" className="text-xs px-5">
+                  Close
+                </Button>
+              </div>
             </div>
-            <div className="flex justify-end pt-2">
-              <Button onClick={() => setViewDetailModalData(null)} variant="secondary" className="text-xs px-5">
-                Close
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
+          </Modal>
+        );
+      })()}
 
       {/* REALISTIC 3x5 INCH OPD TOKEN PRINT SLIP MODAL */}
       <OpdTokenPrintModal

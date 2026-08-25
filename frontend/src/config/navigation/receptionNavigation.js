@@ -18,7 +18,7 @@ export const receptionNavigation = [
   },
   {
     id: 'reception.appointments',
-    title: 'OPD Desk & Appointments',
+    title: 'OPD Desk & Walk-In Tokens',
     icon: Calendar,
     route: ROUTES.RECEPTION.APPOINTMENTS,
     matchPaths: [ROUTES.RECEPTION.APPOINTMENTS, '/reception/patient-registration', '/reception/register'],
@@ -26,6 +26,17 @@ export const receptionNavigation = [
     workspace: 'reception',
     group: 'reception',
     order: 2
+  },
+  {
+    id: 'reception.bookAppointments',
+    title: 'Book Future Appointments',
+    icon: Calendar,
+    route: ROUTES.RECEPTION.BOOK_APPOINTMENTS,
+    matchPaths: [ROUTES.RECEPTION.BOOK_APPOINTMENTS],
+    permission: PERMISSIONS.PATIENT_CREATE,
+    workspace: 'reception',
+    group: 'reception',
+    order: 3
   },
   {
     id: 'reception.queue',

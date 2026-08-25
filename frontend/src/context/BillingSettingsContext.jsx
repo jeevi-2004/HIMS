@@ -9,7 +9,7 @@ const DEFAULT_SETTINGS = {
   feeCollectionRole: 'Reception',
   paymentTiming: 'Before Consultation',
   collectMedicineInPharmacy: true,
-  enableEmergencyModule: true,
+  enableEmergencyModule: false,
   allowUnknownPatients: true,
   emergencyQueuePriority: 'OVERRIDE',
   emergencyTokenPrefix: 'EMG',
@@ -25,7 +25,14 @@ export const BillingSettingsProvider = ({ children }) => {
   const [billingSettings, setBillingSettings] = useState(() => {
     try {
       const saved = localStorage.getItem('villzone_billing_settings');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          ...DEFAULT_SETTINGS,
+          ...parsed,
+          enableEmergencyModule: parsed.enableEmergencyModule === true
+        };
+      }
     } catch {
       console.error('Failed to load local billing settings');
     }
@@ -44,8 +51,13 @@ export const BillingSettingsProvider = ({ children }) => {
       const res = await api.get('/admin/hospital/billing-settings');
       if (res.data?.data) {
         const fetched = res.data.data;
-        setBillingSettings(fetched);
-        localStorage.setItem('villzone_billing_settings', JSON.stringify(fetched));
+        const merged = {
+          ...DEFAULT_SETTINGS,
+          ...fetched,
+          enableEmergencyModule: fetched.enableEmergencyModule === true
+        };
+        setBillingSettings(merged);
+        localStorage.setItem('villzone_billing_settings', JSON.stringify(merged));
       }
     } catch (err) {
       if (err?.response?.status !== 401) {

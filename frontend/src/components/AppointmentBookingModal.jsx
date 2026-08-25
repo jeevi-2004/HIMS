@@ -277,8 +277,8 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
       if (!quickPatient.name || !quickPatient.name.trim()) {
         newErrors.quickName = 'Patient Name is required.';
       }
-      if (!quickPatient.mobileNumber || !/^(?:\+91[\-\s]?|91[\-\s]?)?[6-9]\d{9}$/.test(quickPatient.mobileNumber)) {
-        newErrors.quickMobile = 'Please enter a valid 10-digit mobile number.';
+      if (!quickPatient.mobileNumber || !/^[6-9]\d{9}$/.test(quickPatient.mobileNumber.replace(/[\s\-\(\)]/g, ''))) {
+        newErrors.quickMobile = 'Please enter a valid 10-digit Indian mobile number (starting with 6, 7, 8, or 9).';
       }
       const ageNum = Number(quickPatient.age);
       if (!quickPatient.age) {
@@ -510,7 +510,9 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
                     label="Mobile Number"
                     numberValue={quickPatient.mobileNumber}
                     onNumberChange={(val) => {
-                      setQuickPatient({ ...quickPatient, mobileNumber: val });
+                      let cleanVal = val.replace(/[^0-9]/g, '');
+                      if (cleanVal.length > 10) cleanVal = cleanVal.slice(0, 10);
+                      setQuickPatient({ ...quickPatient, mobileNumber: cleanVal });
                       if (formErrors.quickMobile) setFormErrors(prev => ({ ...prev, quickMobile: undefined }));
                     }}
                     required

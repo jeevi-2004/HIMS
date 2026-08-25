@@ -1,511 +1,600 @@
-import React, { useState } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import React, { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import toast from 'react-hot-toast';
 import api from '../services/api';
 import Card from '../components/Card';
-import Table from '../components/Table';
 import Button from '../components/Button';
-import Modal from '../components/Modal';
 import AppointmentBookingModal from '../components/AppointmentBookingModal';
-import OpdTokenPrintModal from '../components/OpdTokenPrintModal';
 import { 
-  Calendar, Clock, CreditCard, UserPlus, HeartPulse, ShieldCheck, UserCheck, Plus,
-  Ticket, SkipForward, RotateCcw, Eye, DoorOpen, Activity, CheckCircle2
+  Calendar, Clock, HeartPulse, ShieldCheck, Plus, Users, Pill, AlertTriangle,
+  CheckCircle2, ChevronRight, Activity, Search
 } from 'lucide-react';
-import { useBillingSettings } from '../context/BillingSettingsContext';
-
-// Payment Collection Modal Component
-const PaymentCollectionModal = ({ appointment, isOpen, onClose, onSuccess }) => {
-  if (!isOpen || !appointment) return null;
-
-  const [consultationFee, setConsultationFee] = useState(appointment.consultationFee ?? appointment.doctorId?.consultationFee ?? 500);
-  const [paymentMethod, setPaymentMethod] = useState('Cash');
-  const [submitting, setSubmitting] = useState(false);
-
-  React.useEffect(() => {
-    if (appointment) {
-      setConsultationFee(appointment.consultationFee ?? appointment.doctorId?.consultationFee ?? 500);
-    }
-  }, [appointment]);
-
-  const handleConfirmPayment = async (e) => {
-    e.preventDefault();
-    setSubmitting(true);
-    try {
-      await api.put(`/operations/appointments/${appointment._id}/queue`, {
-        billingStatus: 'Paid',
-        paymentMethod,
-        consultationFee: Number(consultationFee) || 500
-      });
-      toast.success(`Payment of ₹${consultationFee} collected successfully (${paymentMethod})!`);
-      onSuccess();
-      onClose();
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to collect payment');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="COLLECT PAYMENT"
-      maxWidth="max-w-[450px]"
-    >
-      <form onSubmit={handleConfirmPayment} className="space-y-4 text-left">
-        <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-slate-500">Patient:</span>
-            <strong className="text-slate-900">{appointment.patientId?.name}</strong>
-          </div>
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-slate-500">Token Number:</span>
-            <strong className="text-[#3563F6] font-mono">#{appointment.tokenNumber}</strong>
-          </div>
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-slate-500">Doctor:</span>
-            <span className="text-slate-800 font-semibold">{appointment.doctorId?.name}</span>
-          </div>
-        </div>
-
-        <div>
-          <label className="text-xs font-bold text-slate-700 block mb-1">Consultation Fee (₹)</label>
-          <input
-            type="number"
-            value={consultationFee}
-            onChange={(e) => setConsultationFee(e.target.value)}
-            className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-[#3563F6] font-mono focus:outline-none focus:ring-2 focus:ring-[#3563F6]/20"
-          />
-        </div>
-
-        <div>
-          <label className="text-xs font-bold text-slate-700 block mb-1">Payment Method</label>
-          <div className="grid grid-cols-4 gap-2">
-            {['Cash', 'UPI', 'Card', 'Credit'].map((method) => (
-              <button
-                key={method}
-                type="button"
-                onClick={() => setPaymentMethod(method)}
-                className={`py-2 text-xs font-bold rounded-xl border transition-all ${
-                  paymentMethod === method
-                    ? 'bg-[#3563F6] text-white border-[#3563F6]'
-                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                }`}
-              >
-                {method}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="pt-2 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center gap-1 cursor-pointer disabled:opacity-50"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Confirm Payment</span>
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-};
 
 const ReceptionistDashboard = () => {
   const [isBookOpen, setIsBookOpen] = useState(false);
-  const [paymentModalApp, setPaymentModalApp] = useState(null);
-  const [tokenPrintModalApp, setTokenPrintModalApp] = useState(null);
 
-  const { billingSettings } = useBillingSettings();
-  const isReceptionFeeCollector = (billingSettings?.feeCollectionRole || 'Reception') === 'Reception';
-
-  // Fetch today's appointments
+  // Fetch today's appointments for current hospital/tenant
   const { data: appointments, isLoading: appLoading, refetch: appointmentsRefetch } = useQuery({
     queryKey: ['appointments', 'todayDashboardSummary'],
     queryFn: async () => {
       const today = new Date().toISOString().split('T')[0];
       const res = await api.get(`/operations/appointments?date=${today}`);
-      return res.data.data;
+      return res.data?.data || [];
     },
     refetchInterval: 15000,
     refetchIntervalInBackground: true
   });
 
-
-
-  // Fetch doctors
+  // Fetch doctors list
   const { data: doctors } = useQuery({
     queryKey: ['doctors', 'dashboardList'],
     queryFn: async () => {
       const res = await api.get('/admin/users?role=DOCTOR');
-      return res.data.data;
+      return res.data?.data || [];
     }
   });
 
   const todayApps = appointments || [];
-  const totalAppointments = todayApps.length;
-  const waitingCount = todayApps.filter(a => (a.status === 'Waiting' || a.queueStatus === 'Waiting' || a.status === 'Admitted')).length;
-  const inConsultationCount = todayApps.filter(a => (a.status === 'In Consultation' || a.queueStatus === 'In-Consultation')).length;
-  const sentToPharmacyCount = todayApps.filter(a => (a.status === 'Sent to Pharmacy' || a.status === 'Sent To Pharmacy' || a.queueStatus === 'Sent to Pharmacy' || a.queueStatus === 'Sent To Pharmacy' || a.pharmacyStatus === 'SENT' || a.pharmacyStatus === 'DISPENSING')).length;
-  const completedCount = todayApps.filter(a => a.status === 'Completed' || a.queueStatus === 'Completed').length;
 
-  const updateStatusMutation = useMutation({
-    mutationFn: async ({ id, status, queueStatus }) => {
-      const res = await api.put(`/operations/appointments/${id}/queue`, { status, queueStatus });
-      return res.data.data;
-    },
-    onSuccess: () => {
-      toast.success('Patient status updated to Arrived!');
-      appointmentsRefetch();
-    },
-    onError: (err) => {
-      toast.error(err.response?.data?.message || 'Failed to update status');
-    }
+  // 1. Operational KPI Counters
+  const totalAppointments = todayApps.length;
+  const waitingCount = todayApps.filter(a => ['Waiting', 'Scheduled', 'Admitted'].includes(a.status || a.queueStatus)).length;
+  const inConsultationCount = todayApps.filter(a => ['In Consultation', 'In-Consultation', 'Called'].includes(a.status || a.queueStatus)).length;
+  const sentToPharmacyCount = todayApps.filter(a => ['Sent to Pharmacy', 'Sent To Pharmacy', 'Dispensing'].includes(a.status || a.queueStatus) || a.pharmacyStatus === 'SENT' || a.pharmacyStatus === 'DISPENSING').length;
+  const completedCount = todayApps.filter(a => (a.status === 'Completed' || a.queueStatus === 'Completed')).length;
+
+  // 2. Doctor Workload Queue Data
+  const doctorQueueList = useMemo(() => {
+    if (!doctors || doctors.length === 0) return [];
+    return doctors.map(doc => {
+      const docApps = todayApps.filter(a => (a.doctorId?._id === doc._id || a.doctorId === doc._id));
+      const waiting = docApps.filter(a => ['Waiting', 'Scheduled', 'Admitted'].includes(a.status || a.queueStatus)).length;
+      const consulting = docApps.filter(a => ['In Consultation', 'In-Consultation', 'Called'].includes(a.status || a.queueStatus)).length;
+      const completed = docApps.filter(a => a.status === 'Completed' || a.queueStatus === 'Completed').length;
+      const total = docApps.length;
+
+      const activeCount = waiting + consulting;
+      const loadPercent = Math.min(100, Math.round((activeCount / 8) * 100));
+
+      return {
+        id: doc._id,
+        name: doc.name?.startsWith('Dr.') ? doc.name : `Dr. ${doc.name}`,
+        department: doc.departmentId?.name || 'General OPD',
+        waiting,
+        consulting,
+        completed,
+        total,
+        loadPercent
+      };
+    });
+  }, [doctors, todayApps]);
+
+  // 3. Hourly OPD Activity Calculation
+  const hourlyData = useMemo(() => {
+    const hours = [
+      { label: '09 AM', hour: 9 },
+      { label: '10 AM', hour: 10 },
+      { label: '11 AM', hour: 11 },
+      { label: '12 PM', hour: 12 },
+      { label: '01 PM', hour: 13 },
+      { label: '02 PM', hour: 14 },
+      { label: '03 PM', hour: 15 },
+      { label: '04 PM', hour: 16 },
+      { label: '05 PM', hour: 17 }
+    ];
+
+    const currentHour = new Date().getHours();
+
+    const counts = hours.map(h => {
+      const count = todayApps.filter(app => {
+        let appHour = -1;
+        if (app.createdAt) {
+          appHour = new Date(app.createdAt).getHours();
+        } else if (app.time) {
+          const timeStr = app.time.toLowerCase();
+          if (timeStr.includes('am') || timeStr.includes('pm')) {
+            const match = timeStr.match(/(\d+):(\d+)\s*(am|pm)/);
+            if (match) {
+              let hr = parseInt(match[1], 10);
+              const ampm = match[3];
+              if (ampm === 'pm' && hr < 12) hr += 12;
+              if (ampm === 'am' && hr === 12) hr = 0;
+              appHour = hr;
+            }
+          } else {
+            const parts = timeStr.split(':');
+            if (parts.length > 0) appHour = parseInt(parts[0], 10);
+          }
+        }
+        return appHour === h.hour;
+      }).length;
+
+      return {
+        ...h,
+        count,
+        isCurrent: currentHour === h.hour
+      };
+    });
+
+    const maxCount = Math.max(...counts.map(c => c.count), 1);
+    const peakHour = counts.reduce((max, h) => h.count > max.count ? h : max, counts[0]);
+
+    return { counts, maxCount, peakHour };
+  }, [todayApps]);
+
+  // 4. Latest 5 Recent Activities
+  const recentActivities = useMemo(() => {
+    const sorted = [...todayApps].sort((a, b) => {
+      const timeA = new Date(a.updatedAt || a.createdAt || a.date).getTime();
+      const timeB = new Date(b.updatedAt || b.createdAt || b.date).getTime();
+      return timeB - timeA;
+    });
+
+    return sorted.slice(0, 5).map(app => {
+      const status = app.status || app.queueStatus || 'Waiting';
+      let activityText = 'Waiting in queue';
+      if (status === 'Completed') activityText = 'Consultation completed';
+      else if (status === 'In Consultation' || status === 'In-Consultation') activityText = 'Consultation in progress';
+      else if (status === 'Sent to Pharmacy' || status === 'Sent To Pharmacy') activityText = 'Sent to Pharmacy';
+      else if (app.billingStatus === 'Paid') activityText = 'Payment completed';
+      else if (status === 'Called') activityText = 'Called to doctor room';
+      else if (status === 'Skipped') activityText = 'Skipped in queue';
+
+      let timeStr = 'Today';
+      if (app.updatedAt || app.createdAt) {
+        timeStr = new Date(app.updatedAt || app.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } else if (app.time) {
+        timeStr = app.time;
+      }
+
+      return {
+        id: app._id,
+        tokenNumber: app.tokenNumber || 'OP000',
+        patientName: app.patientId?.name || 'Unknown Patient',
+        doctorName: app.doctorId?.name ? (app.doctorId.name.startsWith('Dr.') ? app.doctorId.name : `Dr. ${app.doctorId.name}`) : 'Unassigned',
+        status,
+        activityText,
+        timeStr
+      };
+    });
+  }, [todayApps]);
+
+  // 5. Reception Dynamic Alert Calculations
+  const longWaitingApps = useMemo(() => {
+    const now = new Date();
+    return todayApps.filter(a => {
+      if (!['Waiting', 'Scheduled', 'Admitted'].includes(a.status || a.queueStatus)) return false;
+      const created = new Date(a.createdAt || a.date);
+      const diffMins = (now - created) / (1000 * 60);
+      return diffMins > 15;
+    });
+  }, [todayApps]);
+
+  const pendingPaymentApps = useMemo(() => {
+    return todayApps.filter(a => a.billingStatus !== 'Paid' && a.billingStatus !== 'Exempt');
+  }, [todayApps]);
+
+  const emergencyWaitingApps = useMemo(() => {
+    return todayApps.filter(a => 
+      (a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || (a.consultationType || '').toLowerCase() === 'emergency' || (a.tokenNumber || '').startsWith('EMG')) &&
+      ['Waiting', 'Scheduled', 'Admitted'].includes(a.status || a.queueStatus)
+    );
+  }, [todayApps]);
+
+  const formattedTodayDate = new Date().toLocaleDateString('en-GB', { 
+    weekday: 'long', 
+    day: 'numeric', 
+    month: 'long', 
+    year: 'numeric' 
   });
 
   return (
-    <div className="space-y-8 text-left">
-      {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+    <div className="space-y-6 text-left font-sans">
+      {/* 1. Dashboard Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Receptionist Dashboard</h1>
-          <p className="text-xs text-slate-500 font-medium mt-2">
-            Welcome back! Manage patient profiles, generate OPD tokens, and monitor consulting rooms.
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Reception Overview</h1>
+          </div>
+          <p className="text-xs text-slate-500 font-medium mt-1">
+            Today's OPD activity at a glance
           </p>
         </div>
-        <Button
-          onClick={() => setIsBookOpen(true)}
-          variant="primary"
-          icon={Plus}
-          className="text-xs font-bold uppercase tracking-wider h-[42px] px-5 bg-[#2F63F2]"
-        >
-          Generate Token
-        </Button>
+
+        <div className="flex items-center gap-3 justify-between sm:justify-end">
+          <div className="text-right">
+            <div className="text-xs font-bold text-slate-800 font-sans">
+              {formattedTodayDate}
+            </div>
+            <div className="text-[10px] font-semibold text-emerald-600 flex items-center justify-end gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Live OPD Active</span>
+            </div>
+          </div>
+
+          <Button
+            onClick={() => setIsBookOpen(true)}
+            variant="primary"
+            icon={Plus}
+            className="text-xs font-bold uppercase tracking-wider h-[42px] px-5 bg-[#3563F6] hover:bg-blue-700 shadow-xs cursor-pointer"
+          >
+            Generate Token
+          </Button>
+        </div>
       </div>
-      
-      {/* 1. Quick Stats Counters */}
+
+      {/* 2. Compact Operational KPI Overview (5 Cards) */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
-        <div className="bg-white border border-[#E5E7EB] p-5 rounded-2xl flex flex-col justify-between shadow-sm text-left h-28 hover:shadow-md transition-all">
+        {/* TOTAL VISITS */}
+        <div className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-2xs flex flex-col justify-between h-28 hover:shadow-md transition-all text-left">
           <div className="flex justify-between items-center">
-            <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Total Visits</span>
-            <Calendar className="w-4 h-4 text-[#2F63F2]" />
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">TOTAL VISITS</span>
+            <div className="w-7 h-7 rounded-lg bg-blue-50 text-[#3563F6] flex items-center justify-center">
+              <Calendar className="w-3.5 h-3.5" />
+            </div>
           </div>
-          <span className="text-2xl font-extrabold text-slate-800 font-mono">{totalAppointments}</span>
+          <div className="flex items-baseline justify-between">
+            <span className="text-2xl font-extrabold text-slate-900 font-mono">{totalAppointments}</span>
+            <span className="text-[10px] font-bold text-slate-400">Today</span>
+          </div>
         </div>
 
-        <div className="bg-white border border-[#E5E7EB] p-5 rounded-2xl flex flex-col justify-between shadow-sm text-left h-28 hover:shadow-md transition-all">
+        {/* WAITING */}
+        <div className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-2xs flex flex-col justify-between h-28 hover:shadow-md transition-all text-left">
           <div className="flex justify-between items-center">
-            <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Waiting</span>
-            <Clock className="w-4 h-4 text-slate-400" />
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-700">WAITING</span>
+            <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+              <Clock className="w-3.5 h-3.5" />
+            </div>
           </div>
-          <span className="text-2xl font-extrabold text-slate-800 font-mono">{waitingCount}</span>
+          <div className="flex items-baseline justify-between">
+            <span className="text-2xl font-extrabold text-blue-600 font-mono">{waitingCount}</span>
+            <span className="text-[10px] font-bold text-blue-600">Patients</span>
+          </div>
         </div>
 
-        <div className="bg-white border border-[#E5E7EB] p-5 rounded-2xl flex flex-col justify-between shadow-sm text-left h-28 hover:shadow-md transition-all">
+        {/* CONSULTING */}
+        <div className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-2xs flex flex-col justify-between h-28 hover:shadow-md transition-all text-left">
           <div className="flex justify-between items-center">
-            <span className="text-[9px] font-extrabold uppercase tracking-wider text-purple-600">Consulting</span>
-            <HeartPulse className="w-4 h-4 text-purple-600" />
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-700">CONSULTING</span>
+            <div className="w-7 h-7 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
+              <HeartPulse className="w-3.5 h-3.5" />
+            </div>
           </div>
-          <span className="text-2xl font-extrabold text-purple-700 font-mono">{inConsultationCount}</span>
+          <div className="flex items-baseline justify-between">
+            <span className="text-2xl font-extrabold text-purple-700 font-mono">{inConsultationCount}</span>
+            <span className="text-[10px] font-bold text-purple-600">Now</span>
+          </div>
         </div>
 
-        <div className="bg-[#FFF3CD]/40 border border-[#F59E0B]/30 p-5 rounded-2xl flex flex-col justify-between shadow-sm text-left h-28 hover:shadow-md transition-all">
+        {/* PHARMACY */}
+        <div className="bg-[#FFF3CD]/40 border border-[#F59E0B]/30 p-4 rounded-2xl shadow-2xs flex flex-col justify-between h-28 hover:shadow-md transition-all text-left">
           <div className="flex justify-between items-center">
-            <span className="text-[9px] font-extrabold uppercase tracking-wider text-[#B45309]">Sent to Pharmacy</span>
-            <Clock className="w-4 h-4 text-[#B45309]" />
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#B45309]">PHARMACY</span>
+            <div className="w-7 h-7 rounded-lg bg-amber-100 text-[#B45309] flex items-center justify-center">
+              <Pill className="w-3.5 h-3.5" />
+            </div>
           </div>
-          <span className="text-2xl font-extrabold text-[#B45309] font-mono">{sentToPharmacyCount}</span>
+          <div className="flex items-baseline justify-between">
+            <span className="text-2xl font-extrabold text-[#B45309] font-mono">{sentToPharmacyCount}</span>
+            <span className="text-[10px] font-bold text-[#B45309]">Sent today</span>
+          </div>
         </div>
 
-        <div className="bg-white border border-[#E5E7EB] p-5 rounded-2xl flex flex-col justify-between shadow-sm text-left h-28 hover:shadow-md transition-all">
+        {/* COMPLETED */}
+        <div className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-2xs flex flex-col justify-between h-28 hover:shadow-md transition-all text-left col-span-2 lg:col-span-1">
           <div className="flex justify-between items-center">
-            <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Completed</span>
-            <ShieldCheck className="w-4 h-4 text-emerald-500" />
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700">COMPLETED</span>
+            <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <ShieldCheck className="w-3.5 h-3.5" />
+            </div>
           </div>
-          <span className="text-2xl font-extrabold text-slate-800 font-mono text-emerald-600">{completedCount}</span>
+          <div className="flex items-baseline justify-between">
+            <span className="text-2xl font-extrabold text-emerald-600 font-mono">{completedCount}</span>
+            <span className="text-[10px] font-bold text-emerald-600">Completed</span>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        
-        {/* Table summary of active queue */}
-        <div className="lg:col-span-2">
-          <Card title="🛎️ Active Intake Desk Queue" subtitle="Recently registered patient queue logs.">
-            <Table
-              headers={[
-                {
-                  key: 'tokenNumber',
-                  label: 'Token',
-                  render: (row) => {
-                    const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.consultationType || '').toLowerCase() === 'emergency' || (row.tokenNumber || '').startsWith('EMG') || (row.patientId?.name || '').toLowerCase().includes('unknown');
-                    return (
-                      <span className={`font-bold font-mono text-xs px-2.5 py-0.5 rounded-lg border ${
-                        isEmg ? 'text-rose-700 bg-rose-50 border-rose-300 ring-2 ring-rose-500/20 font-extrabold' : 'text-[#2F63F2] bg-[#2F63F2]/10 border-[#2F63F2]/20'
+      {/* 3. Middle Grid: OPD Activity Chart (Left) + Doctor Workload Queue (Right) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* TODAY'S OPD ACTIVITY (Hourly Flow Trend) */}
+        <div className="lg:col-span-7">
+          <Card
+            title="TODAY'S OPD ACTIVITY"
+            subtitle="Patient flow throughout the day"
+          >
+            <div className="pt-2 space-y-4">
+              {/* Hour-by-hour bar chart visual */}
+              <div className="flex items-end justify-between gap-1 sm:gap-2 h-44 pt-6 pb-2 px-1">
+                {hourlyData.counts.map((h, i) => {
+                  const heightPercent = Math.max(12, Math.round((h.count / hourlyData.maxCount) * 100));
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center gap-1 group relative">
+                      {/* Tooltip */}
+                      <div className="absolute -top-7 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 text-white text-[10px] font-mono font-bold py-0.5 px-2 rounded pointer-events-none whitespace-nowrap z-10 shadow-md">
+                        {h.count} patients ({h.label})
+                      </div>
+
+                      {/* Bar Value Header */}
+                      <span className={`text-[10px] font-mono font-bold transition-colors ${
+                        h.count > 0 ? 'text-slate-700' : 'text-slate-300'
                       }`}>
-                        {row.tokenNumber || 'N/A'}
+                        {h.count > 0 ? h.count : ''}
                       </span>
-                    );
-                  }
-                },
-                {
-                  key: 'patientId.name',
-                  label: 'Patient Name',
-                  render: (row) => (
-                    <span className="font-bold text-slate-900 text-sm">{row.patientId?.name || 'Unknown'}</span>
-                  )
-                },
-                {
-                  key: 'doctorId.name',
-                  label: 'Doctor',
-                  render: (row) => <span className="font-semibold text-slate-700">{row.doctorId?.name || 'Unassigned'}</span>
-                },
-                {
-                  key: 'patientStatus',
-                  label: 'Patient Status',
-                  render: (row) => {
-                    const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.consultationType || '').toLowerCase() === 'emergency' || (row.patientId?.name || '').toLowerCase().includes('unknown');
-                    const status = row.status || row.queueStatus || 'Waiting';
 
-                    if (isEmg && (status === 'Scheduled' || status === 'Waiting' || status === 'Arrived')) {
-                      return (
-                        <span className="text-[9px] font-extrabold border border-rose-300 bg-rose-50 text-rose-700 px-2 py-0.5 rounded-lg uppercase tracking-wider inline-flex items-center gap-1 whitespace-nowrap">
-                          <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping shrink-0" />
-                          PRIORITY WAITING
-                        </span>
-                      );
-                    }
+                      {/* Bar Graphic */}
+                      <div className="w-full max-w-[28px] bg-slate-100 rounded-t-lg h-28 flex items-end overflow-hidden p-0.5">
+                        <div
+                          style={{ height: `${heightPercent}%` }}
+                          className={`w-full rounded-t transition-all duration-500 ${
+                            h.isCurrent
+                              ? 'bg-[#3563F6] shadow-md ring-2 ring-[#3563F6]/30'
+                              : h.count === hourlyData.peakHour.count && h.count > 0
+                              ? 'bg-purple-600'
+                              : h.count > 0
+                              ? 'bg-blue-400 hover:bg-[#3563F6]'
+                              : 'bg-slate-200/60'
+                          }`}
+                        />
+                      </div>
 
-                    const colors = {
-                      'Waiting': 'bg-blue-50 text-blue-600 border-blue-100',
-                      'Called': 'bg-cyan-50 text-cyan-700 border-cyan-200 font-bold',
-                      'In Consultation': 'bg-purple-50 text-purple-700 border-purple-200 font-bold',
-                      'In-Consultation': 'bg-purple-50 text-purple-700 border-purple-200 font-bold',
-                      'Sent to Pharmacy': 'bg-[#FFF3CD] text-[#B45309] border-[#F59E0B] font-bold',
-                      'Sent To Pharmacy': 'bg-[#FFF3CD] text-[#B45309] border-[#F59E0B] font-bold',
-                      'Completed': 'bg-emerald-50 text-emerald-600 border-emerald-100',
-                      'Skipped': 'bg-amber-50 text-amber-600 border-amber-100',
-                      'Cancelled': 'bg-rose-50 text-rose-600 border-rose-100',
-                      'Emergency': 'bg-red-100 text-red-700 border-red-200 font-extrabold'
-                    };
-
-                    return (
-                      <span className={`text-[9px] font-bold border px-2.5 py-1 rounded-lg uppercase tracking-wider whitespace-nowrap inline-block ${colors[status] || 'bg-slate-50'}`}>
-                        {status}
+                      {/* Hour Label */}
+                      <span className={`text-[9px] font-extrabold uppercase font-mono tracking-tighter ${
+                        h.isCurrent ? 'text-[#3563F6] font-black' : 'text-slate-400'
+                      }`}>
+                        {h.label}
                       </span>
-                    );
-                  }
-                },
-                {
-                  key: 'paymentStatus',
-                  label: 'Payment Status',
-                  render: (row) => {
-                    const billingStatus = row.billingStatus || 'Unpaid';
+                    </div>
+                  );
+                })}
+              </div>
 
-                    if (billingStatus === 'Paid') {
-                      return (
-                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg flex items-center gap-1 w-fit whitespace-nowrap">
-                          🟢 Paid
-                        </span>
-                      );
-                    }
-                    if (billingStatus === 'Exempt') {
-                      return (
-                        <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg whitespace-nowrap">
-                          🔵 Exempt
-                        </span>
-                      );
-                    }
-                    if (billingStatus === 'Refunded') {
-                      return (
-                        <span className="text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg whitespace-nowrap">
-                          ⚪ Refunded
-                        </span>
-                      );
-                    }
+              {/* Chart Legend & Summary */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100 text-xs text-slate-500">
+                <div className="flex items-center gap-4">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-[#3563F6]" />
+                    <span className="font-medium text-slate-700">Current Hour</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-purple-600" />
+                    <span className="font-medium text-slate-700">Peak Volume</span>
+                  </span>
+                </div>
 
-                    if (isReceptionFeeCollector) {
-                      return (
-                        <button
-                          type="button"
-                          onClick={() => setPaymentModalApp(row)}
-                          className="text-[10px] font-bold text-white bg-amber-500 hover:bg-amber-600 px-2.5 py-1 rounded-lg transition-all shadow-2xs cursor-pointer"
-                        >
-                          Collect Payment
-                        </button>
-                      );
-                    }
+                <div className="font-mono text-[11px] font-semibold text-slate-600">
+                  Peak: <strong className="text-slate-900 font-bold">{hourlyData.peakHour.label}</strong> ({hourlyData.peakHour.count} visits)
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
 
-                    return (
-                      <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
-                        Pending
+        {/* DOCTOR QUEUE (Live Workload by Doctor - Read-Only) */}
+        <div className="lg:col-span-5">
+          <Card
+            title="DOCTOR QUEUE"
+            subtitle="Live workload by doctor"
+            action={
+              <Link
+                to="/reception/queue"
+                className="text-xs font-bold text-[#3563F6] hover:underline flex items-center gap-1"
+              >
+                <span>View Live Queue</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </Link>
+            }
+          >
+            <div className="space-y-3 pt-1 max-h-[290px] overflow-y-auto pr-0.5">
+              {doctorQueueList.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-400 font-medium bg-slate-50 rounded-xl border border-slate-100">
+                  No doctor profiles available.
+                </div>
+              ) : (
+                doctorQueueList.map(doc => (
+                  <div key={doc.id} className="p-3 bg-white border border-slate-200/80 rounded-xl space-y-2 hover:border-slate-300 transition-all">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-900">{doc.name}</h4>
+                        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">{doc.department}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-100">
+                          {doc.waiting} Waiting
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-100">
+                          {doc.consulting} Consulting
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Queue Load Bar */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[9px] font-semibold text-slate-400">
+                        <span>Queue Workload</span>
+                        <span className="font-mono">{doc.waiting + doc.consulting} Active Patients</span>
+                      </div>
+                      <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                        <div
+                          style={{ width: `${doc.loadPercent}%` }}
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            doc.waiting > 4 ? 'bg-amber-500' : doc.waiting > 8 ? 'bg-rose-500' : 'bg-[#3563F6]'
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* 4. Bottom Grid: Recent Activity (Left) + Attention Required & Quick Actions (Right) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* RECENT ACTIVITY (Top 5 patient activity updates) */}
+        <div className="lg:col-span-7">
+          <Card
+            title="RECENT ACTIVITY"
+            subtitle="Latest patient activity"
+            action={
+              <Link
+                to="/reception/appointments"
+                className="text-xs font-bold text-[#3563F6] hover:underline flex items-center gap-1"
+              >
+                <span>View all activity</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </Link>
+            }
+          >
+            <div className="divide-y divide-slate-100">
+              {recentActivities.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-400 font-medium">
+                  No recent patient activity registered today.
+                </div>
+              ) : (
+                recentActivities.map((act) => (
+                  <div key={act.id} className="py-3 px-1 flex items-center justify-between gap-3 text-left">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="font-mono font-bold text-xs text-[#3563F6] bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg shrink-0">
+                        {act.tokenNumber}
                       </span>
-                    );
-                  }
-                }
-              ]}
-              data={todayApps}
-              loading={appLoading}
-              inlineActions={false}
-              actions={[
-                /* 1. Engine-Approved Action */
-                {
-                  label: (row) => {
-                    const billingStatus = row.billingStatus || 'Unpaid';
-                    const status = row.status || row.queueStatus || 'Waiting';
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs text-slate-900 truncate">{act.patientName}</span>
+                          <span className="text-[10px] font-semibold text-slate-500 truncate">• {act.activityText}</span>
+                        </div>
+                        <div className="text-[10px] font-medium text-slate-400 mt-0.5">
+                          Assigned to <strong className="text-slate-700 font-semibold">{act.doctorName}</strong>
+                        </div>
+                      </div>
+                    </div>
 
-                    if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                      return 'Collect Payment';
-                    }
-                    if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
-                      return 'Print Token';
-                    }
-                    if (status === 'Called') return 'Sent to Doctor';
-                    if (status === 'In Consultation' || status === 'In-Consultation') return 'In Consultation';
-                    if (status === 'Sent to Pharmacy' || status === 'Sent To Pharmacy' || status === 'Completed') return 'View';
-                    if (status === 'Skipped') return 'Skipped';
+                    <div className="text-right shrink-0">
+                      <span className="text-[10px] font-mono font-semibold text-slate-400 block">{act.timeStr}</span>
+                      <span className={`text-[9px] font-bold uppercase tracking-wider ${
+                        act.status === 'Completed' ? 'text-emerald-600' : act.status === 'Waiting' ? 'text-blue-600' : 'text-purple-600'
+                      }`}>
+                        {act.status}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </Card>
+        </div>
 
-                    return status;
-                  },
-                  icon: (row) => {
-                    const billingStatus = row.billingStatus || 'Unpaid';
-                    const status = row.status || row.queueStatus || 'Waiting';
+        {/* ATTENTION REQUIRED & QUICK ACTIONS */}
+        <div className="lg:col-span-5 space-y-6">
+          {/* ATTENTION REQUIRED */}
+          <Card
+            title="ATTENTION REQUIRED"
+            subtitle="Items requiring receptionist action"
+          >
+            <div className="space-y-2.5 pt-1 text-xs">
+              {longWaitingApps.length === 0 && pendingPaymentApps.length === 0 && emergencyWaitingApps.length === 0 ? (
+                <div className="p-4 bg-emerald-50/70 border border-emerald-200/80 rounded-xl flex items-start gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="font-bold text-emerald-900 text-xs">✓ Everything looks good</h4>
+                    <p className="text-[11px] text-emerald-700 font-medium mt-0.5">No pending reception actions or waiting alerts at this moment.</p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {emergencyWaitingApps.length > 0 && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between text-rose-800">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span className="font-bold text-xs">⚠ {emergencyWaitingApps.length} emergency patient(s) waiting</span>
+                      </div>
+                      <Link to="/reception/appointments" className="text-[10px] font-extrabold uppercase text-rose-700 underline shrink-0">
+                        Prioritize →
+                      </Link>
+                    </div>
+                  )}
 
-                    if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                      return null;
-                    }
-                    if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
-                      return Ticket;
-                    }
-                    if (status === 'Called') return DoorOpen;
-                    if (status === 'In Consultation' || status === 'In-Consultation') return Activity;
-                    if (status === 'Sent to Pharmacy' || status === 'Sent To Pharmacy' || status === 'Completed') return Eye;
+                  {longWaitingApps.length > 0 && (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-amber-900">
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span className="font-semibold text-xs">⚠ {longWaitingApps.length} patient(s) waiting &gt; 15 mins</span>
+                      </div>
+                      <Link to="/reception/appointments" className="text-[10px] font-extrabold uppercase text-amber-800 underline shrink-0">
+                        View Desk →
+                      </Link>
+                    </div>
+                  )}
 
-                    return null;
-                  },
-                  isPrimary: true,
-                  disabled: (row) => {
-                    const billingStatus = row.billingStatus || 'Unpaid';
-                    const status = row.status || row.queueStatus || 'Waiting';
+                  {pendingPaymentApps.length > 0 && (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-amber-900">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span className="font-semibold text-xs">⚠ {pendingPaymentApps.length} consultation payment(s) pending</span>
+                      </div>
+                      <Link to="/reception/appointments" className="text-[10px] font-extrabold uppercase text-amber-800 underline shrink-0">
+                        Collect →
+                      </Link>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </Card>
 
-                    if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                      return false;
-                    }
-                    if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
-                      return false;
-                    }
-                    if (status === 'Sent to Pharmacy' || status === 'Sent To Pharmacy' || status === 'Completed') {
-                      return false;
-                    }
-                    return true;
-                  },
-                  onClick: (row) => {
-                    const billingStatus = row.billingStatus || 'Unpaid';
-                    const status = row.status || row.queueStatus || 'Waiting';
+          {/* QUICK ACTIONS */}
+          <Card
+            title="QUICK ACTIONS"
+            subtitle="Frequently used receptionist workflows"
+          >
+            <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <Button
+                onClick={() => setIsBookOpen(true)}
+                variant="primary"
+                icon={Plus}
+                className="text-xs font-bold h-[40px] bg-[#3563F6] hover:bg-blue-700 shadow-2xs justify-start px-3 cursor-pointer"
+              >
+                Generate Token
+              </Button>
 
-                    if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                      setPaymentModalApp(row);
-                    } else if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
-                      setTokenPrintModalApp(row);
-                    }
-                  }
-                },
+              <Link
+                to="/reception/appointments"
+                className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-all border border-slate-200/80 justify-start"
+              >
+                <Search className="w-3.5 h-3.5 text-slate-500" />
+                <span>Search Patient</span>
+              </Link>
 
-                /* 2. Skip Action */
-                {
-                  label: 'Skip',
-                  icon: SkipForward,
-                  isPrimary: true,
-                  variant: 'amber',
-                  show: (row) => {
-                    const status = row.status || row.queueStatus || 'Waiting';
-                    return status === 'Waiting' || status === 'Scheduled' || status === 'Called';
-                  },
-                  onClick: (row) => {
-                    updateStatusMutation.mutate({ id: row._id, queueStatus: 'Skipped', status: 'Skipped' });
-                  }
-                },
+              <Link
+                to="/reception/book-appointments"
+                className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-all border border-slate-200/80 justify-start"
+              >
+                <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                <span>Book Appointment</span>
+              </Link>
 
-                /* 3. Re-Queue Action */
-                {
-                  label: 'Re-Queue',
-                  icon: RotateCcw,
-                  isPrimary: true,
-                  variant: 'blue',
-                  show: (row) => {
-                    const status = row.status || row.queueStatus || 'Waiting';
-                    return status === 'Skipped';
-                  },
-                  onClick: (row) => {
-                    updateStatusMutation.mutate({ id: row._id, queueStatus: 'Waiting', status: 'Admitted' });
-                  }
-                }
-              ]}
-            />
-            <div className="pt-2 text-right">
-              <Link to="/reception/appointments" className="text-xs font-bold text-[#2F63F2] hover:underline uppercase tracking-wider">
-                View Full Patient List &rarr;
+              <Link
+                to="/reception/queue"
+                className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-all border border-slate-200/80 justify-start"
+              >
+                <Users className="w-3.5 h-3.5 text-slate-500" />
+                <span>Open Live Queue</span>
               </Link>
             </div>
           </Card>
         </div>
-
-        {/* Real-time Room schedules */}
-        <div className="lg:col-span-1">
-          <Card title="🩺 Consulting Room Load" subtitle="Doctor schedules & wait counts.">
-            <div className="space-y-4 pt-1 max-h-[300px] overflow-y-auto">
-              {doctors?.map(d => {
-                const docWaitingList = todayApps.filter(a => a.doctorId?._id === d._id && a.queueStatus === 'Waiting');
-                const waitingCount = docWaitingList.length;
-
-                return (
-                  <div key={d._id} className="flex justify-between items-center p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                    <div className="text-left">
-                      <h4 className="text-xs font-bold text-slate-800">{d.name}</h4>
-                      <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-widest">{d.departmentId?.name || 'General OPD'}</span>
-                    </div>
-                    <span className={`text-[9px] font-bold px-2.5 py-1 rounded-xl uppercase tracking-wider ${waitingCount > 3 ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-600'}`}>
-                      {waitingCount} Waiting
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
-        </div>
-
       </div>
 
+      {/* Appointment Generation Modal */}
       <AppointmentBookingModal
         isOpen={isBookOpen}
         onClose={() => setIsBookOpen(false)}
         onSuccess={() => appointmentsRefetch()}
       />
-
-      <PaymentCollectionModal
-        appointment={paymentModalApp}
-        isOpen={!!paymentModalApp}
-        onClose={() => setPaymentModalApp(null)}
-        onSuccess={() => appointmentsRefetch()}
-      />
-
-      <OpdTokenPrintModal
-        isOpen={!!tokenPrintModalApp}
-        onClose={() => setTokenPrintModalApp(null)}
-        appointment={tokenPrintModalApp}
-      />
-
     </div>
   );
 };

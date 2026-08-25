@@ -460,16 +460,15 @@ const SuperAdminDashboard = () => {
   // Feature Modules Handler
   const handleToggleFeatureModule = async (hosp, modName, currentValue) => {
     try {
-      const currentModules = hosp.featureModules || {
-        OPD: true, IPD: true, Billing: true, Pharmacy: true, Laboratory: false,
-        Radiology: false, Inventory: false, HRMS: false, Finance: false, Insurance: false, PatientPortal: false
-      };
+      const rawModules = hosp.featureModules || {};
+      const normalizedModules = typeof rawModules.toJSON === 'function' ? rawModules.toJSON() : (rawModules instanceof Map ? Object.fromEntries(rawModules) : rawModules);
       const updatedModules = {
-        ...currentModules,
+        ...normalizedModules,
         [modName]: !currentValue
       };
       await api.put(`/admin/hospitals/${hosp._id}/features`, { featureModules: updatedModules });
-      toast.success(`Feature module ${modName} toggled for ${hosp.name}`);
+      const displayLabel = modName === 'Branches' ? 'Multi-Branch' : modName;
+      toast.success(`${displayLabel} module ${!currentValue ? 'ENABLED' : 'DISABLED'} for ${hosp.name}`);
       fetchData('features');
     } catch (err) {
       toast.error('Failed to toggle module feature');
@@ -720,7 +719,7 @@ const SuperAdminDashboard = () => {
                 icon={Plus}
                 className="bg-[#2F63F2] hover:bg-blue-700 font-bold"
               >
-                + Add Hospital
+                Add Hospital
               </Button>
             </div>
           </div>
@@ -898,10 +897,29 @@ const SuperAdminDashboard = () => {
         <Card title="Tenant Feature Modules Activation" subtitle="Enable or disable specific system modules dynamically per hospital tenant.">
           <div className="space-y-6 text-left">
             {hospitals.map((hosp) => {
-              const currentModules = hosp.featureModules || {
-                OPD: true, IPD: true, Billing: true, Pharmacy: true, Branches: false, Laboratory: false,
-                Radiology: false, Inventory: false, HRMS: false, Finance: false, Insurance: false, PatientPortal: false
+              const defaultModules = {
+                OPD: true,
+                APPOINTMENTS: true,
+                IPD: true,
+                BILLING: true,
+                PHARMACY: true,
+                Branches: false,
+                LABORATORY: false,
+                RADIOLOGY: false,
+                INVENTORY: false,
+                HRMS: false,
+                FINANCE: false,
+                INSURANCE: false,
+                PATIENTPORTAL: false
               };
+              const rawModules = hosp.featureModules || {};
+              const normalizedModules = typeof rawModules.toJSON === 'function' ? rawModules.toJSON() : (rawModules instanceof Map ? Object.fromEntries(rawModules) : rawModules);
+              const currentModules = {
+                ...defaultModules,
+                ...normalizedModules
+              };
+              if (normalizedModules.Branches !== undefined) currentModules.Branches = Boolean(normalizedModules.Branches);
+              else if (normalizedModules.branches !== undefined) currentModules.Branches = Boolean(normalizedModules.branches);
               return (
                 <div key={hosp._id} className="p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
                   <div className="flex justify-between items-center">
@@ -924,7 +942,7 @@ const SuperAdminDashboard = () => {
                             : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-100'
                         }`}
                       >
-                        <span className="text-[11px] font-semibold tracking-wide uppercase">{modName}</span>
+                        <span className="text-[11px] font-semibold tracking-wide uppercase">{modName === 'Branches' ? 'Multi-Branch' : modName}</span>
                         <input 
                           type="checkbox" 
                           checked={enabled} 
@@ -1220,7 +1238,7 @@ const SuperAdminDashboard = () => {
           <div className="p-5 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-4">
             <h4 className="text-xs font-bold text-[#2F63F2] uppercase tracking-widest flex items-center gap-2">
               <GitBranch className="w-4 h-4" />
-              Facility Location Address
+              Hospital Address
             </h4>
             <Input label="Street Name" value={hospitalForm.street} onChange={(e) => setHospitalForm({ ...hospitalForm, street: e.target.value })} />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1351,7 +1369,7 @@ const SuperAdminDashboard = () => {
             <h4 className="font-bold text-slate-700 mb-2">Hospital Administrator Initial Login Credentials</h4>
             <div className="space-y-1 text-slate-700">
               <p><strong>Hospital Code:</strong> <span className="font-mono font-bold text-[#2F63F2] text-sm ml-1">{selectedHospitalForActivation?.code}</span></p>
-              <p><strong>Admin Mobile Number:</strong> <span className="font-mono font-bold text-slate-800 ml-1">{selectedHospitalForActivation?.contactNumber}</span></p>
+              <p><strong>Admin Mobile Number:</strong> <span className="font-mono font-bold text-slate-800 ml-1">{selectedHospitalForActivation?.ownerMobile || selectedHospitalForActivation?.adminMobile || selectedHospitalForActivation?.contactNumber}</span></p>
               <p><strong>Default Security PIN:</strong> <span className="font-mono font-bold text-emerald-600 text-sm ml-1">1234</span></p>
             </div>
             <p className="text-[#EF4444] font-semibold mt-2.5 text-[11px]">Activating this plan creates the hospital administrator account. The administrator can log in using the Hospital Code, Mobile Number, and Default PIN 1234 above.</p>
@@ -1384,7 +1402,7 @@ const SuperAdminDashboard = () => {
             <h5 className="font-bold text-[#2F63F2] uppercase tracking-wider text-[10px]">Administrator Login Credentials</h5>
             <div className="grid grid-cols-3 gap-2 pt-1 text-slate-700">
               <div><span className="text-[10px] text-slate-400 block font-semibold uppercase">Hospital Code</span><span className="font-mono font-bold text-[#2F63F2]">{selectedHospital?.code}</span></div>
-              <div><span className="text-[10px] text-slate-400 block font-semibold uppercase">Admin Mobile</span><span className="font-mono font-bold">{selectedHospital?.contactNumber}</span></div>
+              <div><span className="text-[10px] text-slate-400 block font-semibold uppercase">Admin Mobile</span><span className="font-mono font-bold">{selectedHospital?.ownerMobile || selectedHospital?.adminMobile || selectedHospital?.contactNumber}</span></div>
               <div><span className="text-[10px] text-slate-400 block font-semibold uppercase">Default PIN</span><span className="font-mono font-bold text-emerald-600">1234</span></div>
             </div>
           </div>
@@ -1428,7 +1446,7 @@ const SuperAdminDashboard = () => {
           </div>
 
           <div>
-            <p className="text-slate-400 font-semibold uppercase tracking-wide text-[9px]">Facility Address</p>
+            <p className="text-slate-400 font-semibold uppercase tracking-wide text-[9px]">Hospital Address</p>
             <p className="text-slate-700">{selectedHospital?.address?.street}, {selectedHospital?.address?.city}, {selectedHospital?.address?.state} - {selectedHospital?.address?.zip}, {selectedHospital?.address?.country}</p>
           </div>
 

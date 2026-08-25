@@ -14,7 +14,7 @@ const DrawerHeader = React.memo(({
       <div className="flex items-center gap-3 min-w-0">
         {Icon && (
           <div className="w-8 h-8 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-[#2F63F2] shrink-0">
-            <Icon className="w-4 h-4" />
+            {React.isValidElement(Icon) ? Icon : <Icon className="w-4 h-4" />}
           </div>
         )}
         <div className="min-w-0">

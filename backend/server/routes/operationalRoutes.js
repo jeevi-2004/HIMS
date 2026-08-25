@@ -6,6 +6,7 @@ const {
   searchPatients,
   updatePatient,
   bookAppointment,
+  checkInAppointment,
   getAppointments,
   enterVitals,
   updateQueueStatus,
@@ -102,6 +103,7 @@ router.get('/patients/:patientId/history', getPatientHistory);
 router.post('/appointments', bookAppointment);
 router.get('/appointments', getAppointments);
 router.get('/appointments/today', getAppointments);
+router.put('/appointments/:id/check-in', checkInAppointment);
 router.put('/appointments/:id/vitals', enterVitals);
 router.put('/appointments/:id/queue', updateQueueStatus);
 

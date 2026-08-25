@@ -151,7 +151,8 @@ const HospitalBillingWorkflowSettings = () => {
         consultationFeeType: activeFeeType,
         feeCollectionRole: activeRole,
         paymentTiming: activeTiming,
-        prescriptionDelivery: activeDelivery
+        prescriptionDelivery: activeDelivery,
+        enableEmergencyModule: billingSettings.enableEmergencyModule === true
       });
     }
   }, [billingSettings]);
@@ -198,6 +199,7 @@ const HospitalBillingWorkflowSettings = () => {
       feeCollectionRole: form.feeCollectionRole,
       paymentTiming: form.paymentTiming,
       prescriptionDelivery: form.prescriptionDelivery,
+      enableEmergencyModule: form.enableEmergencyModule === true,
       collectMedicineInPharmacy: true
     };
 
@@ -310,6 +312,21 @@ const HospitalBillingWorkflowSettings = () => {
           <Settings className="w-4 h-4" />
           <span>Fee & Payment Workflow</span>
         </button>
+
+        {/* Temporarily commented out Emergency Intake Module tab
+        <button
+          type="button"
+          onClick={() => setActiveTab('emergency')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            activeTab === 'emergency'
+              ? 'bg-rose-600 text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <AlertTriangle className="w-4 h-4" />
+          <span>Emergency Intake Module</span>
+        </button>
+        */}
 
         <button
           type="button"
@@ -1154,6 +1171,95 @@ const HospitalBillingWorkflowSettings = () => {
 
           </div>
           </>
+        ) : activeTab === 'emergency' ? (
+          /* TAB 2 — EMERGENCY INTAKE MODULE */
+          <div className="bg-white border border-slate-200/90 rounded-xl p-6 space-y-5 shadow-xs text-left">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-bold text-rose-600 uppercase tracking-wider mb-1">
+                <AlertTriangle className="w-4 h-4" />
+                <span>Emergency Intake Module</span>
+              </div>
+              <h2 className="text-base font-bold text-slate-900 tracking-tight">
+                Emergency Patient & Priority Queue Settings
+              </h2>
+              <p className="text-xs text-slate-500 font-normal mt-0.5">
+                Configure emergency patient intake workflows, custom priority token prefixes (e.g. EMG001), and OPD Reception Desk visibility.
+              </p>
+            </div>
+
+            {/* Master Toggle Card */}
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">Enable Emergency Intake Module</h3>
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  Master switch to render the Emergency Intake registration drawer and live Emergency KPI metric card at OPD Reception Desk.
+                </p>
+              </div>
+
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.enableEmergencyModule || false}
+                  onChange={(e) => setForm(prev => ({ ...prev, enableEmergencyModule: e.target.checked }))}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-600"></div>
+              </label>
+            </div>
+
+            {form.enableEmergencyModule ? (
+              <div className="space-y-4">
+                <div className="p-4 bg-rose-50/80 border border-rose-200 rounded-2xl text-xs text-rose-950 font-medium space-y-1">
+                  <p className="font-extrabold flex items-center gap-1.5 text-rose-800 text-xs uppercase tracking-wider">
+                    <span>🚨 Emergency Module Active</span>
+                  </p>
+                  <p className="text-xs text-rose-700">
+                    OPD Reception Desk will render the red <strong>Emergency Intake</strong> registration button and live <strong>Emergency KPI</strong> metric card.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block uppercase tracking-wider">
+                      Emergency Token Prefix
+                    </label>
+                    <input
+                      type="text"
+                      value={form.emergencyTokenPrefix || 'EMG'}
+                      onChange={(e) => setForm({ ...form, emergencyTokenPrefix: e.target.value.toUpperCase() })}
+                      placeholder="e.g. EMG"
+                      className="w-full h-10 px-3 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#2F63F2]/20 focus:border-[#2F63F2]"
+                    />
+                    <span className="text-[11px] text-slate-500">Prefix assigned to emergency tokens (e.g. EMG001).</span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block uppercase tracking-wider">
+                      Queue Priority Rule
+                    </label>
+                    <select
+                      value={form.emergencyQueuePriority || 'OVERRIDE'}
+                      onChange={(e) => setForm({ ...form, emergencyQueuePriority: e.target.value })}
+                      className="w-full h-10 px-3 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#2F63F2]/20 focus:border-[#2F63F2] cursor-pointer"
+                    >
+                      <option value="OVERRIDE">Top Queue Override (Immediate Next Call)</option>
+                      <option value="STANDARD">Standard Waiting Queue</option>
+                    </select>
+                    <span className="text-[11px] text-slate-500">Determines if emergency tokens jump to top of doctor queue.</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-700 font-medium space-y-1">
+                <p className="font-extrabold text-slate-800 text-xs uppercase tracking-wider">
+                  🚫 Emergency Intake Disabled (Standard OPD Mode)
+                </p>
+                <p className="text-xs text-slate-500">
+                  Emergency buttons, registration drawer, and metric cards are completely hidden from OPD Reception Desk.
+                </p>
+              </div>
+            )}
+          </div>
         ) : (
           /* TAB 2 — PRESCRIPTION DELIVERY ROUTING */
           <div className="bg-white border border-slate-200/90 rounded-xl p-6 space-y-5 shadow-xs">
@@ -1280,6 +1386,29 @@ const HospitalBillingWorkflowSettings = () => {
                       <span>Auto Cloud Fallback & Offline Ready</span>
                     </p>
                   </div>
+                </div>
+              </div>
+            ) : activeTab === 'emergency' ? (
+              <div className="space-y-3 text-xs">
+                <div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Emergency Status</span>
+                  <span className={`font-bold text-xs block ${form.enableEmergencyModule ? 'text-rose-600' : 'text-slate-500'}`}>
+                    {form.enableEmergencyModule ? '🚨 ENABLED' : '🚫 DISABLED'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Token Prefix</span>
+                  <span className="font-bold text-slate-900 text-xs block font-mono">
+                    {form.emergencyTokenPrefix || 'EMG'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Queue Priority</span>
+                  <span className="font-bold text-slate-700 text-xs block">
+                    {form.emergencyQueuePriority === 'OVERRIDE' ? 'Top Queue Override' : 'Standard Queue'}
+                  </span>
                 </div>
               </div>
             ) : (

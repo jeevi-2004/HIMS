@@ -15,8 +15,8 @@ import Table from '../components/Table';
 import DatePicker from '../components/DatePicker';
 import Autocomplete from '../components/Autocomplete';
 import { 
-  GitBranch, ClipboardList, Users, ShieldCheck, Plus, Key, Activity, Calendar, 
-  FileBarChart2, Settings, Building2, ShieldAlert, History, UserRound, Pill, 
+  GitBranch, ClipboardList, Users, ShieldCheck, ShieldAlert, Plus, Key, Activity, Calendar, 
+  FileBarChart2, Settings, Building2, History, UserRound, Pill, 
   CreditCard, Clock, Trash2, Edit, CheckCircle, PlusCircle, Search, Eye,
   Ticket, Stethoscope, FileText, Database
 } from 'lucide-react';
@@ -29,7 +29,6 @@ const AdminDashboard = () => {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('summary');
   const [branchSubTab, setBranchSubTab] = useState('branches');
-  const [reportSubTab, setReportSubTab] = useState('overview');
   const [workforceRoleTab, setWorkforceRoleTab] = useState('ALL');
   const [loading, setLoading] = useState(false);
 
@@ -45,7 +44,6 @@ const AdminDashboard = () => {
   const [staff, setStaff] = useState([]);
   const [roles, setRoles] = useState([]);
   const [services, setServices] = useState([]);
-  const [auditLogs, setAuditLogs] = useState([]);
   const [hospitalInfo, setHospitalInfo] = useState(null);
   const [todayAppointments, setTodayAppointments] = useState([]);
   const [patients, setPatients] = useState([]);
@@ -118,6 +116,19 @@ const AdminDashboard = () => {
   const profileMobileVal = useMobileValidation('');
   const patientMobileVal = useMobileValidation('');
 
+  const isMultiBranchEnabled = Boolean(
+    user?.featureModules?.Branches ||
+    hospitalInfo?.featureModules?.Branches === true ||
+    (hospitalInfo?.featureModules && typeof hospitalInfo.featureModules.get === 'function' && hospitalInfo.featureModules.get('Branches') === true)
+  );
+
+  const defaultBranchDisplayName = (hospitalInfo?.address?.city || '').toString().trim() ||
+    (branches.find(b => b.isDefault)?.address?.city || '').toString().trim() ||
+    (branches.find(b => b.isDefault)?.name && branches.find(b => b.isDefault)?.name !== 'Main Facility' ? branches.find(b => b.isDefault)?.name : null) ||
+    branches.find(b => b.isDefault)?.name ||
+    branches[0]?.name ||
+    'Main Facility';
+
   useEffect(() => {
     branchMobileVal.setValue(branchForm.contactNumber || '');
     branchMobileVal.setError(
@@ -169,10 +180,6 @@ const AdminDashboard = () => {
     else if (path.includes('/patients')) setActiveTab('patients');
     else if (path.includes('/reports')) {
       setActiveTab('reports');
-      setReportSubTab('overview');
-    } else if (path.includes('/audit-logs')) {
-      setActiveTab('reports');
-      setReportSubTab('audit-logs');
     } else if (path.includes('/hospital-profile')) setActiveTab('hospital-profile');
     else if (path.includes('/settings/working-hours')) setActiveTab('working-hours');
     else setActiveTab('summary');
@@ -183,59 +190,55 @@ const AdminDashboard = () => {
     try {
       if (tab === 'summary') {
         const [brs, depts, stf, hospitalRes, todayApps] = await Promise.all([
-          api.get('/admin/branches'),
-          api.get('/admin/departments'),
-          api.get('/admin/users'),
-          api.get('/admin/hospitals'),
+          api.get('/admin/branches').catch(() => ({ data: { data: [] } })),
+          api.get('/admin/departments').catch(() => ({ data: { data: [] } })),
+          api.get('/admin/users').catch(() => ({ data: { data: [] } })),
+          api.get('/admin/hospitals').catch(() => ({ data: { data: [] } })),
           api.get('/operations/appointments/today', { params: { date: new Date().toISOString().split('T')[0] } }).catch(() => ({ data: { data: [] } }))
         ]);
-        setBranches(brs.data.data);
-        setDepartments(depts.data.data);
-        setStaff(stf.data.data);
+        setBranches(Array.isArray(brs.data?.data) ? brs.data.data : []);
+        setDepartments(Array.isArray(depts.data?.data) ? depts.data.data : []);
+        setStaff(Array.isArray(stf.data?.data) ? stf.data.data : []);
         setTodayAppointments(Array.isArray(todayApps.data?.data) ? todayApps.data.data : (Array.isArray(todayApps.data) ? todayApps.data : []));
-        if (hospitalRes.data.data?.length > 0) {
+        if (hospitalRes.data?.data?.length > 0) {
           setHospitalInfo(hospitalRes.data.data[0]);
         }
       } else if (tab === 'branches' || tab === 'departments') {
         const [brs, depts] = await Promise.all([
-          api.get('/admin/branches'),
-          api.get('/admin/departments')
+          api.get('/admin/branches').catch(() => ({ data: { data: [] } })),
+          api.get('/admin/departments').catch(() => ({ data: { data: [] } }))
         ]);
-        setBranches(brs.data.data);
-        setDepartments(depts.data.data);
+        setBranches(Array.isArray(brs.data?.data) ? brs.data.data : []);
+        setDepartments(Array.isArray(depts.data?.data) ? depts.data.data : []);
       } else if (tab === 'services') {
-        const res = await api.get('/admin/services');
-        setServices(res.data.data);
+        const res = await api.get('/admin/services').catch(() => ({ data: { data: [] } }));
+        setServices(Array.isArray(res.data?.data) ? res.data.data : []);
       } else if (tab === 'workforce' || tab === 'doctors' || tab === 'staff' || tab === 'users') {
         const [stf, rls, brs, depts] = await Promise.all([
-          api.get('/admin/users'),
-          api.get('/admin/roles'),
-          api.get('/admin/branches'),
-          api.get('/admin/departments')
+          api.get('/admin/users').catch(() => ({ data: { data: [] } })),
+          api.get('/admin/roles').catch(() => ({ data: { data: [] } })),
+          api.get('/admin/branches').catch(() => ({ data: { data: [] } })),
+          api.get('/admin/departments').catch(() => ({ data: { data: [] } }))
         ]);
-        setStaff(stf.data.data);
-        setRoles(rls.data.data);
-        setBranches(brs.data.data);
-        setDepartments(depts.data.data);
+        setStaff(Array.isArray(stf.data?.data) ? stf.data.data : []);
+        setRoles(Array.isArray(rls.data?.data) ? rls.data.data : []);
+        setBranches(Array.isArray(brs.data?.data) ? brs.data.data : []);
+        setDepartments(Array.isArray(depts.data?.data) ? depts.data.data : []);
       } else if (tab === 'patients') {
-        const res = await api.get('/operations/patients');
+        const res = await api.get('/operations/patients').catch(() => ({ data: { data: [] } }));
         setPatients(Array.isArray(res.data?.data) ? res.data.data : []);
       } else if (tab === 'reports' || tab === 'audit-logs') {
-        const [auds, hist, depts, stf, todayApps] = await Promise.all([
-          api.get('/admin/audit-logs'),
-          api.get('/admin/login-history'),
-          api.get('/admin/departments'),
-          api.get('/admin/users'),
+        const [depts, stf, todayApps] = await Promise.all([
+          api.get('/admin/departments').catch(() => ({ data: { data: [] } })),
+          api.get('/admin/users').catch(() => ({ data: { data: [] } })),
           api.get('/operations/appointments/today', { params: { date: new Date().toISOString().split('T')[0] } }).catch(() => ({ data: { data: [] } }))
         ]);
-        setAuditLogs(auds.data.data);
-        setLoginHistory(hist.data.data);
-        setDepartments(depts.data.data);
-        setStaff(stf.data.data);
+        setDepartments(Array.isArray(depts.data?.data) ? depts.data.data : []);
+        setStaff(Array.isArray(stf.data?.data) ? stf.data.data : []);
         setTodayAppointments(Array.isArray(todayApps.data?.data) ? todayApps.data.data : (Array.isArray(todayApps.data) ? todayApps.data : []));
       } else if (tab === 'hospital-profile') {
-        const res = await api.get('/admin/hospitals');
-        if (res.data.data?.length > 0) {
+        const res = await api.get('/admin/hospitals').catch(() => ({ data: { data: [] } }));
+        if (res.data?.data?.length > 0) {
           const hosp = res.data.data[0];
           setHospitalInfo(hosp);
           setProfileForm({
@@ -255,7 +258,7 @@ const AdminDashboard = () => {
         }
       }
     } catch (err) {
-      toast.error('Failed to load dashboard parameters');
+      console.error('Data loading error:', err);
     } finally {
       setLoading(false);
     }
@@ -538,7 +541,9 @@ const AdminDashboard = () => {
     if (!staffForm.roleId) {
       errs.roleId = 'Role Clearance selection is required.';
     }
-    if (!staffForm.branchId) {
+    
+    const activeBranchId = staffForm.branchId || branches.find(b => b.isDefault)?._id || branches[0]?._id || user?.branchId;
+    if (!activeBranchId) {
       errs.branchId = 'Branch Location selection is required.';
     }
 
@@ -557,14 +562,14 @@ const AdminDashboard = () => {
         countryCode: staffForm.countryCode,
         mobileNumber: staffForm.mobileNumber,
         roleId: staffForm.roleId,
-        branchId: staffForm.branchId,
+        branchId: activeBranchId,
         departmentId: staffForm.departmentId || null,
         ...(staffForm.pin ? { pin: staffForm.pin } : {})
       };
 
       if (['DOCTOR', 'DOCTOR_ADMIN'].includes(roleName)) {
         payload.doctorProfile = {
-          qualification: staffForm.qualification,
+          qualification: (staffForm.qualification || '').trim().toUpperCase(),
           specialization: staffForm.specialization,
           experience: Number(staffForm.experience) || 0,
           consultationFee: Number(staffForm.consultationFee) || 500,
@@ -610,7 +615,7 @@ const AdminDashboard = () => {
           hospitalCode: user.hospitalCode
         };
         await api.post('/auth/create-user', createPayload);
-        toast.success('Workforce member registered successfully!');
+        toast.success('Staff added successfully');
       }
       setIsStaffOpen(false);
       setSelectedStaff(null);
@@ -664,6 +669,28 @@ const AdminDashboard = () => {
     setIsStaffOpen(true);
   };
 
+  const handleOpenAddStaff = () => {
+    setSelectedStaff(null);
+    setIsStaffViewOnly(false);
+    setStaffErrors({});
+    setStaffForm({
+      name: '',
+      countryCode: '+91',
+      mobileNumber: '',
+      pin: '',
+      roleId: '',
+      branchId: branches.find(b => b.isDefault)?._id || branches[0]?._id || user?.branchId || '',
+      departmentId: '',
+      qualification: '', specialization: '', experience: 0, consultationFee: 500, emergencyFee: 1000,
+      nurseQualification: '', nurseAssignedWard: '',
+      pharmacistLicenseNumber: '', pharmacistCounterNumber: '',
+      labTechSpecialization: '', labTechLicenseNumber: '',
+      billingCounterNumber: '', billingMaxDiscountPercent: 0,
+      receptionistDeskNumber: ''
+    });
+    setIsStaffOpen(true);
+  };
+
   const handleAddDoctor = () => {
     const docRole = roles.find(r => r.name === 'DOCTOR' || r.name === 'DOCTOR_ADMIN');
     setStaffForm({
@@ -683,6 +710,7 @@ const AdminDashboard = () => {
     });
     setSelectedStaff(null);
     setIsStaffViewOnly(false);
+    setStaffErrors({});
     setIsStaffOpen(true);
   };
 
@@ -982,9 +1010,20 @@ const AdminDashboard = () => {
           -------------------------------------------------------- */}
       {activeTab === 'branches' && (
         <div className="space-y-4 text-left">
+          {branchSubTab === 'branches' && !isMultiBranchEnabled && (
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs text-slate-600 mb-2">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                <span className="font-bold text-slate-800 uppercase tracking-wide text-[10px]">Single Facility Mode</span>
+                <span className="text-slate-300">|</span>
+                <span>Operating from <strong>Main Facility</strong>. Multi-Branch creation is disabled by Super Admin.</span>
+              </div>
+            </div>
+          )}
+
           {/* Horizontal Sub-Tab Header */}
           <div className="flex items-center gap-2 border-b border-[#E5E7EB] pb-2">
-            {Boolean(user?.featureModules?.Branches) && (
+            {isMultiBranchEnabled && (
               <button
                 onClick={() => setBranchSubTab('branches')}
                 className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-200 border flex items-center gap-2 ${
@@ -1000,7 +1039,7 @@ const AdminDashboard = () => {
             <button
               onClick={() => setBranchSubTab('departments')}
               className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-200 border flex items-center gap-2 ${
-                branchSubTab === 'departments' || !user?.featureModules?.Branches
+                branchSubTab === 'departments' || !isMultiBranchEnabled
                   ? 'bg-[#2F63F2] text-white border-[#2F63F2] shadow-xs'
                   : 'bg-white text-[#6B7280] border-[#E5E7EB] hover:bg-slate-50 hover:text-[#111827]'
               }`}
@@ -1011,7 +1050,7 @@ const AdminDashboard = () => {
           </div>
 
           {/* Sub-tab 1: Branches Table View */}
-          {branchSubTab === 'branches' && Boolean(user?.featureModules?.Branches) && (
+          {branchSubTab === 'branches' && isMultiBranchEnabled && (
             <Card 
               title="Hospital Branches Setup" 
               subtitle="Manage administrative subdivisions and regional branches"
@@ -1026,15 +1065,16 @@ const AdminDashboard = () => {
                 </Button>
               </div>
               <Table
+                inlineActions={true}
                 headers={[
-                  { key: 'name', label: 'Branch Name', sortable: true },
+                  { key: 'name', label: 'Branch Name', render: (row) => (row.name === 'Main Facility' || !row.name) ? defaultBranchDisplayName : row.name, sortable: true },
                   { key: 'code', label: 'Branch Code', render: (row) => <strong className="text-indigo-600 font-mono">{row.code}</strong> },
                   { key: 'contactNumber', label: 'Contact Phone', render: (row) => <span>{row.contactNumber}</span> },
                   { key: 'address.city', label: 'City', render: (row) => row.address?.city || '—' }
                 ]}
                 data={filteredBranchesData}
                 actions={[
-                  { label: 'Edit Info', icon: Edit, onClick: (row) => handleEditBranch(row) }
+                  { label: 'Edit Info', icon: Edit, variant: 'primary', onClick: (row) => handleEditBranch(row) }
                 ]}
                 loading={loading}
               />
@@ -1057,13 +1097,14 @@ const AdminDashboard = () => {
                 </Button>
               </div>
               <Table
+                inlineActions={true}
                 headers={[
                   { key: 'name', label: 'Department Name', sortable: true },
                   { key: 'code', label: 'Dept Code', render: (row) => <span className="font-mono text-purple-600 font-bold">{row.code}</span> }
                 ]}
                 data={filteredDeptsData}
                 actions={[
-                  { label: 'Edit Dept', icon: Edit, onClick: (row) => handleEditDept(row) }
+                  { label: 'Edit Dept', icon: Edit, variant: 'primary', onClick: (row) => handleEditDept(row) }
                 ]}
                 loading={loading}
               />
@@ -1355,7 +1396,7 @@ const AdminDashboard = () => {
             </div>
             <Button onClick={handleClearFilters} variant="secondary" className="py-2 px-4 !text-[11px]">Clear Filters</Button>
             <Button 
-              onClick={() => { setSelectedStaff(null); setIsStaffViewOnly(false); setIsStaffOpen(true); }} 
+              onClick={handleOpenAddStaff} 
               variant="primary" 
               icon={Plus} 
               className="ml-auto py-2 px-4 !text-[11px]"
@@ -1369,7 +1410,7 @@ const AdminDashboard = () => {
               { key: 'employeeCode', label: 'Employee Code', render: (row) => <span className="font-mono font-bold text-[#2F63F2]">{row.employeeCode}</span>, sortable: true },
               { key: 'name', label: 'Employee Name', sortable: true },
               { key: 'roleId.name', label: 'Designation', render: (row) => row.roleId?.name?.replace('_', ' ') },
-              { key: 'branchId.name', label: 'Branch', render: (row) => row.branchId?.name || 'Main' },
+              { key: 'branchId.name', label: 'Branch', render: (row) => (row.branchId?.name === 'Main Facility' || !row.branchId?.name || row.branchId?.name === 'Main') ? defaultBranchDisplayName : row.branchId.name },
               { key: 'mobileNumber', label: 'Mobile Phone', render: (row) => <span>{row.countryCode || '+91'} {row.mobileNumber}</span> },
               { key: 'status', label: 'Status', isStatus: true }
             ]}
@@ -1420,13 +1461,13 @@ const AdminDashboard = () => {
               <select value={filterBranch} onChange={(e) => setFilterBranch(e.target.value)} className="enterprise-input w-full py-2 text-xs">
                 <option value="">All Branches</option>
                 {branches.map(br => (
-                  <option key={br._id} value={br._id}>{br.name}</option>
+                  <option key={br._id} value={br._id}>{br.name === 'Main Facility' ? defaultBranchDisplayName : br.name}</option>
                 ))}
               </select>
             </div>
             <Button onClick={handleClearFilters} variant="secondary" className="py-2 px-4 !text-[11px]">Clear Filters</Button>
             <Button 
-              onClick={() => { setSelectedStaff(null); setIsStaffViewOnly(false); setIsStaffOpen(true); }} 
+              onClick={handleOpenAddStaff} 
               variant="primary" 
               icon={Plus} 
               className="ml-auto py-2 px-4 !text-[11px]"
@@ -1440,7 +1481,7 @@ const AdminDashboard = () => {
               { key: 'employeeCode', label: 'Employee Code', render: (row) => <span className="font-mono font-bold text-[#2F63F2]">{row.employeeCode}</span>, sortable: true },
               { key: 'name', label: 'Full Name', sortable: true },
               { key: 'roleId.name', label: 'Role / Designation', render: (row) => row.roleId?.name?.replace('_', ' ') || 'N/A' },
-              { key: 'branchId.name', label: 'Branch', render: (row) => row.branchId?.name || 'Main' },
+              { key: 'branchId.name', label: 'Branch', render: (row) => (row.branchId?.name === 'Main Facility' || !row.branchId?.name || row.branchId?.name === 'Main') ? defaultBranchDisplayName : row.branchId.name },
               { key: 'departmentId.name', label: 'Department', render: (row) => row.departmentId?.name || '—' },
               { key: 'mobileNumber', label: 'Mobile', render: (row) => <span>{row.countryCode || '+91'} {row.mobileNumber}</span> },
               { key: 'status', label: 'Status', isStatus: true }
@@ -1463,118 +1504,70 @@ const AdminDashboard = () => {
       )}
 
       {/* --------------------------------------------------------
-          8. REPORTS & AUDIT LOGS WORKSPACE
+          8. REPORTS WORKSPACE
           -------------------------------------------------------- */}
       {activeTab === 'reports' && (
-        <div className="space-y-4 text-left">
-          {/* Horizontal Sub-Tab Header */}
-          <div className="flex items-center gap-2 border-b border-[#E5E7EB] pb-2">
-            <button
-              onClick={() => { setReportSubTab('overview'); navigate('/reports'); }}
-              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-200 border flex items-center gap-2 ${
-                reportSubTab === 'overview'
-                  ? 'bg-[#2F63F2] text-white border-[#2F63F2] shadow-xs'
-                  : 'bg-white text-[#6B7280] border-[#E5E7EB] hover:bg-slate-50 hover:text-[#111827]'
-              }`}
-            >
-              <FileBarChart2 className="w-4 h-4" />
-              Overview Reports
-            </button>
-            <button
-              onClick={() => { setReportSubTab('audit-logs'); navigate('/audit-logs'); }}
-              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-200 border flex items-center gap-2 ${
-                reportSubTab === 'audit-logs'
-                  ? 'bg-[#2F63F2] text-white border-[#2F63F2] shadow-xs'
-                  : 'bg-white text-[#6B7280] border-[#E5E7EB] hover:bg-slate-50 hover:text-[#111827]'
-              }`}
-            >
-              <ShieldAlert className="w-4 h-4" />
-              Audit Trail Logs
-            </button>
+        <div className="space-y-6 text-left">
+          <div className="pb-3 border-b border-slate-200 text-left">
+            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <FileBarChart2 className="w-5 h-5 text-[#2F63F2]" />
+              Hospital Performance Reports & Analytics
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">Overview of monthly revenue channels, doctor consultancy counts, department performance, and operational trends.</p>
           </div>
 
-          {/* Sub-tab 1: Overview Reports View */}
-          {reportSubTab === 'overview' && (
-            <div className="space-y-6">
-              <div className="pb-3 border-b border-slate-200 text-left">
-                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                  <FileBarChart2 className="w-5 h-5 text-[#2F63F2]" />
-                  Hospital Performance Reports & Analytics
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">Overview of monthly revenue channels, doctor consultancy counts, department performance, and operational trends.</p>
-              </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
+            <Card title="Today's Performance Metrics">
+              {(() => {
+                const totalRegs = todayAppointments.length;
+                const dispensedCount = todayAppointments.filter(a => (a.prescriptions && a.prescriptions.length > 0) || a.pharmacyStatus === 'SENT' || a.pharmacyStatus === 'DISPENSING' || a.status === 'Sent to Pharmacy' || a.status === 'Completed').length;
+                const paidApps = todayAppointments.filter(a => {
+                  const st = a.billingStatus || a.paymentStatus || a.workflow?.paymentState;
+                  return st === 'Paid' || st === 'PAID';
+                });
+                const totalRevenue = paidApps.reduce((sum, a) => sum + (parseFloat(a.consultationFee) || 0), 0);
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
-                <Card title="Today's Performance Metrics">
-                  {(() => {
-                    const totalRegs = todayAppointments.length;
-                    const dispensedCount = todayAppointments.filter(a => (a.prescriptions && a.prescriptions.length > 0) || a.pharmacyStatus === 'SENT' || a.pharmacyStatus === 'DISPENSING' || a.status === 'Sent to Pharmacy' || a.status === 'Completed').length;
-                    const paidApps = todayAppointments.filter(a => {
-                      const st = a.billingStatus || a.paymentStatus || a.workflow?.paymentState;
-                      return st === 'Paid' || st === 'PAID';
-                    });
-                    const totalRevenue = paidApps.reduce((sum, a) => sum + (parseFloat(a.consultationFee) || 0), 0);
-
-                    return (
-                      <div className="space-y-3 font-sans text-xs">
-                        <div className="flex justify-between py-2 border-b">
-                          <span className="font-semibold text-slate-500">OPD Registrations</span>
-                          <span className="font-mono font-bold text-slate-850">{totalRegs} Patient{totalRegs === 1 ? '' : 's'}</span>
-                        </div>
-                        <div className="flex justify-between py-2 border-b">
-                          <span className="font-semibold text-slate-500">Dispensed Prescriptions</span>
-                          <span className="font-mono font-bold text-slate-850">{dispensedCount} Form{dispensedCount === 1 ? '' : 's'}</span>
-                        </div>
-                        <div className="flex justify-between py-2 border-b">
-                          <span className="font-semibold text-slate-500">Invoiced Revenue</span>
-                          <span className="font-mono font-bold text-emerald-600">₹{totalRevenue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </Card>
-
-                <Card title="Top Performing Departments">
+                return (
                   <div className="space-y-3 font-sans text-xs">
-                    {departments.map(d => (
-                      <div key={d._id} className="flex justify-between py-2 border-b">
-                        <span className="font-semibold text-slate-700">{d.name} ({d.code})</span>
-                        <span className="font-mono font-bold text-indigo-600">₹{d.consultationFee || 200} base fee</span>
-                      </div>
-                    ))}
+                    <div className="flex justify-between py-2 border-b">
+                      <span className="font-semibold text-slate-500">OPD Registrations</span>
+                      <span className="font-mono font-bold text-slate-850">{totalRegs} Patient{totalRegs === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="flex justify-between py-2 border-b">
+                      <span className="font-semibold text-slate-500">Dispensed Prescriptions</span>
+                      <span className="font-mono font-bold text-slate-850">{dispensedCount} Form{dispensedCount === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="flex justify-between py-2 border-b">
+                      <span className="font-semibold text-slate-500">Invoiced Revenue</span>
+                      <span className="font-mono font-bold text-emerald-600">₹{totalRevenue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
                   </div>
-                </Card>
+                );
+              })()}
+            </Card>
 
-                <Card title="Doctor Consultations Summary">
-                  <div className="space-y-3 font-sans text-xs">
-                    {staff.filter(s => ['DOCTOR', 'DOCTOR_ADMIN'].includes(s.roleId?.name)).map(doc => (
-                      <div key={doc._id} className="flex justify-between py-2 border-b">
-                        <span className="font-semibold text-slate-700">{doc.name}</span>
-                        <span className="font-mono font-bold text-[#2F63F2]">₹{doc.doctorProfile?.consultationFee || 300} / consult</span>
-                      </div>
-                    ))}
+            <Card title="Top Performing Departments">
+              <div className="space-y-3 font-sans text-xs">
+                {departments.map(d => (
+                  <div key={d._id} className="flex justify-between py-2 border-b">
+                    <span className="font-semibold text-slate-700">{d.name} ({d.code})</span>
+                    <span className="font-mono font-bold text-indigo-600">₹{d.consultationFee || 200} base fee</span>
                   </div>
-                </Card>
-              </div>
-            </div>
-          )}
-
-          {/* Sub-tab 2: Audit Logs View */}
-          {reportSubTab === 'audit-logs' && (
-            <Card title="Hospital Activity Logs & Audit Trails" subtitle="Configure and view audit records for system operations and user activity">
-              <div className="p-12 text-center bg-slate-50/50 border border-slate-200/80 rounded-2xl space-y-3 font-sans">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center mx-auto text-xl font-bold">
-                  📋
-                </div>
-                <h3 className="text-base font-extrabold text-slate-900 tracking-tight">
-                  Audit Logs Configuration Pending
-                </h3>
-                <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-                  System audit log recording and compliance details will be configured in a future update.
-                </p>
+                ))}
               </div>
             </Card>
-          )}
+
+            <Card title="Doctor Consultations Summary">
+              <div className="space-y-3 font-sans text-xs">
+                {staff.filter(s => ['DOCTOR', 'DOCTOR_ADMIN'].includes(s.roleId?.name)).map(doc => (
+                  <div key={doc._id} className="flex justify-between py-2 border-b">
+                    <span className="font-semibold text-slate-700">{doc.name}</span>
+                    <span className="font-mono font-bold text-[#2F63F2]">₹{doc.doctorProfile?.consultationFee || 300} / consult</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
         </div>
       )}
 
@@ -1761,6 +1754,7 @@ const AdminDashboard = () => {
                 placeholder="e.g. 1234" 
                 maxLength={4} 
                 value={staffForm.pin} 
+                autoComplete="new-password"
                 onChange={(e) => {
                   setStaffForm({ ...staffForm, pin: e.target.value.replace(/[^0-9]/g, '') });
                   if (staffErrors.pin) setStaffErrors(prev => ({ ...prev, pin: undefined }));
@@ -1792,35 +1786,42 @@ const AdminDashboard = () => {
               {staffErrors.roleId && <span className="text-xs text-[#EF4444] pl-1 mt-0.5">{staffErrors.roleId}</span>}
             </div>
             
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Branch Location <span className="text-[#EF4444]">*</span></label>
-                {!isStaffViewOnly && (
-                  <button
-                    type="button"
-                    onClick={handleOpenQuickAddBranch}
-                    className="p-1 bg-blue-50 hover:bg-blue-100 text-[#2F63F2] rounded-md flex items-center justify-center transition-colors cursor-pointer"
-                    title="Add Branch"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                )}
+            {isMultiBranchEnabled ? (
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Branch Location <span className="text-[#EF4444]">*</span></label>
+                  {!isStaffViewOnly && (
+                    <button
+                      type="button"
+                      onClick={handleOpenQuickAddBranch}
+                      className="p-1 bg-blue-50 hover:bg-blue-100 text-[#2F63F2] rounded-md flex items-center justify-center transition-colors cursor-pointer"
+                      title="Add Branch"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <select 
+                  className={`enterprise-input ${staffErrors.branchId ? 'border-[#EF4444] focus:ring-[#EF4444]/10 focus:border-[#EF4444]' : ''}`}
+                  value={staffForm.branchId} 
+                  onChange={(e) => {
+                    setStaffForm({ ...staffForm, branchId: e.target.value });
+                    if (staffErrors.branchId) setStaffErrors(prev => ({ ...prev, branchId: undefined }));
+                  }} 
+                  required 
+                  disabled={isStaffViewOnly}
+                >
+                  <option value="">Select Branch</option>
+                  {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+                </select>
+                {staffErrors.branchId && <span className="text-xs text-[#EF4444] pl-1 mt-0.5">{staffErrors.branchId}</span>}
               </div>
-              <select 
-                className={`enterprise-input ${staffErrors.branchId ? 'border-[#EF4444] focus:ring-[#EF4444]/10 focus:border-[#EF4444]' : ''}`}
-                value={staffForm.branchId} 
-                onChange={(e) => {
-                  setStaffForm({ ...staffForm, branchId: e.target.value });
-                  if (staffErrors.branchId) setStaffErrors(prev => ({ ...prev, branchId: undefined }));
-                }} 
-                required 
-                disabled={isStaffViewOnly}
-              >
-                <option value="">Select Branch</option>
-                {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
-              </select>
-              {staffErrors.branchId && <span className="text-xs text-[#EF4444] pl-1 mt-0.5">{staffErrors.branchId}</span>}
-            </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Branch Location</label>
+                <input type="text" className="enterprise-input bg-slate-50 text-slate-700 font-semibold" value={defaultBranchDisplayName} disabled />
+              </div>
+            )}
 
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
@@ -1858,7 +1859,7 @@ const AdminDashboard = () => {
                   </h4>
                   <div className="grid grid-cols-2 gap-4">
                     <Input label="Specialization" placeholder="e.g. Cardiologist" value={staffForm.specialization} onChange={(e) => setStaffForm({ ...staffForm, specialization: e.target.value })} disabled={isStaffViewOnly} />
-                    <Input label="Qualification" placeholder="e.g. MBBS, MD" value={staffForm.qualification} onChange={(e) => setStaffForm({ ...staffForm, qualification: e.target.value })} disabled={isStaffViewOnly} />
+                    <Input label="Qualification" placeholder="e.g. MBBS, MD" value={staffForm.qualification} onChange={(e) => setStaffForm({ ...staffForm, qualification: e.target.value.toUpperCase() })} disabled={isStaffViewOnly} />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <Input label="Experience (Years)" type="number" value={staffForm.experience} onChange={(e) => setStaffForm({ ...staffForm, experience: e.target.value })} disabled={isStaffViewOnly} />

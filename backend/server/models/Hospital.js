@@ -56,6 +56,10 @@ const HospitalSchema = new mongoose.Schema({
   activationDate: {
     type: Date
   },
+  defaultBranchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch'
+  },
   // Primary Administrator Credentials (for first-time login)
   adminCountryCode: {
     type: String,
@@ -106,6 +110,7 @@ const HospitalSchema = new mongoose.Schema({
     of: Boolean,
     default: {
       OPD: true,
+      Appointments: true,
       IPD: true,
       Billing: true,
       Pharmacy: true,

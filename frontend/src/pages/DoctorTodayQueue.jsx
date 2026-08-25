@@ -207,14 +207,23 @@ const DoctorTodayQueue = () => {
   const activeWaitingQueue = useMemo(() => {
     return dateFilteredQueue.filter(a => {
       const st = getVisitStatus(a);
-      return st === VISIT_STATUSES.WAITING || st === VISIT_STATUSES.SKIPPED || st === VISIT_STATUSES.SCHEDULED;
+      const qState = (a.workflow?.queueState || '').toUpperCase();
+      if (a.status === 'Scheduled' || qState === 'SCHEDULED') return false;
+      return st === VISIT_STATUSES.WAITING || st === VISIT_STATUSES.SKIPPED;
+    });
+  }, [dateFilteredQueue]);
+
+  const scheduledTodayQueue = useMemo(() => {
+    return dateFilteredQueue.filter(a => {
+      const qState = (a.workflow?.queueState || '').toUpperCase();
+      return a.status === 'Scheduled' || qState === 'SCHEDULED';
     });
   }, [dateFilteredQueue]);
 
   const enableEmergency = billingSettings?.enableEmergencyModule !== false;
 
   const sortedWaitingQueue = useMemo(() => {
-    const arrivedOnly = activeWaitingQueue.filter(a => getVisitStatus(a) !== VISIT_STATUSES.SCHEDULED);
+    const arrivedOnly = activeWaitingQueue;
     const priorityMode = billingSettings?.emergencyQueuePriority || 'OVERRIDE';
 
     return [...arrivedOnly].sort((a, b) => {
@@ -262,11 +271,12 @@ const DoctorTodayQueue = () => {
   // Dynamic Display List based on Selected Tab
   const currentDisplayList = useMemo(() => {
     if (activeTab === 'all') return dateFilteredQueue;
+    if (activeTab === 'scheduled') return scheduledTodayQueue;
     if (activeTab === 'in_consultation') return inConsultationQueue;
     if (activeTab === 'completed') return completedTodayQueue;
     if (activeTab === 'noshow') return noShowQueue;
-    return activeWaitingQueue;
-  }, [activeTab, dateFilteredQueue, inConsultationQueue, completedTodayQueue, noShowQueue, activeWaitingQueue]);
+    return sortedWaitingQueue;
+  }, [activeTab, dateFilteredQueue, scheduledTodayQueue, inConsultationQueue, completedTodayQueue, noShowQueue, sortedWaitingQueue]);
 
   // Adaptive View Determination
   // CASE 1: Single-day view if fromDate === toDate

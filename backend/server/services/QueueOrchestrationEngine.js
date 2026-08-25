@@ -132,6 +132,63 @@ class QueueOrchestrationEngine {
 
     return appointment;
   }
+
+  /**
+   * Auto-promotes appointments scheduled for Today (or earlier) into the Active Waiting Queue
+   */
+  static async promoteFutureAppointmentsForToday(branchId, hospitalId) {
+    try {
+      const Appointment = require('../models/Appointment');
+      
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const todayLocalStr = `${year}-${month}-${day}`;
+
+      // Set end of today's date buffer (covering local midnight and UTC midnight)
+      const endOfDay = new Date(`${todayLocalStr}T23:59:59.999Z`);
+      endOfDay.setDate(endOfDay.getDate() + 1);
+
+      const query = {
+        date: { $lte: endOfDay },
+        $or: [
+          { status: 'Scheduled' },
+          { status: 'SCHEDULED' },
+          { queueStatus: 'Scheduled' },
+          { queueStatus: 'SCHEDULED' },
+          { 'workflow.queueState': 'SCHEDULED' }
+        ]
+      };
+
+      if (branchId) query.branchId = branchId;
+      if (hospitalId) query.hospitalId = hospitalId;
+
+      const scheduledApps = await Appointment.find(query);
+      if (scheduledApps.length === 0) return 0;
+
+      let promotedCount = 0;
+      for (const app of scheduledApps) {
+        app.status = 'Waiting';
+        app.queueStatus = 'Waiting';
+        if (!app.workflow) {
+          app.workflow = {};
+        }
+        app.workflow.queueState = 'WAITING';
+        app.markModified('workflow');
+        await app.save();
+        promotedCount++;
+      }
+
+      if (promotedCount > 0) {
+        console.log(`[QUEUE ORCHESTRATION ENGINE] Promoted ${promotedCount} scheduled appointment(s) into active queue for today.`);
+      }
+      return promotedCount;
+    } catch (err) {
+      console.error('[QUEUE ORCHESTRATION ENGINE] Auto-promotion error:', err.message);
+      return 0;
+    }
+  }
 }
 
 module.exports = QueueOrchestrationEngine;
