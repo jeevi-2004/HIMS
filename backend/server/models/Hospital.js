@@ -105,6 +105,11 @@ const HospitalSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  opdOperationMode: {
+    type: String,
+    enum: ['TOKEN_ONLY', 'FULL_DIGITAL'],
+    default: 'FULL_DIGITAL'
+  },
   featureModules: {
     type: Map,
     of: Boolean,
@@ -114,6 +119,9 @@ const HospitalSchema = new mongoose.Schema({
       IPD: true,
       Billing: true,
       Pharmacy: true,
+      digitalPrescription: true,
+      doctorConsultationDesk: true,
+      voiceAnnouncements: true,
       Branches: false,
       Laboratory: false,
       Radiology: false,

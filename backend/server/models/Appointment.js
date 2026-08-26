@@ -113,7 +113,7 @@ const AppointmentSchema = new mongoose.Schema({
   workflow: {
     queueState: {
       type: String,
-      enum: ['SCHEDULED', 'WAITING', 'READY', 'CALLED', 'IN_CONSULTATION', 'CONSULTATION_COMPLETED', 'SENT_TO_PHARMACY', 'COMPLETED', 'SKIPPED', 'CANCELLED', 'NO_SHOW'],
+      enum: ['SCHEDULED', 'CHECKED_IN', 'WAITING', 'READY', 'CALLED', 'IN_CONSULTATION', 'CONSULTATION_COMPLETED', 'SENT_TO_PHARMACY', 'COMPLETED', 'SKIPPED', 'CANCELLED', 'NO_SHOW'],
       default: 'WAITING'
     },
     paymentState: {

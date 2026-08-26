@@ -213,7 +213,7 @@ const seedTenantAdminUser = async (hospital) => {
 };
 
 const createHospital = async (req, res, next) => {
-  const { name, code: customCode, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo } = req.body;
+  const { name, code: customCode, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo, opdOperationMode, planName } = req.body;
   try {
     let code = customCode ? customCode.trim().toUpperCase() : await generateHospitalCode();
 
@@ -223,6 +223,25 @@ const createHospital = async (req, res, next) => {
     }
 
     const databaseName = `hospital_${code.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+    const mode = opdOperationMode === 'TOKEN_ONLY' ? 'TOKEN_ONLY' : 'FULL_DIGITAL';
+
+    const featureModules = {
+      OPD: true,
+      IPD: true,
+      Billing: true,
+      Pharmacy: true,
+      digitalPrescription: mode === 'FULL_DIGITAL',
+      doctorConsultationDesk: mode === 'FULL_DIGITAL',
+      voiceAnnouncements: true,
+      Branches: false,
+      Laboratory: false,
+      Radiology: false,
+      Inventory: false,
+      HRMS: false,
+      Finance: false,
+      Insurance: false,
+      PatientPortal: false
+    };
 
     const hospital = await Hospital.create({
       name,
@@ -232,6 +251,9 @@ const createHospital = async (req, res, next) => {
       contactNumber,
       email,
       hospitalType: hospitalType || 'General',
+      opdOperationMode: mode,
+      planName: planName || (mode === 'TOKEN_ONLY' ? 'Plan 1: OPD Token Generation & Queue Suite' : 'Plan 2: Complete Digital OPD Suite'),
+      featureModules,
       registrationNumber,
       gstNumber,
       ownerName,
@@ -538,7 +560,7 @@ const getLoginHistory = async (req, res, next) => {
  */
 const activateHospitalPlan = async (req, res, next) => {
   const { id } = req.params;
-  const { planName, planType, subscriptionDuration } = req.body;
+  const { planName, opdOperationMode, planType, subscriptionDuration } = req.body;
 
   try {
     const hospital = await Hospital.findById(id);
@@ -548,7 +570,13 @@ const activateHospitalPlan = async (req, res, next) => {
 
     // Set plan attributes and change status to active
     hospital.status = 'active';
-    hospital.planName = planName || hospital.planName || 'Basic';
+    if (opdOperationMode) {
+      const mode = opdOperationMode === 'TOKEN_ONLY' ? 'TOKEN_ONLY' : 'FULL_DIGITAL';
+      hospital.opdOperationMode = mode;
+      hospital.featureModules.set('digitalPrescription', mode === 'FULL_DIGITAL');
+      hospital.featureModules.set('doctorConsultationDesk', mode === 'FULL_DIGITAL');
+    }
+    hospital.planName = planName || hospital.planName || ((hospital.opdOperationMode === 'TOKEN_ONLY') ? 'Plan 1: OPD Token Generation & Queue Suite' : 'Plan 2: Complete Digital OPD Suite');
     hospital.planType = planType || hospital.planType || 'Monthly';
     if (subscriptionDuration) {
       hospital.subscriptionDuration = subscriptionDuration;
@@ -670,11 +698,19 @@ const deletePlan = async (req, res, next) => {
 // UPDATE /api/admin/hospitals/:id
 const updateHospital = async (req, res, next) => {
   const { id } = req.params;
-  const { name, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo } = req.body;
+  const { name, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo, opdOperationMode, planName } = req.body;
   try {
+    const updateData = { name, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo };
+    if (opdOperationMode) {
+      const mode = opdOperationMode === 'TOKEN_ONLY' ? 'TOKEN_ONLY' : 'FULL_DIGITAL';
+      updateData.opdOperationMode = mode;
+      updateData['featureModules.digitalPrescription'] = mode === 'FULL_DIGITAL';
+      updateData['featureModules.doctorConsultationDesk'] = mode === 'FULL_DIGITAL';
+      if (planName) updateData.planName = planName;
+    }
     const hospital = await Hospital.findByIdAndUpdate(
       id,
-      { name, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo },
+      updateData,
       { new: true, runValidators: true }
     );
     if (!hospital) {
@@ -1081,6 +1117,8 @@ const getBillingSettings = async (req, res, next) => {
     const settings = {
       ...defaults,
       ...(hospital?.billingWorkflowSettings || {}),
+      opdOperationMode: hospital?.opdOperationMode || 'FULL_DIGITAL',
+      planName: hospital?.planName || 'Plan 2: Complete Digital OPD Suite',
       queueRulesSettings: hospital?.queueRulesSettings || defaultQueueRules
     };
     res.status(200).json({ success: true, data: settings });
@@ -1129,7 +1167,9 @@ const updateBillingSettings = async (req, res, next) => {
       notifyDisplayBoard,
       notifyVoiceAnnouncement,
       emergencyBillingPolicy,
-      queueRulesSettings
+      queueRulesSettings,
+      opdOperationMode,
+      planName
     } = req.body;
 
     const validatedSettings = validation.sanitized;
@@ -1152,6 +1192,14 @@ const updateBillingSettings = async (req, res, next) => {
       emergencyBillingPolicy: emergencyBillingPolicy || 'POSTPONE'
     };
 
+    if (opdOperationMode) {
+      const mode = opdOperationMode === 'TOKEN_ONLY' ? 'TOKEN_ONLY' : 'FULL_DIGITAL';
+      hospital.opdOperationMode = mode;
+      hospital.featureModules.set('digitalPrescription', mode === 'FULL_DIGITAL');
+      hospital.featureModules.set('doctorConsultationDesk', mode === 'FULL_DIGITAL');
+      if (planName) hospital.planName = planName;
+    }
+
     if (queueRulesSettings) {
       hospital.queueRulesSettings = { ...hospital.queueRulesSettings, ...queueRulesSettings };
     }
@@ -1163,6 +1211,8 @@ const updateBillingSettings = async (req, res, next) => {
       success: true,
       data: {
         ...hospital.billingWorkflowSettings,
+        opdOperationMode: hospital.opdOperationMode,
+        planName: hospital.planName,
         queueRulesSettings: hospital.queueRulesSettings
       }
     });

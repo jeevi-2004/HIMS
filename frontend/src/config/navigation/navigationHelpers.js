@@ -5,26 +5,27 @@ import { adminNavigation } from './adminNavigation';
 import { superAdminNavigation } from './superAdminNavigation';
 import { USER_ROLES } from '../../constants/roles';
 
-export const getNavigationByRole = (userRole, workspaceMode) => {
+export const getNavigationByRole = (userRole, workspaceMode, hospitalMode = 'FULL_DIGITAL') => {
+  let navItems = [];
   if (userRole === USER_ROLES.SUPER_ADMIN) {
-    return superAdminNavigation;
+    navItems = superAdminNavigation;
+  } else if (userRole === USER_ROLES.RECEPTIONIST) {
+    navItems = receptionNavigation;
+  } else if (userRole === USER_ROLES.PHARMACIST) {
+    navItems = pharmacyNavigation;
+  } else if (userRole === USER_ROLES.DOCTOR_ADMIN) {
+    navItems = workspaceMode === 'clinical_consultation' ? doctorNavigation : adminNavigation;
+  } else if (userRole === USER_ROLES.DOCTOR) {
+    navItems = doctorNavigation;
+  } else {
+    navItems = adminNavigation;
   }
-  if (userRole === USER_ROLES.RECEPTIONIST) {
-    return receptionNavigation;
+
+  if (hospitalMode === 'TOKEN_ONLY') {
+    return navItems.filter(item => item.id !== 'doctor.consultation' && item.id !== 'doctor.masters');
   }
-  if (userRole === USER_ROLES.PHARMACIST) {
-    return pharmacyNavigation;
-  }
-  if (userRole === USER_ROLES.DOCTOR_ADMIN) {
-    if (workspaceMode === 'clinical_consultation') {
-      return doctorNavigation;
-    }
-    return adminNavigation;
-  }
-  if (userRole === USER_ROLES.DOCTOR) {
-    return doctorNavigation;
-  }
-  return adminNavigation;
+
+  return navItems;
 };
 
 export const filterNavigationByPermission = (items = [], userPermissions = []) => {

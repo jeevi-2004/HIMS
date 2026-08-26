@@ -41,7 +41,8 @@ const SharedSidebar = ({ sidebarOpen, setSidebarOpen }) => {
   };
 
   // Configuration-driven Navigation Layer
-  const rawConfigNav = getNavigationByRole(user?.role, workspaceMode);
+  const hospitalMode = user?.hospital?.opdOperationMode || user?.opdOperationMode || 'FULL_DIGITAL';
+  const rawConfigNav = getNavigationByRole(user?.role, workspaceMode, hospitalMode);
   
   const currentNav = [
     ...rawConfigNav.map((item) => ({

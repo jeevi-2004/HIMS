@@ -281,7 +281,16 @@ const HospitalBillingWorkflowSettings = () => {
             <CreditCard className="w-3.5 h-3.5" />
             Hospital Settings
           </div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Clinical, Billing & Voice Settings</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Clinical, Billing & Voice Settings</h1>
+            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${
+              (billingSettings?.opdOperationMode || 'FULL_DIGITAL') === 'TOKEN_ONLY'
+                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+            }`}>
+              {(billingSettings?.opdOperationMode || 'FULL_DIGITAL') === 'TOKEN_ONLY' ? '🎟️ Plan 1: OPD Token & Queue Suite (Paper Rx)' : '🩺 Plan 2: Digital E-Prescription Suite'}
+            </span>
+          </div>
           <p className="text-xs text-slate-500 font-normal mt-0.5">
             Configure billing workflows, OPD payment rules, prescription delivery routing, and patient call voice announcements.
           </p>

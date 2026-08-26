@@ -14,7 +14,7 @@ import {
   getMasterList, initClinicalMasters, checkAllergyConflict
 } from '../utils/clinicalMasters';
 import {
-  Pill, ShieldCheck, Check, Trash2, Plus, ArrowLeft,
+  Pill, ShieldCheck, Check, Trash2, Plus, ArrowLeft, Volume2,
   FileText, Printer, Star, History as HistoryIcon, Copy, Stethoscope,
   Sun, Moon, ChevronDown, ChevronUp, X, Edit3, Save, Send, Users
 } from 'lucide-react';
@@ -1165,6 +1165,48 @@ const DoctorConsultation = () => {
     appointment.status === 'Sent To Pharmacy' ||
     isCompletedVisit(getVisitStatus(appointment))
   );
+
+  const isTokenOnlyPlan = user?.hospital?.opdOperationMode === 'TOKEN_ONLY' || user?.opdOperationMode === 'TOKEN_ONLY';
+
+  if (isTokenOnlyPlan) {
+    return (
+      <div className="p-4 sm:p-6 bg-[#F8FAFC] min-h-screen font-sans">
+        <div className="mb-6 text-left">
+          <h1 className="text-xl sm:text-2xl font-bold text-[#111827] flex items-center gap-2">
+            <div className="w-9 h-9 rounded-xl bg-[#2F63F2]/10 border border-[#2F63F2]/20 flex items-center justify-center text-[#2F63F2]">
+              <Stethoscope className="w-5 h-5" />
+            </div>
+            OPD Token & Queue Workspace
+          </h1>
+          <p className="text-xs text-[#6B7280] mt-1 font-medium">
+            Plan 1 Enabled: Token Generation & Audio Voice Calling Mode.
+          </p>
+        </div>
+
+        <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-10 sm:p-14 text-center shadow-card-soft max-w-xl mx-auto my-6 space-y-4 font-sans">
+          <div className="w-16 h-16 rounded-2xl bg-blue-50 border border-blue-200 text-[#2F63F2] flex items-center justify-center mx-auto shadow-xs">
+            <Volume2 className="w-8 h-8" />
+          </div>
+          <h3 className="text-lg font-bold text-[#111827]">
+            Physical Paper Prescription Mode Active
+          </h3>
+          <p className="text-xs text-[#6B7280] font-medium leading-relaxed max-w-md mx-auto">
+            Your hospital operates under <strong>Plan 1 (Token Generation & Queue Plan)</strong>. Prescriptions are written by hand on your hospital's physical paper letterheads.
+          </p>
+          <div className="pt-2">
+            <Button
+              onClick={() => navigate('/doctor/queue')}
+              variant="primary"
+              icon={Users}
+              className="h-[42px] px-6 text-xs font-bold uppercase tracking-wider bg-[#2F63F2] hover:bg-blue-700 text-white shadow-sm cursor-pointer"
+            >
+              Open Today's Queue & Voice Caller
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!activeVisitId || !appointment || !canViewWorkspace) {
     return (

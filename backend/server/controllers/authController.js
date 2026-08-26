@@ -254,7 +254,7 @@ const getProfile = async (req, res, next) => {
   try {
     const user = await User.findById(req.user._id)
       .populate('roleId')
-      .populate('hospitalId', 'name code featureModules')
+      .populate('hospitalId', 'name code featureModules opdOperationMode planName')
       .populate('branchId', 'name code')
       .populate('departmentId', 'name code');
 
@@ -270,6 +270,8 @@ const getProfile = async (req, res, next) => {
         role: user.roleId?.name || user.role || 'DOCTOR_ADMIN',
         permissions: user.roleId?.permissions || [],
         hospital: user.hospitalId,
+        opdOperationMode: user.hospitalId?.opdOperationMode || 'FULL_DIGITAL',
+        planName: user.hospitalId?.planName,
         featureModules: user.hospitalId?.featureModules || {},
         branch: user.branchId,
         department: user.departmentId,

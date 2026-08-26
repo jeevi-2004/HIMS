@@ -909,7 +909,11 @@ class VoiceAnnouncementService {
     uEng.volume = params.volume;
     if (engVoice) uEng.voice = engVoice;
 
-    uEng.onend = async () => {
+    let isEngFinished = false;
+    const onEngFinish = async () => {
+      if (isEngFinished) return;
+      isEngFinished = true;
+
       // 400ms pause as specified
       await new Promise(r => setTimeout(r, 400));
 
@@ -938,7 +942,100 @@ class VoiceAnnouncementService {
       }
     };
 
+    uEng.onend = onEngFinish;
+    uEng.onerror = onEngFinish;
+
     window.speechSynthesis.speak(uEng);
+  }
+
+  enqueueAnnouncement(announcementData) {
+    const { tokenNumber, patientName, doctorName, mode = 'BOTH', isRepeat = false } = announcementData;
+    const now = Date.now();
+
+    // Deduplication Protection: Prevent rapid duplicate events (< 8.0 seconds) for the same token number
+    const normToken = String(tokenNumber).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    if (normToken && this.lastAnnouncedToken === normToken && !isRepeat && (now - this.lastAnnouncedTimestamp) < 8000) {
+      console.log(`[VOICE ANNOUNCEMENT] Rapid duplicate announcement for Token #${tokenNumber} suppressed.`);
+      return false;
+    }
+
+    this.lastAnnouncedToken = normToken;
+    this.lastAnnouncedTimestamp = now;
+
+    // Build Item Structure
+    const queueItem = {
+      tokenNumber,
+      patientName,
+      doctorName,
+      mode,
+      isRepeat,
+      engText: this.buildEnglishPhrase(announcementData.patientObj || announcementData),
+      tamText: this.buildTamilPhrase(announcementData.patientObj || announcementData, isRepeat),
+      timestamp: now
+    };
+
+    // Store snapshot for replay capabilities
+    this.lastVoiceAnnouncement = {
+      token: tokenNumber,
+      patientName,
+      doctorName,
+      engText: queueItem.engText,
+      tamText: queueItem.tamText,
+      languageMode: mode,
+      timestamp: now
+    };
+
+    // Multi-tab Broadcast Notification
+    if (this.channel) {
+      this.channel.postMessage({
+        type: 'ANNOUNCEMENT_PLAYED',
+        token: tokenNumber,
+        timestamp: now,
+        announcement: this.lastVoiceAnnouncement
+      });
+    }
+
+    this.queue.push(queueItem);
+
+    if (!this.isSpeaking) {
+      this.processNextAnnouncement();
+    }
+    return true;
+  }
+
+  /**
+   * Replays the most recent consultation announcement stored in lastVoiceAnnouncement.
+   */
+  repeatLastAnnouncement() {
+    if (!this.lastVoiceAnnouncement) {
+      toast.error('No announcement available to replay.');
+      return false;
+    }
+
+    const ann = { ...this.lastVoiceAnnouncement };
+    return this.enqueueAnnouncement({
+      tokenNumber: ann.token,
+      patientName: ann.patientName,
+      doctorName: ann.doctorName,
+      mode: this.settings.languageMode || ann.languageMode || 'BOTH',
+      isRepeat: true
+    });
+  }
+
+  /**
+   * Resolves Voice Parameters based on selected profile
+   * Profile options: Professional (default), Gentle, Clear OPD
+   */
+  getProfileParameters() {
+    const prof = this.settings.profile || 'Professional';
+    if (prof === 'Gentle') {
+      return { engRate: 0.84, engPitch: 1.02, tamRate: 0.84, tamPitch: 1.02, volume: 1.0 };
+    }
+    if (prof === 'Clear OPD') {
+      return { engRate: 0.92, engPitch: 1.05, tamRate: 0.92, tamPitch: 1.05, volume: 1.0 };
+    }
+    // Professional (default)
+    return { engRate: 0.88, engPitch: 1.0, tamRate: 0.88, tamPitch: 1.0, volume: 1.0 };
   }
 
   /**
@@ -954,8 +1051,11 @@ class VoiceAnnouncementService {
     const currentItem = this.queue.shift();
 
     try {
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window && window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+        window.speechSynthesis.cancel();
       }
 
       const mode = currentItem.mode || this.settings.languageMode || 'BOTH';
@@ -1030,14 +1130,16 @@ class VoiceAnnouncementService {
           uEng.volume = 1.0;
           if (englishVoice) uEng.voice = englishVoice;
 
-          uEng.onend = async () => {
+          let isEngFinished = false;
+          const onEngFinish = async () => {
+            if (isEngFinished) return;
+            isEngFinished = true;
             await new Promise(r => setTimeout(r, 400));
             await speakTamilPart();
           };
 
-          uEng.onerror = async () => {
-            await speakTamilPart();
-          };
+          uEng.onend = onEngFinish;
+          uEng.onerror = onEngFinish;
 
           window.speechSynthesis.speak(uEng);
         } else {

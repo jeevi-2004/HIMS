@@ -341,7 +341,9 @@ const SuperAdminDashboard = () => {
         ownerName: hospitalForm.ownerName,
         ownerCountryCode: hospitalForm.ownerCountryCode || '+91',
         ownerMobile: hospitalForm.ownerMobile,
-        logo: hospitalForm.logo
+        logo: hospitalForm.logo,
+        opdOperationMode: hospitalForm.opdOperationMode || 'FULL_DIGITAL',
+        planName: hospitalForm.subscriptionPlan || ((hospitalForm.opdOperationMode === 'TOKEN_ONLY') ? 'Plan 1: OPD Token Generation & Queue Suite' : 'Plan 2: Complete Digital OPD Suite')
       };
 
       if (selectedHospital) {
@@ -354,7 +356,7 @@ const SuperAdminDashboard = () => {
 
       setHospitalForm({ 
         name: '', code: '', contactCountryCode: '+91', contactNumber: '', email: '', street: '', city: '', state: '', zip: '', country: 'India',
-        hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerCountryCode: '+91', ownerMobile: '', logo: '', subscriptionPlan: ''
+        hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerCountryCode: '+91', ownerMobile: '', logo: '', subscriptionPlan: '', opdOperationMode: 'FULL_DIGITAL'
       });
       setSelectedHospital(null);
       setHospitalErrors({});
@@ -380,6 +382,7 @@ const SuperAdminDashboard = () => {
     setSelectedHospital(hosp);
     setHospitalForm({
       name: hosp.name,
+      code: hosp.code || '',
       contactCountryCode: hosp.contactCountryCode || '+91',
       contactNumber: hosp.contactNumber,
       email: hosp.email,
@@ -394,7 +397,9 @@ const SuperAdminDashboard = () => {
       ownerName: hosp.ownerName || '',
       ownerCountryCode: hosp.ownerCountryCode || '+91',
       ownerMobile: hosp.ownerMobile || '',
-      logo: hosp.logo || ''
+      logo: hosp.logo || '',
+      opdOperationMode: hosp.opdOperationMode || 'FULL_DIGITAL',
+      subscriptionPlan: hosp.planName || (hosp.opdOperationMode === 'TOKEN_ONLY' ? 'Plan 1: OPD Token Generation & Queue Suite' : 'Plan 2: Complete Digital OPD Suite')
     });
     setIsHospitalOpen(true);
   };
@@ -424,7 +429,8 @@ const SuperAdminDashboard = () => {
   const handleOpenActivationModal = (hosp) => {
     setSelectedHospitalForActivation(hosp);
     setActivationForm({
-      planName: hosp.planName || 'Basic',
+      planName: hosp.planName || 'Plan 2: Complete Digital OPD Suite',
+      opdOperationMode: hosp.opdOperationMode || 'FULL_DIGITAL',
       planType: hosp.planType || 'Monthly',
       subYears: hosp.subscriptionDuration?.years || 0,
       subMonths: hosp.subscriptionDuration?.months || 1
@@ -439,6 +445,7 @@ const SuperAdminDashboard = () => {
     try {
       const payload = {
         planName: activationForm.planName,
+        opdOperationMode: activationForm.opdOperationMode || 'FULL_DIGITAL',
         planType: activationForm.planType,
         subscriptionDuration: {
           years: parseInt(activationForm.subYears) || 0,
@@ -1248,20 +1255,64 @@ const SuperAdminDashboard = () => {
             </div>
           </div>
 
-          {/* Section 5: Subscription & Plan */}
+          {/* Section 5: Commercial Product Plan & OPD Operation Mode */}
           <div className="p-5 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-4">
             <h4 className="text-xs font-bold text-[#2F63F2] uppercase tracking-widest flex items-center gap-2">
               <CreditCard className="w-4 h-4" />
-              Subscription & Plan
+              Commercial Product Plan & OPD Operation Mode
             </h4>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Subscription Plan Tier</label>
-              <select className="enterprise-input" value={hospitalForm.subscriptionPlan || 'Basic'} onChange={(e) => setHospitalForm({ ...hospitalForm, subscriptionPlan: e.target.value })}>
-                <option value="Trial">Trial Period (14 Days)</option>
-                <option value="Basic">Basic Plan</option>
-                <option value="Premium">Premium Plan</option>
-                <option value="Enterprise">Enterprise Tier</option>
-              </select>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              {/* Plan 1 */}
+              <div 
+                onClick={() => setHospitalForm({ ...hospitalForm, opdOperationMode: 'TOKEN_ONLY', subscriptionPlan: 'Plan 1: OPD Token Generation & Queue Suite' })}
+                className={`p-4 rounded-xl border transition-all cursor-pointer space-y-1.5 ${
+                  (hospitalForm.opdOperationMode || 'FULL_DIGITAL') === 'TOKEN_ONLY'
+                    ? 'border-[#2F63F2] bg-blue-50/50 ring-1 ring-[#2F63F2]'
+                    : 'border-slate-200 bg-white hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                    🎟️ Plan 1: Token Generation Suite
+                  </span>
+                  <input
+                    type="radio"
+                    name="opdModeSelect"
+                    checked={(hospitalForm.opdOperationMode || 'FULL_DIGITAL') === 'TOKEN_ONLY'}
+                    onChange={() => {}}
+                    className="text-[#2F63F2]"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                  Reception token generation, OPD billing, audio voice calling, pharmacy & admin. Doctors write on physical paper Rx letterheads.
+                </p>
+              </div>
+
+              {/* Plan 2 */}
+              <div 
+                onClick={() => setHospitalForm({ ...hospitalForm, opdOperationMode: 'FULL_DIGITAL', subscriptionPlan: 'Plan 2: Complete Digital OPD Suite' })}
+                className={`p-4 rounded-xl border transition-all cursor-pointer space-y-1.5 ${
+                  (hospitalForm.opdOperationMode || 'FULL_DIGITAL') === 'FULL_DIGITAL'
+                    ? 'border-[#2F63F2] bg-blue-50/50 ring-1 ring-[#2F63F2]'
+                    : 'border-slate-200 bg-white hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                    🩺 Plan 2: Complete Digital E-Rx Suite
+                  </span>
+                  <input
+                    type="radio"
+                    name="opdModeSelect"
+                    checked={(hospitalForm.opdOperationMode || 'FULL_DIGITAL') === 'FULL_DIGITAL'}
+                    onChange={() => {}}
+                    className="text-[#2F63F2]"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                  Full digital consultation workspace, E-Prescription pad, electronic pharmacy routing, digital PDF print & reception desk.
+                </p>
+              </div>
             </div>
           </div>
 
@@ -1339,11 +1390,22 @@ const SuperAdminDashboard = () => {
       <Drawer isOpen={isActivationOpen} onClose={() => setIsActivationOpen(false)} title={`Activate Plan Subscription: ${selectedHospitalForActivation?.name}`} size="lg">
         <form onSubmit={handleActivatePlan} className="space-y-4 text-left">
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Plan Tier Level</label>
-            <select className="enterprise-input" value={activationForm.planName} onChange={(e) => setActivationForm({ ...activationForm, planName: e.target.value })} required>
-              <option value="Basic">Basic Plan</option>
-              <option value="Premium">Premium Plan</option>
-              <option value="Enterprise">Enterprise Plan</option>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Plan Tier Level & Operation Mode</label>
+            <select 
+              className="enterprise-input font-bold" 
+              value={activationForm.opdOperationMode || 'FULL_DIGITAL'} 
+              onChange={(e) => {
+                const mode = e.target.value;
+                setActivationForm({ 
+                  ...activationForm, 
+                  opdOperationMode: mode, 
+                  planName: mode === 'TOKEN_ONLY' ? 'Plan 1: OPD Token Generation & Queue Suite' : 'Plan 2: Complete Digital OPD Suite' 
+                });
+              }} 
+              required
+            >
+              <option value="TOKEN_ONLY">🎟️ Plan 1: OPD Token Generation & Queue Suite (Paper Rx + Voice Call)</option>
+              <option value="FULL_DIGITAL">🩺 Plan 2: Complete Digital OPD & E-Prescription Suite</option>
             </select>
           </div>
 

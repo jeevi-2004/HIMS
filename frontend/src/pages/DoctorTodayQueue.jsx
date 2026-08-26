@@ -12,7 +12,7 @@ import OpdTokenPrintModal from '../components/OpdTokenPrintModal';
 import { initClinicalMasters } from '../utils/clinicalMasters';
 import { 
   Clock, Play, Eye, 
-  History as HistoryIcon, RefreshCw, XCircle, Printer,
+  History as HistoryIcon, RefreshCw, XCircle, Printer, Volume2,
   UserX, FileText, CheckCircle2, Users, Stethoscope,
   Search, Calendar, Filter, RotateCw
 } from 'lucide-react';
@@ -429,8 +429,24 @@ const DoctorTodayQueue = () => {
         const evalResult = getAppointmentActions(row, 'Doctor');
         const canStart = evalResult.actions.canStartConsultation;
 
-        // 1. IN CONSULTATION -> Show ONLY "Resume Consultation"
+        const isTokenOnlyPlan = user?.hospital?.opdOperationMode === 'TOKEN_ONLY' || user?.opdOperationMode === 'TOKEN_ONLY';
+
+        // 1. IN CONSULTATION -> Show "Resume Consultation" (Plan 2) or "✓ Complete Token" (Plan 1)
         if (visitSt === VISIT_STATUSES.IN_CONSULTATION || appSt === 'in consultation' || appSt === 'in-consultation') {
+          if (isTokenOnlyPlan) {
+            return (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => finishConsultationMutation.mutate(row._id)}
+                  className="h-8 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Complete Token</span>
+                </button>
+              </div>
+            );
+          }
           return (
             <button
               type="button"
@@ -443,8 +459,15 @@ const DoctorTodayQueue = () => {
           );
         }
 
-        // 2. COMPLETED -> Show ONLY "View Prescription"
+        // 2. COMPLETED -> Show "Completed Visit"
         if (isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy') {
+          if (isTokenOnlyPlan) {
+            return (
+              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 inline-flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Completed
+              </span>
+            );
+          }
           return (
             <button
               type="button"
@@ -462,7 +485,38 @@ const DoctorTodayQueue = () => {
           return null;
         }
 
-        // 4. WAITING / SCHEDULED -> Show ONLY "Start Consultation"
+        // 4. WAITING / SCHEDULED -> Show "Start Consultation"
+        if (isTokenOnlyPlan) {
+          return (
+            <button
+              type="button"
+              disabled={!canStart}
+              onClick={() => {
+                if (!canStart) {
+                  toast.error(evalResult.reasons.startConsultation || 'Payment required before consultation.');
+                  return;
+                }
+                api.put(`/operations/appointments/${row._id}/queue`, { status: 'In Consultation', queueStatus: 'In-Consultation' })
+                  .then(() => {
+                    toast.success(`Calling Token #${row.tokenNumber} (Voice call sent to Reception desk)`);
+                    queryClient.invalidateQueries(['doctorQueue']);
+                    queryClient.invalidateQueries(['appointments']);
+                  })
+                  .catch(err => toast.error('Failed to update queue'));
+              }}
+              className={`h-8 px-3 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all ${
+                canStart 
+                  ? 'bg-[#2F63F2] text-white hover:bg-blue-700 shadow-2xs cursor-pointer' 
+                  : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+              }`}
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>{canStart ? 'Start Consultation' : 'Pending Payment'}</span>
+            </button>
+          );
+        }
+
+        // Default Plan 2: Start Consultation
         return (
           <button
             type="button"
