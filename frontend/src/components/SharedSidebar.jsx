@@ -14,7 +14,7 @@ import {
 
 const SharedSidebar = ({ sidebarOpen, setSidebarOpen }) => {
   const { user, logout } = useAuth();
-  const { workspaceMode } = useWorkspace();
+  const { workspaceMode, setWorkspaceMode, allowedWorkspaces, showSwitcher } = useWorkspace();
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -80,6 +80,41 @@ const SharedSidebar = ({ sidebarOpen, setSidebarOpen }) => {
           <X className="w-5 h-5" />
         </button>
       </div>
+
+      {/* Mobile Drawer Workspace Switcher Block */}
+      {showSwitcher && (
+        <div className="p-3 bg-slate-50 border-b border-[#E5E7EB] md:hidden text-left space-y-1.5 shrink-0">
+          <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold px-1">Active Workspace</span>
+          <div className="grid grid-cols-2 gap-1.5">
+            {allowedWorkspaces.map((ws) => {
+              const isSelected = ws.id === workspaceMode;
+              return (
+                <button
+                  key={ws.id}
+                  type="button"
+                  onClick={() => {
+                    setWorkspaceMode(ws.id);
+                    setSidebarOpen(false);
+                    if (ws.id === 'hospital_management') {
+                      navigate('/admin/dashboard');
+                    } else {
+                      navigate('/doctor/dashboard');
+                    }
+                  }}
+                  className={`p-2 rounded-xl border text-[10px] font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer truncate ${
+                    isSelected
+                      ? 'bg-white border-[#2F63F2] text-[#2F63F2] shadow-xs'
+                      : 'bg-transparent border-slate-200 text-slate-600 hover:bg-white'
+                  }`}
+                >
+                  {ws.id === 'hospital_management' ? <Building2 className="w-3.5 h-3.5 shrink-0" /> : <Stethoscope className="w-3.5 h-3.5 shrink-0" />}
+                  <span className="truncate">{ws.id === 'hospital_management' ? 'Admin' : 'Doctor Desk'}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Navigation List Section */}
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">

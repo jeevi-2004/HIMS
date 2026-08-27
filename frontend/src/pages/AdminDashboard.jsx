@@ -31,6 +31,41 @@ const AdminDashboard = () => {
   const [branchSubTab, setBranchSubTab] = useState('branches');
   const [workforceRoleTab, setWorkforceRoleTab] = useState('ALL');
   const [loading, setLoading] = useState(false);
+  const [hospitalInfo, setHospitalInfo] = useState(null);
+
+  const isMultiBranchEnabled = Boolean(
+    user?.featureModules?.Branches ||
+    hospitalInfo?.featureModules?.Branches === true ||
+    (hospitalInfo?.featureModules && typeof hospitalInfo.featureModules.get === 'function' && hospitalInfo.featureModules.get('Branches') === true)
+  );
+
+  // Synchronize activeTab and branchSubTab with URL route & search params (?tab=...)
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const tabParam = searchParams.get('tab');
+    const path = location.pathname;
+
+    if (path.includes('/admin/departments') || tabParam === 'branches' || tabParam === 'departments' || tabParam === 'hospitals') {
+      setActiveTab('branches');
+      if (tabParam === 'departments' || !isMultiBranchEnabled) {
+        setBranchSubTab('departments');
+      } else {
+        setBranchSubTab('branches');
+      }
+    } else if (path.includes('/admin/workforce') || path.includes('/admin/users') || path.includes('/admin/doctors') || tabParam === 'workforce' || tabParam === 'staff' || tabParam === 'users' || tabParam === 'roster') {
+      setActiveTab('staff');
+    } else if (path.includes('/admin/patients') || tabParam === 'patients' || tabParam === 'registry') {
+      setActiveTab('patients');
+    } else if (path.includes('/admin/services') || tabParam === 'services') {
+      setActiveTab('services');
+    } else if (tabParam === 'summary') {
+      setActiveTab('summary');
+    } else if (tabParam) {
+      setActiveTab(tabParam);
+    } else if (path === '/admin/dashboard' && !tabParam) {
+      setActiveTab('summary');
+    }
+  }, [location.pathname, location.search, isMultiBranchEnabled]);
 
   // Workforce filtering/tabbing states
   const [filterSearch, setFilterSearch] = useState('');
@@ -44,7 +79,6 @@ const AdminDashboard = () => {
   const [staff, setStaff] = useState([]);
   const [roles, setRoles] = useState([]);
   const [services, setServices] = useState([]);
-  const [hospitalInfo, setHospitalInfo] = useState(null);
   const [todayAppointments, setTodayAppointments] = useState([]);
   const [patients, setPatients] = useState([]);
   const [patientSearchQuery, setPatientSearchQuery] = useState('');
@@ -115,12 +149,6 @@ const AdminDashboard = () => {
   const staffMobileVal = useMobileValidation('');
   const profileMobileVal = useMobileValidation('');
   const patientMobileVal = useMobileValidation('');
-
-  const isMultiBranchEnabled = Boolean(
-    user?.featureModules?.Branches ||
-    hospitalInfo?.featureModules?.Branches === true ||
-    (hospitalInfo?.featureModules && typeof hospitalInfo.featureModules.get === 'function' && hospitalInfo.featureModules.get('Branches') === true)
-  );
 
   const defaultBranchDisplayName = (hospitalInfo?.address?.city || '').toString().trim() ||
     (branches.find(b => b.isDefault)?.address?.city || '').toString().trim() ||
@@ -946,8 +974,6 @@ const AdminDashboard = () => {
             </div>
             
             <div className="flex flex-wrap gap-2 justify-end">
-              <Button onClick={() => setIsRegOpen(true)} variant="secondary" className="!text-[10px] uppercase font-bold py-1.5 px-3">Reg Patient</Button>
-              <Button onClick={() => setIsBookOpen(true)} variant="secondary" className="!text-[10px] uppercase font-bold py-1.5 px-3">Book App</Button>
               <Button 
                 onClick={() => {
                   setStaffForm({ 
@@ -1082,7 +1108,7 @@ const AdminDashboard = () => {
           )}
 
           {/* Sub-tab 2: Departments Table View */}
-          {branchSubTab === 'departments' && (
+          {(branchSubTab === 'departments' || !isMultiBranchEnabled) && (
             <Card 
               title="Medical Departments Setup" 
               subtitle="Configure department wings and base consultation charges"

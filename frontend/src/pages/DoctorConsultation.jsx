@@ -62,7 +62,21 @@ const DoctorConsultation = () => {
   const foodInstructions = useMemo(() => getMasterList('foodInstructions'), []);
   const adviceList = useMemo(() => getMasterList('adviceList'), []);
   const followups = useMemo(() => getMasterList('followups'), []);
-  const investigationsList = useMemo(() => getMasterList('investigations'), []);
+  // Consultation Mode State (OPD Starter | Full HIMS)
+  const [consultationMode, setConsultationMode] = useState(() => {
+    try {
+      return localStorage.getItem('doctor_consultation_mode') || 'opd_starter';
+    } catch {
+      return 'opd_starter';
+    }
+  });
+
+  const handleSwitchMode = (mode) => {
+    setConsultationMode(mode);
+    try {
+      localStorage.setItem('doctor_consultation_mode', mode);
+    } catch {}
+  };
 
   // Modals & History Drawer state
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -1264,32 +1278,113 @@ const DoctorConsultation = () => {
     <div className="p-1.5 sm:p-4 md:p-6 bg-slate-50 min-h-screen print:bg-white print:p-0 font-sans">
       <div className="w-full max-w-[1920px] mx-auto space-y-2 sm:space-y-4 text-left pb-28 sm:pb-10 print:pb-0 font-sans">
 
-        {/* 0. WORKSPACE TOP ACTION TOOLBAR (OUTSIDE PATIENT INFO CARD) */}
-        <div className="flex items-center justify-between gap-2 sm:gap-3 flex-wrap print:hidden bg-white border border-slate-200/90 rounded-2xl p-2.5 sm:p-3 shadow-xs">
-          <div className="flex items-center gap-3">
+        {/* 0. WORKSPACE TOP ACTION TOOLBAR & MODE SEGMENTED CONTROL */}
+        <div className="flex items-center justify-between gap-2.5 sm:gap-3 flex-wrap print:hidden bg-white border border-slate-200/90 rounded-2xl p-2.5 sm:p-3 shadow-xs">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setIsQueueDrawerOpen(!isQueueDrawerOpen)}
-              className="px-4 py-2 rounded-xl bg-[#3563F6] hover:bg-blue-700 text-white font-extrabold text-xs flex items-center gap-2 transition-all shadow-md cursor-pointer hover:shadow-lg active:scale-95"
+              className="px-3 sm:px-4 py-2 rounded-xl bg-[#3563F6] hover:bg-blue-700 text-white font-extrabold text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer hover:shadow-lg active:scale-95"
             >
               <Users className="w-4 h-4 text-white" />
-              <span>{isQueueDrawerOpen ? 'Collapse Queue' : 'Today\'s Queue'}</span>
-              <span className="bg-white/20 text-white px-2 py-0.5 rounded-full text-[10px] font-mono font-extrabold flex items-center gap-1.5">
+              <span className="hidden sm:inline">{isQueueDrawerOpen ? 'Collapse Queue' : 'Today\'s Queue'}</span>
+              <span className="bg-white/20 text-white px-2 py-0.5 rounded-full text-[10px] font-mono font-extrabold flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 Live OPD
               </span>
             </button>
           </div>
 
+          {/* MODE SEGMENTED CONTROL: OPD Starter | Full HIMS */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-inner">
+            <button
+              type="button"
+              onClick={() => handleSwitchMode('opd_starter')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 min-h-[36px] ${
+                consultationMode === 'opd_starter'
+                  ? 'bg-[#3563F6] text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>OPD Starter</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSwitchMode('full_hims')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 min-h-[36px] ${
+                consultationMode === 'full_hims'
+                  ? 'bg-[#3563F6] text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+              }`}
+            >
+              <Stethoscope className="w-3.5 h-3.5" />
+              <span>Full HIMS</span>
+            </button>
+          </div>
+
           <div className="flex items-center gap-2 flex-wrap">
             {draftSavedTime ? (
               <span className="text-xs text-emerald-700 font-mono font-extrabold bg-emerald-50 border border-emerald-200/80 px-3 py-1.5 rounded-xl flex items-center gap-1.5 shadow-2xs">
-                <Check className="w-3.5 h-3.5 text-emerald-600" /> Draft saved at {draftSavedTime}
+                <Check className="w-3.5 h-3.5 text-emerald-600" /> Saved at {draftSavedTime}
               </span>
             ) : (
               <span className="text-xs text-slate-400 font-mono font-bold bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl shadow-2xs">
                 Auto-save active
               </span>
+            )}
+          </div>
+        </div>
+
+        {/* WORKFLOW STEPS INDICATOR BAR */}
+        <div className="bg-white border border-slate-200/80 rounded-2xl px-3.5 py-2.5 text-xs font-bold text-slate-600 shadow-2xs print:hidden overflow-x-auto whitespace-nowrap scrollbar-none">
+          <div className="flex items-center gap-1.5 text-[11px] sm:text-xs">
+            {consultationMode === 'opd_starter' ? (
+              <>
+                <span className="text-[#3563F6] font-extrabold bg-blue-50 px-2 py-1 rounded-lg border border-blue-100 flex items-center gap-1">
+                  👤 Patient
+                </span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
+                  🩺 Vitals
+                </span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
+                  📝 Consultation
+                </span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
+                  💊 Prescription
+                </span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-emerald-700 font-extrabold bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 flex items-center gap-1">
+                  <Check className="w-3.5 h-3.5 text-emerald-600" /> Finish
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="text-[#3563F6] font-extrabold bg-blue-50 px-2 py-1 rounded-lg border border-blue-100 flex items-center gap-1">
+                  📋 Patient History
+                </span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">🩺 Vitals</span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">🗣️ Chief Complaint</span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">📝 HPI/Notes</span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">🔍 Examination</span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">🏥 Diagnosis</span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">💊 Prescription</span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">📅 Follow-up</span>
+                <span className="text-slate-300 font-bold">→</span>
+                <span className="text-emerald-700 font-extrabold bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 flex items-center gap-1">
+                  <Check className="w-3.5 h-3.5 text-emerald-600" /> Finish
+                </span>
+              </>
             )}
           </div>
         </div>

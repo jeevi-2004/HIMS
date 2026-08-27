@@ -386,7 +386,7 @@ const DoctorDashboard = () => {
   return (
     <div className="space-y-6 text-left">
       {/* Page Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Today's Patients</h1>
           <p className="text-xs text-slate-500 font-medium mt-1">
@@ -418,18 +418,18 @@ const DoctorDashboard = () => {
         </div>
       </div>
 
-      {/* 1. Stats Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 1. Stats Row (2x2 Grid on Mobile, 4-Cols on Desktop) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* In Consultation */}
-        <div className={`rounded-2xl p-5 flex flex-col justify-between border shadow-sm ${currentApp ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-[#E5E7EB]'}`}>
-          <div className="flex justify-between items-center">
-            <span className={`text-[10px] font-extrabold uppercase tracking-wider ${currentApp ? 'text-indigo-200' : 'text-slate-400'}`}>
-              In Consultation ({inConsultationCount})
+        <div className={`rounded-2xl p-3.5 sm:p-5 flex flex-col justify-between border shadow-xs ${currentApp ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-[#E5E7EB]'}`}>
+          <div className="flex justify-between items-center gap-1">
+            <span className={`text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider truncate ${currentApp ? 'text-indigo-200' : 'text-slate-400'}`}>
+              In Consult ({inConsultationCount})
             </span>
-            <span className="text-base">🩺</span>
+            <span className="text-sm sm:text-base shrink-0">🩺</span>
           </div>
           <div className="mt-2">
-            <p className={`text-sm font-bold truncate ${currentApp ? 'text-white' : 'text-slate-800'}`}>
+            <p className={`text-xs sm:text-sm font-bold truncate ${currentApp ? 'text-white' : 'text-slate-800'}`}>
               {currentApp?.patientId?.name || 'Room Available'}
             </p>
             {currentApp && (
@@ -439,38 +439,38 @@ const DoctorDashboard = () => {
         </div>
 
         {/* Waiting */}
-        <div className="bg-white border border-[#E5E7EB] rounded-2xl p-5 flex flex-col justify-between shadow-sm">
-          <div className="flex justify-between items-center">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Waiting Queue</span>
-            <Clock className="w-4 h-4 text-amber-500" />
+        <div className="bg-white border border-[#E5E7EB] rounded-2xl p-3.5 sm:p-5 flex flex-col justify-between shadow-xs">
+          <div className="flex justify-between items-center gap-1">
+            <span className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider text-slate-400 truncate">Waiting Queue</span>
+            <Clock className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500 shrink-0" />
           </div>
           <div className="mt-2">
-            <span className="text-2xl font-extrabold font-mono text-amber-600">{waitingCount}</span>
-            <p className="text-[10px] text-slate-400 font-medium mt-0.5">patients in lobby</p>
+            <span className="text-xl sm:text-2xl font-extrabold font-mono text-amber-600">{waitingCount}</span>
+            <p className="text-[10px] text-slate-400 font-medium mt-0.5 truncate">patients in lobby</p>
           </div>
         </div>
 
         {/* Completed Today */}
-        <div className="bg-white border border-[#E5E7EB] rounded-2xl p-5 flex flex-col justify-between shadow-sm">
-          <div className="flex justify-between items-center">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Completed Today</span>
-            <ShieldCheck className="w-4 h-4 text-emerald-500" />
+        <div className="bg-white border border-[#E5E7EB] rounded-2xl p-3.5 sm:p-5 flex flex-col justify-between shadow-xs">
+          <div className="flex justify-between items-center gap-1">
+            <span className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider text-slate-400 truncate">Completed Today</span>
+            <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-500 shrink-0" />
           </div>
           <div className="mt-2">
-            <span className="text-2xl font-extrabold font-mono text-emerald-600">{completedCount}</span>
-            <p className="text-[10px] text-slate-400 font-medium mt-0.5">consultations done</p>
+            <span className="text-xl sm:text-2xl font-extrabold font-mono text-emerald-600">{completedCount}</span>
+            <p className="text-[10px] text-slate-400 font-medium mt-0.5 truncate">consultations done</p>
           </div>
         </div>
 
         {/* No Show */}
-        <div className="bg-white border border-[#E5E7EB] rounded-2xl p-5 flex flex-col justify-between shadow-sm">
-          <div className="flex justify-between items-center">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">No Show</span>
-            <UserX className="w-4 h-4 text-rose-500" />
+        <div className="bg-white border border-[#E5E7EB] rounded-2xl p-3.5 sm:p-5 flex flex-col justify-between shadow-xs">
+          <div className="flex justify-between items-center gap-1">
+            <span className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider text-slate-400 truncate">No Show</span>
+            <UserX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-500 shrink-0" />
           </div>
           <div className="mt-2">
-            <span className="text-2xl font-extrabold font-mono text-rose-600">{noShowCount}</span>
-            <p className="text-[10px] text-slate-400 font-medium mt-0.5">cancelled / absent</p>
+            <span className="text-xl sm:text-2xl font-extrabold font-mono text-rose-600">{noShowCount}</span>
+            <p className="text-[10px] text-slate-400 font-medium mt-0.5 truncate">cancelled / absent</p>
           </div>
         </div>
       </div>
