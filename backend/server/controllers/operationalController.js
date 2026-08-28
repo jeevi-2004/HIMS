@@ -285,6 +285,35 @@ const bookAppointment = async (req, res, next) => {
       }
     });
 
+    // Create corresponding Invoice document for financial ledger reconciliation
+    try {
+      const invoiceNo = await generateInvoiceNo();
+      const fee = parseFloat(consultationFee) || 500;
+      await Invoice.create({
+        invoiceNo,
+        patientId,
+        appointmentId: appointment._id,
+        items: [{
+          name: `OPD Consultation (${tokenType || 'NORMAL'})`,
+          quantity: 1,
+          unitPrice: fee,
+          amount: fee
+        }],
+        totalAmount: fee,
+        discount: 0,
+        tax: 0,
+        grandTotal: fee,
+        paymentStatus: effectiveBillingStatus === 'Paid' ? 'Paid' : 'Unpaid',
+        paymentMode: effectiveBillingStatus === 'Paid' ? (paymentMethod || 'Cash') : 'N/A',
+        hospitalId: req.user.hospitalId,
+        branchId: req.user.branchId,
+        createdBy: req.user._id,
+        updatedBy: req.user._id
+      });
+    } catch (invErr) {
+      console.error('Invoice creation during bookAppointment warning:', invErr);
+    }
+
     await logAudit(req.user._id, 'BOOK_APPOINTMENT', 'OPD', { appointmentId: appointment._id, patientId }, req);
 
     res.status(201).json({ success: true, data: appointment });
@@ -496,6 +525,45 @@ const updateQueueStatus = async (req, res, next) => {
     
     appointment.updatedBy = req.user._id;
     await appointment.save();
+
+    // Sync corresponding Invoice document if payment status changed
+    try {
+      const isPaid = (appointment.billingStatus === 'Paid' || appointment.workflow?.paymentState === 'PAID');
+      const payMode = req.body.paymentMethod || appointment.paymentMethod || 'Cash';
+      let inv = await Invoice.findOne({ appointmentId: appointment._id });
+      if (inv) {
+        inv.paymentStatus = isPaid ? 'Paid' : (appointment.billingStatus || 'Unpaid');
+        if (isPaid) inv.paymentMode = payMode;
+        inv.updatedBy = req.user._id;
+        await inv.save();
+      } else if (isPaid) {
+        const invoiceNo = await generateInvoiceNo();
+        const fee = parseFloat(appointment.consultationFee) || 500;
+        await Invoice.create({
+          invoiceNo,
+          patientId: appointment.patientId,
+          appointmentId: appointment._id,
+          items: [{
+            name: 'OPD Consultation',
+            quantity: 1,
+            unitPrice: fee,
+            amount: fee
+          }],
+          totalAmount: fee,
+          discount: 0,
+          tax: 0,
+          grandTotal: fee,
+          paymentStatus: 'Paid',
+          paymentMode: payMode,
+          hospitalId: appointment.hospitalId || req.user.hospitalId,
+          branchId: appointment.branchId || req.user.branchId,
+          createdBy: req.user._id,
+          updatedBy: req.user._id
+        });
+      }
+    } catch (syncErr) {
+      console.error('Invoice sync error in updateQueueStatus:', syncErr);
+    }
 
     // Populate for SSE Broadcast
     const populated = await Appointment.findById(appointment._id)
@@ -1401,8 +1469,65 @@ const recordPayment = async (req, res, next) => {
   }
 };
 
+const autoReconcilePaidAppointments = async (hospitalId) => {
+  try {
+    const filter = {
+      $or: [
+        { billingStatus: 'Paid' },
+        { paymentStatus: 'Paid' },
+        { 'workflow.paymentState': 'PAID' }
+      ]
+    };
+    if (hospitalId) filter.hospitalId = hospitalId;
+
+    const paidAppointments = await Appointment.find(filter);
+
+    for (const app of paidAppointments) {
+      let inv = await Invoice.findOne({ appointmentId: app._id });
+      const pMode = app.paymentMethod && app.paymentMethod !== 'N/A' ? app.paymentMethod : 'Cash';
+      if (inv) {
+        if (inv.paymentStatus !== 'Paid' || inv.paymentMode === 'N/A' || !inv.paymentMode) {
+          inv.paymentStatus = 'Paid';
+          inv.paymentMode = pMode;
+          await inv.save();
+        }
+      } else {
+        const count = await Invoice.countDocuments();
+        const invoiceNo = `INV-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${String(count + 1).padStart(4, '0')}-${Math.floor(100 + Math.random() * 900)}`;
+        const fee = parseFloat(app.consultationFee) || 500;
+        await Invoice.create({
+          invoiceNo,
+          patientId: app.patientId,
+          appointmentId: app._id,
+          items: [{
+            name: 'OPD Consultation',
+            quantity: 1,
+            unitPrice: fee,
+            amount: fee
+          }],
+          totalAmount: fee,
+          discount: 0,
+          tax: 0,
+          grandTotal: fee,
+          paymentStatus: 'Paid',
+          paymentMode: pMode,
+          hospitalId: app.hospitalId,
+          branchId: app.branchId,
+          createdAt: app.createdAt || app.date || new Date(),
+          updatedAt: new Date()
+        });
+      }
+    }
+  } catch (err) {
+    console.error('autoReconcilePaidAppointments error:', err);
+  }
+};
+
 const getInvoices = async (req, res, next) => {
   try {
+    // Auto-reconcile paid appointments into Invoice ledger
+    await autoReconcilePaidAppointments(req.user?.hospitalId);
+
     const { 
       page = 1, 
       limit = 25, 
@@ -1502,6 +1627,9 @@ const getInvoices = async (req, res, next) => {
 
 const getBillingReports = async (req, res, next) => {
   try {
+    // Auto-reconcile paid appointments into Invoice ledger
+    await autoReconcilePaidAppointments(req.user?.hospitalId);
+
     const { startDate = '', endDate = '' } = req.query;
     const query = {};
 

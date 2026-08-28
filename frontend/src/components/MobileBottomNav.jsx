@@ -108,8 +108,6 @@ const MobileBottomNav = () => {
       navigate('/doctor/dashboard');
     } else if (actionKey === 'DOCTOR_MASTERS') {
       navigate('/doctor/clinical-masters');
-    } else if (actionKey === 'DOCTOR_REPORTS') {
-      navigate('/doctor/reports');
     }
   };
 
@@ -118,7 +116,7 @@ const MobileBottomNav = () => {
     if (!item) return <div key="empty" />;
     const Icon = item.icon;
     const active = item.isMore 
-      ? (quickSheetOpen || isNavActive('/doctor/completed-visits') || isNavActive('/doctor/clinical-masters') || isNavActive('/doctor/reports')) 
+      ? (quickSheetOpen || isNavActive('/doctor/completed-visits') || isNavActive('/doctor/clinical-masters')) 
       : isNavActive(item.path);
 
     const handleClick = () => {
@@ -396,27 +394,6 @@ const MobileBottomNav = () => {
                         </div>
                       </div>
                       <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-600 transition-colors" />
-                    </button>
-
-                    {/* 3. Clinical Reports */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setQuickSheetOpen(false);
-                        navigate('/doctor/reports');
-                      }}
-                      className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-emerald-50/70 border border-slate-200 hover:border-emerald-300 rounded-2xl transition-all text-left group active:scale-98 cursor-pointer min-h-[52px]"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform">
-                          <FileBarChart2 className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <h4 className="text-xs font-extrabold text-slate-900 group-hover:text-emerald-600">Clinical Reports</h4>
-                          <p className="text-[10px] text-slate-500 font-medium">Consultation stats & patient analytics</p>
-                        </div>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-600 transition-colors" />
                     </button>
 
                     {/* 4. Doctor Profile */}

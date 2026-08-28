@@ -1,6 +1,6 @@
 import { 
   LayoutDashboard, Users, Calendar, CalendarCheck, Stethoscope, FileText, 
-  History, UserRound, FileCode2, FileBarChart2 
+  History, UserRound, FileCode2 
 } from 'lucide-react';
 import { ROUTES } from '../../constants/routes';
 import { PERMISSIONS } from '../../constants/permissions';
@@ -73,17 +73,6 @@ export const doctorNavigation = [
     workspace: 'doctor',
     group: 'masters',
     order: 8
-  },
-  {
-    id: 'doctor.reports',
-    title: 'Clinical Reports',
-    icon: FileBarChart2,
-    route: ROUTES.DOCTOR.REPORTS,
-    matchPaths: [ROUTES.DOCTOR.REPORTS],
-    permission: PERMISSIONS.REPORTS_VIEW,
-    workspace: 'doctor',
-    group: 'reports',
-    order: 9
   }
 ];
 

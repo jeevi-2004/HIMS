@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
 import Card from '../components/Card';
@@ -7,6 +8,9 @@ import Modal from '../components/Modal';
 import { Search, Eye, AlertTriangle, UserCheck } from 'lucide-react';
 
 const DoctorPatientSearch = () => {
+  const [searchParams] = useSearchParams();
+  const patientIdFromUrl = searchParams.get('patientId');
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -20,8 +24,28 @@ const DoctorPatientSearch = () => {
     }
   });
 
+  // Fetch patient profile if patientId is in URL
+  const { data: urlPatient } = useQuery({
+    queryKey: ['patientByUrlId', patientIdFromUrl],
+    queryFn: async () => {
+      if (!patientIdFromUrl) return null;
+      // Search for the specific patient ID or fetch patient search
+      const res = await api.get(`/operations/patients/search?query=${patientIdFromUrl}`);
+      const found = res.data.data?.find(p => p._id === patientIdFromUrl || p.uhid === patientIdFromUrl) || res.data.data?.[0];
+      return found || { _id: patientIdFromUrl, name: 'Patient Profile', uhid: patientIdFromUrl };
+    },
+    enabled: !!patientIdFromUrl
+  });
+
+  useEffect(() => {
+    if (urlPatient) {
+      setSelectedPatient(urlPatient);
+      setIsHistoryOpen(true);
+    }
+  }, [urlPatient]);
+
   // Fetch medical history for selected patient
-  const { data: patientHistory, isLoading: historyLoading } = useQuery({
+  const { data: patientHistoryData, isLoading: historyLoading } = useQuery({
     queryKey: ['doctorPatientHistory', selectedPatient?._id],
     queryFn: async () => {
       if (!selectedPatient?._id) return null;
@@ -30,6 +54,31 @@ const DoctorPatientSearch = () => {
     },
     enabled: !!selectedPatient?._id
   });
+
+  // Process history snapshots, consultations, and prescriptions into a unified timeline
+  const historyList = useMemo(() => {
+    if (!patientHistoryData) return [];
+    if (Array.isArray(patientHistoryData)) return patientHistoryData;
+
+    const snapshots = patientHistoryData.snapshots || [];
+    const activeConsultations = patientHistoryData.consultations || [];
+    const combined = [...snapshots, ...activeConsultations];
+
+    // Deduplicate by _id if needed
+    const uniqueMap = new Map();
+    combined.forEach(item => {
+      if (item._id) uniqueMap.set(item._id, item);
+    });
+
+    const list = Array.from(uniqueMap.values());
+    list.sort((a, b) => new Date(b.createdAt || Date.now()) - new Date(a.createdAt || Date.now()));
+    return list;
+  }, [patientHistoryData]);
+
+  const prescriptionsList = useMemo(() => {
+    if (!patientHistoryData || Array.isArray(patientHistoryData)) return [];
+    return patientHistoryData.prescriptions || [];
+  }, [patientHistoryData]);
 
   return (
     <div className="space-y-5 text-left px-4 sm:px-5 md:px-6 py-4 sm:py-5 bg-[#F8FAFC] min-h-screen">
@@ -40,10 +89,10 @@ const DoctorPatientSearch = () => {
           <div className="w-9 h-9 rounded-xl bg-[#2F63F2]/10 border border-[#2F63F2]/20 flex items-center justify-center text-[#2F63F2]">
             <Search className="w-5 h-5" />
           </div>
-          Patient Search
+          Patient Medical History
         </h1>
         <p className="text-xs text-[#6B7280] mt-1 font-medium">
-          Search previous consultations and patient records.
+          View clinical case sheet records, diagnoses, and past consultation history.
         </p>
       </div>
 
@@ -108,7 +157,7 @@ const DoctorPatientSearch = () => {
               </div>
               <div>
                 <span className="block text-[9px] font-bold text-[#6B7280] uppercase tracking-wider">Age / Gender</span>
-                <strong className="text-slate-700 text-xs block mt-0.5">{selectedPatient.age} Yrs / {selectedPatient.gender}</strong>
+                <strong className="text-slate-700 text-xs block mt-0.5">{selectedPatient.age ? `${selectedPatient.age} Yrs` : 'N/A'} / {selectedPatient.gender || 'N/A'}</strong>
               </div>
               <div>
                 <span className="block text-[9px] font-bold text-[#6B7280] uppercase tracking-wider">Blood Type</span>
@@ -122,9 +171,9 @@ const DoctorPatientSearch = () => {
               
               {historyLoading ? (
                 <div className="text-center py-6 text-slate-400 text-xs font-bold font-mono">Retrieving medical timeline logs...</div>
-              ) : patientHistory && patientHistory.length > 0 ? (
+              ) : historyList && historyList.length > 0 ? (
                 <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
-                  {patientHistory.map((visit, idx) => (
+                  {historyList.map((visit, idx) => (
                     <div key={visit._id || idx} className="p-4 bg-white border border-[#E5E7EB] rounded-2xl text-left space-y-2.5 shadow-xs hover:border-[#2F63F2] transition-colors">
                       
                       {/* Visit Date and Doctor Room */}
@@ -178,6 +227,29 @@ const DoctorPatientSearch = () => {
                 </div>
               )}
             </div>
+
+            {/* Prescriptions Section if separate */}
+            {prescriptionsList && prescriptionsList.length > 0 && (
+              <div className="space-y-3 pt-3 border-t border-[#E5E7EB]">
+                <h3 className="text-xs font-bold text-[#6B7280] uppercase tracking-wider">Prescription History</h3>
+                <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
+                  {prescriptionsList.map((rx, idx) => (
+                    <div key={rx._id || idx} className="p-3 bg-slate-50 border border-[#E5E7EB] rounded-xl text-xs space-y-1.5 font-mono">
+                      <div className="flex justify-between text-[10px] text-slate-500 font-bold border-b pb-1 border-slate-200">
+                        <span>Date: {new Date(rx.createdAt).toLocaleDateString()}</span>
+                        <span>Doctor: {rx.doctorId?.name || 'N/A'}</span>
+                      </div>
+                      {rx.items?.map((item, itemIdx) => (
+                        <div key={itemIdx} className="flex justify-between bg-white p-1.5 rounded border border-slate-200 text-[11px]">
+                          <span className="font-bold text-slate-800">💊 {item.medicineName}</span>
+                          <span className="text-slate-600">{item.dosage} | {item.duration} | {item.instructions}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
           </div>
         )}

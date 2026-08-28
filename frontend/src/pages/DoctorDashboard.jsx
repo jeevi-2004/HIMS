@@ -107,7 +107,7 @@ const DoctorDashboard = () => {
   const { data: doctors } = useQuery({
     queryKey: ['doctors'],
     queryFn: async () => {
-      const res = await api.get('/admin/users?role=DOCTOR');
+      const res = await api.get('/admin/users?role=DOCTOR,DOCTOR_ADMIN');
       return res.data.data;
     }
   });

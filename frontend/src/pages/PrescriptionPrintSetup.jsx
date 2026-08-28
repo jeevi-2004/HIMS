@@ -531,10 +531,7 @@ const PrescriptionPrintSetup = () => {
           <p className="text-xs text-slate-500 font-medium mt-1">
             Configure how prescriptions are generated and printed for your hospital. Supports pre-printed pads & VillZone standard.
           </p>
-          <div className="mt-2.5 inline-flex items-center gap-2 bg-indigo-50 border border-indigo-200/80 px-3 py-1 rounded-lg text-indigo-800 text-[11px] font-semibold">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-            <span>Dynamic fields are populated automatically from your hospital, doctor, patient, and consultation records when printed.</span>
-          </div>
+
         </div>
 
         <div className="flex items-center gap-3">

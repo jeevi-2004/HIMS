@@ -1027,6 +1027,224 @@ const AdminDashboard = () => {
             ))}
           </div>
 
+          {/* 2-Column Live Operational Breakdown */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            
+            {/* Left Column: Today's Live OPD Consultation Queue Status */}
+            <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-5 shadow-card-soft space-y-4">
+              <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+                <div>
+                  <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-[#2F63F2]" />
+                    Today's OPD Queue Live Status
+                  </h3>
+                  <p className="text-[11px] text-[#6B7280]">Real-time outpatient consultation progress</p>
+                </div>
+                <span className="text-xs font-mono font-bold text-[#2F63F2] bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-lg">
+                  {todayAppointments.length} Total Visits
+                </span>
+              </div>
+
+              {/* Status Breakdown Bar */}
+              {(() => {
+                const waiting = todayAppointments.filter(a => ['Waiting', 'Scheduled'].includes(a.status || a.queueStatus)).length;
+                const inConsultation = todayAppointments.filter(a => ['In-Progress', 'In Consultation'].includes(a.status || a.queueStatus)).length;
+                const completed = todayAppointments.filter(a => a.status === 'Completed').length;
+                return (
+                  <div className="grid grid-cols-3 gap-3 font-mono text-center text-xs">
+                    <div className="p-3 bg-amber-50/70 border border-amber-100 rounded-xl space-y-0.5">
+                      <div className="text-[10px] font-bold text-amber-700 uppercase">Waiting</div>
+                      <div className="text-xl font-extrabold text-amber-900">{waiting}</div>
+                    </div>
+                    <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-xl space-y-0.5">
+                      <div className="text-[10px] font-bold text-blue-700 uppercase">In Progress</div>
+                      <div className="text-xl font-extrabold text-blue-900">{inConsultation}</div>
+                    </div>
+                    <div className="p-3 bg-emerald-50/70 border border-emerald-100 rounded-xl space-y-0.5">
+                      <div className="text-[10px] font-bold text-emerald-700 uppercase">Completed</div>
+                      <div className="text-xl font-extrabold text-emerald-900">{completed}</div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Recent Appointments Preview List */}
+              <div className="space-y-2 pt-1">
+                <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Recent Outpatient Entries</h4>
+                {todayAppointments.slice(0, 4).map((app, idx) => (
+                  <div key={app._id || idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+                    <div>
+                      <div className="font-bold text-slate-800">{app.patientId?.name || 'Patient'}</div>
+                      <div className="text-[10px] text-slate-500 font-mono">UHID: {app.patientId?.uhid || 'N/A'} | Doctor: {app.doctorId?.name || 'Assigned'}</div>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border ${
+                      app.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                      app.status === 'In-Progress' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}>
+                      {app.status || 'Scheduled'}
+                    </span>
+                  </div>
+                ))}
+                {todayAppointments.length === 0 && (
+                  <div className="p-6 text-center text-slate-400 text-xs font-mono bg-slate-50 border border-dashed rounded-xl">
+                    No outpatient tokens generated for today yet.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Column: Hospital Roster & Staff Overview */}
+            <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-5 shadow-card-soft space-y-4">
+              <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+                <div>
+                  <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2">
+                    <Stethoscope className="w-4 h-4 text-[#2F63F2]" />
+                    On-Duty Doctors & Clinical Roster
+                  </h3>
+                  <p className="text-[11px] text-[#6B7280]">Registered clinicians and workforce staff</p>
+                </div>
+                <Button onClick={() => setActiveTab('staff')} variant="outline" className="text-xs py-1 px-2.5 h-[30px]">
+                  View All ({staff.length})
+                </Button>
+              </div>
+
+              {/* Doctors Roster List */}
+              <div className="space-y-2">
+                {staff
+                  .filter(s => ['DOCTOR', 'DOCTOR_ADMIN'].includes(s.roleId?.name))
+                  .slice(0, 4)
+                  .map((doc, idx) => (
+                    <div key={doc._id || idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-teal-100 text-teal-700 font-bold flex items-center justify-center">
+                          {doc.name ? doc.name.charAt(0) : 'D'}
+                        </div>
+                        <div>
+                          <div className="font-bold text-slate-800">{doc.name}</div>
+                          <div className="text-[10px] text-slate-500 font-mono">{doc.doctorProfile?.specialization || 'Consultant Doctor'}</div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-100 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse"></span>
+                        Active Doctor
+                      </span>
+                    </div>
+                  ))}
+
+                {staff.filter(s => ['DOCTOR', 'DOCTOR_ADMIN'].includes(s.roleId?.name)).length === 0 && (
+                  <div className="p-6 text-center text-slate-400 text-xs font-mono bg-slate-50 border border-dashed rounded-xl">
+                    No doctor staff members registered yet.
+                  </div>
+                )}
+              </div>
+
+              {/* Total Registered Patients Banner */}
+              <div className="p-3.5 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-xl text-white flex items-center justify-between shadow-xs">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-blue-100">Registered Patient Base</div>
+                  <div className="text-xl font-extrabold font-mono mt-0.5">{patients.length} Total Patients</div>
+                </div>
+                <Button 
+                  onClick={() => setActiveTab('patients')} 
+                  variant="secondary" 
+                  className="text-xs py-1.5 px-3 bg-white text-blue-700 hover:bg-blue-50 border-none font-bold"
+                >
+                  Manage Registry
+                </Button>
+              </div>
+
+            </div>
+
+          </div>
+
+          {/* Quick Administrative Shortcuts */}
+          <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-5 shadow-card-soft space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-[#2F63F2]" />
+                  Quick Management Shortcuts
+                </h3>
+                <p className="text-[11px] text-[#6B7280]">
+                  Fast 1-tap administrative actions & module navigation.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => setActiveTab('staff')}
+                className="p-3 bg-slate-50 hover:bg-blue-50/80 border border-slate-200 hover:border-blue-300 rounded-xl transition-all text-left group cursor-pointer"
+              >
+                <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform mb-2">
+                  <Users className="w-4 h-4" />
+                </div>
+                <div className="text-xs font-bold text-slate-800 group-hover:text-blue-600">Staff Directory</div>
+                <div className="text-[10px] text-slate-500">Manage Roster</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('patients')}
+                className="p-3 bg-slate-50 hover:bg-indigo-50/80 border border-slate-200 hover:border-indigo-300 rounded-xl transition-all text-left group cursor-pointer"
+              >
+                <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform mb-2">
+                  <UserRound className="w-4 h-4" />
+                </div>
+                <div className="text-xs font-bold text-slate-800 group-hover:text-indigo-600">Patient Registry</div>
+                <div className="text-[10px] text-slate-500">Medical Records</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => navigate('/admin/billing/transactions')}
+                className="p-3 bg-slate-50 hover:bg-emerald-50/80 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all text-left group cursor-pointer"
+              >
+                <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform mb-2">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+                <div className="text-xs font-bold text-slate-800 group-hover:text-emerald-600">Billing History</div>
+                <div className="text-[10px] text-slate-500">Audit Receipts</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('branches')}
+                className="p-3 bg-slate-50 hover:bg-sky-50/80 border border-slate-200 hover:border-sky-300 rounded-xl transition-all text-left group cursor-pointer"
+              >
+                <div className="w-8 h-8 rounded-lg bg-sky-600 text-white flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform mb-2">
+                  <GitBranch className="w-4 h-4" />
+                </div>
+                <div className="text-xs font-bold text-slate-800 group-hover:text-sky-600">Departments</div>
+                <div className="text-[10px] text-slate-500">Wing Setup</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => navigate('/hospital/prescription-print')}
+                className="p-3 bg-slate-50 hover:bg-purple-50/80 border border-slate-200 hover:border-purple-300 rounded-xl transition-all text-left group cursor-pointer"
+              >
+                <div className="w-8 h-8 rounded-lg bg-purple-600 text-white flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform mb-2">
+                  <FileText className="w-4 h-4" />
+                </div>
+                <div className="text-xs font-bold text-slate-800 group-hover:text-purple-600">Print Setup</div>
+                <div className="text-[10px] text-slate-500">Rx Header</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => navigate('/display-board')}
+                className="p-3 bg-slate-50 hover:bg-rose-50/80 border border-slate-200 hover:border-rose-300 rounded-xl transition-all text-left group cursor-pointer"
+              >
+                <div className="w-8 h-8 rounded-lg bg-rose-600 text-white flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform mb-2">
+                  <Activity className="w-4 h-4" />
+                </div>
+                <div className="text-xs font-bold text-slate-800 group-hover:text-rose-600">Live TV Display</div>
+                <div className="text-[10px] text-slate-500">Token Screen</div>
+              </button>
+            </div>
+          </div>
 
         </div>
       )}
@@ -1080,8 +1298,7 @@ const AdminDashboard = () => {
             <Card 
               title="Hospital Branches Setup" 
               subtitle="Manage administrative subdivisions and regional branches"
-            >
-              <div className="flex justify-end mb-4">
+              action={
                 <Button 
                   onClick={() => { setSelectedBranch(null); setIsBranchOpen(true); }} 
                   variant="primary" 
@@ -1089,7 +1306,8 @@ const AdminDashboard = () => {
                 >
                   Add Branch Location
                 </Button>
-              </div>
+              }
+            >
               <Table
                 inlineActions={true}
                 headers={[
@@ -1112,8 +1330,7 @@ const AdminDashboard = () => {
             <Card 
               title="Medical Departments Setup" 
               subtitle="Configure department wings and base consultation charges"
-            >
-              <div className="flex justify-end mb-4">
+              action={
                 <Button 
                   onClick={() => { setSelectedDept(null); setIsDeptOpen(true); }} 
                   variant="primary" 
@@ -1121,7 +1338,8 @@ const AdminDashboard = () => {
                 >
                   Create Department Module
                 </Button>
-              </div>
+              }
+            >
               <Table
                 inlineActions={true}
                 headers={[
@@ -1146,8 +1364,7 @@ const AdminDashboard = () => {
         <Card 
           title="Healthcare Services & Pricing Registry" 
           subtitle="Configure charges for ECG, Lab tests, Ward check-ins, or diagnostic procedures"
-        >
-          <div className="flex justify-end mb-4">
+          action={
             <Button 
               onClick={() => { setSelectedService(null); setIsServiceOpen(true); }} 
               variant="primary" 
@@ -1155,7 +1372,8 @@ const AdminDashboard = () => {
             >
               Add Service Item
             </Button>
-          </div>
+          }
+        >
           <Table
             headers={[
               { key: 'name', label: 'Service Name', sortable: true },
@@ -1213,6 +1431,28 @@ const AdminDashboard = () => {
         <Card 
           title="Staff Management" 
           subtitle="Manage workforce accounts, role clearance, department wings, and clinical configurations across all hospital staff."
+          action={
+            <Button 
+              onClick={() => { 
+                setStaffFormData({
+                  name: '', countryCode: '+91', mobileNumber: '', pin: '', roleId: '', branchId: branches[0]?._id || '', departmentId: '',
+                  qualification: '', specialization: '', experience: 0, consultationFee: 500, emergencyFee: 1000,
+                  nurseQualification: '', nurseAssignedWard: '',
+                  pharmacistLicenseNumber: '', pharmacistCounterNumber: '',
+                  labTechSpecialization: '', labTechLicenseNumber: '',
+                  billingCounterNumber: '', billingMaxDiscountPercent: 0,
+                  receptionistDeskNumber: ''
+                });
+                setSelectedStaff(null); 
+                setIsStaffViewOnly(false); 
+                setIsStaffOpen(true); 
+              }} 
+              variant="primary" 
+              icon={Plus} 
+            >
+              Add Staff Member
+            </Button>
+          }
         >
           {/* Horizontal Role Filter Tabs */}
           <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-4 border-b border-[#E5E7EB] no-scrollbar">
@@ -1267,14 +1507,6 @@ const AdminDashboard = () => {
               </div>
             )}
             <Button onClick={handleClearFilters} variant="secondary" className="py-2 px-4 !text-[11px]">Clear Filters</Button>
-            <Button 
-              onClick={() => { setSelectedStaff(null); setIsStaffViewOnly(false); setIsStaffOpen(true); }} 
-              variant="primary" 
-              icon={Plus} 
-              className="ml-auto py-2 px-4 !text-[11px]"
-            >
-              Add Staff
-            </Button>
           </div>
 
           <Table
@@ -2070,19 +2302,21 @@ const AdminDashboard = () => {
       {/* QUICK ACTION: Book Appointment Modal */}
       <Modal isOpen={isBookOpen} onClose={() => setIsBookOpen(false)} title="Schedule Consultation Appointment" size="lg">
         <form onSubmit={handleBookingSubmit} className="space-y-4 text-left">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Select Patient (UHID/Mobile)</label>
-            <Autocomplete
-              placeholder="Type patient name/mobile..."
-              value={selectedPatientForBooking ? `${selectedPatientForBooking.name} (${selectedPatientForBooking.uhid})` : ''}
-              onChange={(val) => {
-                const found = patientsAutocompleteResults.find(p => `${p.name} (${p.uhid})` === val || p.name === val);
-                if (found) setSelectedPatientForBooking(found);
-              }}
-              onSearch={handlePatientSearchForBooking}
-              suggestions={patientsAutocompleteResults.map(p => `${p.name} (${p.uhid})`)}
-            />
-          </div>
+          {selectedPatientForBooking && (
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between shadow-xs">
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Patient Details</div>
+                <div className="text-sm font-bold text-slate-800">{selectedPatientForBooking.name}</div>
+                <div className="text-xs text-slate-500 font-mono">
+                  UHID: <span className="text-[#2F63F2] font-semibold">{selectedPatientForBooking.uhid}</span>
+                  {selectedPatientForBooking.mobileNumber && ` • Phone: ${selectedPatientForBooking.countryCode || '+91'} ${selectedPatientForBooking.mobileNumber}`}
+                </div>
+              </div>
+              <span className="px-3 py-1.5 text-xs font-semibold bg-blue-50 text-blue-700 rounded-lg border border-blue-100">
+                {selectedPatientForBooking.gender || 'N/A'} {selectedPatientForBooking.age ? `/ ${selectedPatientForBooking.age} Yrs` : ''}
+              </span>
+            </div>
+          )}
 
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Assign Doctor</label>

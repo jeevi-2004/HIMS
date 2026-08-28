@@ -242,11 +242,8 @@ const DoctorCompletedVisits = () => {
               <p className="text-[10px] text-[#6B7280] italic text-center">No consultation case sheet found.</p>
             )}
 
-            <div className="flex gap-2.5 justify-center pt-2">
-              <Button onClick={() => window.print()} variant="primary" icon={Printer} className="text-xs font-bold uppercase tracking-wider h-[38px] bg-[#2F63F2]">
-                Print Case Details
-              </Button>
-              <Button onClick={() => { setIsDetailOpen(false); setSelectedVisit(null); setMatchedConsultation(null); }} variant="secondary" className="text-xs font-bold uppercase tracking-wider h-[38px]">
+            <div className="flex justify-center pt-2">
+              <Button onClick={() => { setIsDetailOpen(false); setSelectedVisit(null); setMatchedConsultation(null); }} variant="secondary" className="w-full text-xs font-bold uppercase tracking-wider h-[38px]">
                 Close
               </Button>
             </div>

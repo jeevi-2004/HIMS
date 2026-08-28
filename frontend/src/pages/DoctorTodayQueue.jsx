@@ -159,20 +159,39 @@ const DoctorTodayQueue = () => {
   };
 
   // Fetch doctors list
-  const { data: doctors } = useQuery({
+  const { data: rawDoctors } = useQuery({
     queryKey: ['doctors'],
     queryFn: async () => {
-      const res = await api.get('/admin/users?role=DOCTOR');
+      const res = await api.get('/admin/users?role=DOCTOR,DOCTOR_ADMIN');
       return res.data.data;
     }
   });
+
+  // Ensure current user is in doctors list if they are a doctor
+  const doctors = useMemo(() => {
+    let list = rawDoctors || [];
+    if (user && (['DOCTOR', 'DOCTOR_ADMIN'].includes(user.role) || ['DOCTOR', 'DOCTOR_ADMIN'].includes(user.roleId?.name))) {
+      if (!list.some(d => String(d._id) === String(user._id))) {
+        list = [user, ...list];
+      }
+    }
+    return list;
+  }, [rawDoctors, user]);
+
+  const doctorsMap = useMemo(() => {
+    const map = new Map();
+    (doctors || []).forEach(d => {
+      if (d && d._id) map.set(String(d._id), d);
+    });
+    return map;
+  }, [doctors]);
 
   // Fetch appointments for date range
   const { data: queue, isLoading: queueLoading, refetch } = useQuery({
     queryKey: ['doctorQueue', user?._id, appliedFromDate, appliedToDate, selectedDoctorFilter],
     queryFn: async () => {
-      const targetDocId = selectedDoctorFilter !== '' ? selectedDoctorFilter : (user?._id || '');
-      const res = await api.get(`/operations/appointments?fromDate=${appliedFromDate}&toDate=${appliedToDate}&date=${appliedFromDate}&doctorId=${targetDocId}`);
+      const docParam = selectedDoctorFilter ? `&doctorId=${selectedDoctorFilter}` : '';
+      const res = await api.get(`/operations/appointments?fromDate=${appliedFromDate}&toDate=${appliedToDate}&date=${appliedFromDate}${docParam}`);
       return res.data.data;
     },
     refetchInterval: 15000,
@@ -690,7 +709,7 @@ const DoctorTodayQueue = () => {
               onChange={setToDate}
             />
 
-            {(user?.role === 'SUPER_ADMIN' || user?.role === 'DOCTOR_ADMIN' || user?.role === 'RECEPTIONIST' || user?.roleId?.name === 'DOCTOR_ADMIN' || user?.roleId?.name === 'SUPER_ADMIN') && (
+            {(user?.role === 'SUPER_ADMIN' || user?.role === 'DOCTOR_ADMIN' || user?.role === 'DOCTOR' || user?.role === 'RECEPTIONIST' || user?.roleId?.name === 'DOCTOR_ADMIN' || user?.roleId?.name === 'SUPER_ADMIN' || user?.roleId?.name === 'DOCTOR') && (
               <div className="w-full sm:w-auto flex-1 text-left">
                 <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
                   <Stethoscope className="w-3.5 h-3.5 text-[#2F63F2]" />
@@ -699,14 +718,19 @@ const DoctorTodayQueue = () => {
                 <select
                   value={selectedDoctorFilter}
                   onChange={(e) => setSelectedDoctorFilter(e.target.value)}
-                  className="w-full h-[40px] px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#2F63F2] focus:bg-white transition-all shadow-2xs"
+                  className="w-full h-[40px] px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#2F63F2] focus:bg-white transition-all shadow-2xs cursor-pointer"
                 >
                   <option value="">All Consulting Doctors</option>
-                  {(doctors || []).map((doc) => (
-                    <option key={doc._id} value={doc._id}>
-                      {doc.name} {doc.specialization ? `(${doc.specialization})` : ''}
-                    </option>
-                  ))}
+                  {(doctors || []).map((doc) => {
+                    const rawName = doc.name || 'Doctor';
+                    const docName = rawName.startsWith('Dr.') ? rawName : `Dr. ${rawName}`;
+                    const spec = doc.doctorProfile?.specialization || doc.specialization;
+                    return (
+                      <option key={doc._id} value={doc._id}>
+                        {docName} {spec ? `(${spec})` : ''}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
             )}

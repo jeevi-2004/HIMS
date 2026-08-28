@@ -12,6 +12,7 @@ const DoctorCompletedVisits = lazy(() => import('../../pages/DoctorCompletedVisi
 const DoctorFollowUps = lazy(() => import('../../pages/DoctorFollowUps'));
 const DoctorReports = lazy(() => import('../../pages/DoctorReports'));
 const DoctorClinicalMasters = lazy(() => import('../../pages/DoctorClinicalMasters'));
+const DoctorPatientSearch = lazy(() => import('../../pages/DoctorPatientSearch'));
 
 // Keyed wrapper for Doctor Consultation workspace to guarantee 100% component unmounting and state isolation when switching patients
 export const DoctorConsultationKeyed = () => {
@@ -105,9 +106,39 @@ export const doctorRoutes = (
     />
     <Route 
       path={ROUTES.DOCTOR.REPORTS} 
+      element={<Navigate to={ROUTES.DOCTOR.DASHBOARD} replace />} 
+    />
+
+    {/* Medical History & Patient Case Sheet Workspace */}
+    <Route 
+      path={ROUTES.DOCTOR.MEDICAL_HISTORY} 
       element={
-        <WorkspaceRoute allowedRoles={DOCTOR_ROLES}>
-          <DoctorReports />
+        <WorkspaceRoute allowedRoles={ROLE_GROUPS.ALL_STAFF}>
+          <DoctorPatientSearch />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path="/clinical/medical-history" 
+      element={
+        <WorkspaceRoute allowedRoles={ROLE_GROUPS.ALL_STAFF}>
+          <DoctorPatientSearch />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path="/doctor/patient-search" 
+      element={
+        <WorkspaceRoute allowedRoles={ROLE_GROUPS.ALL_STAFF}>
+          <DoctorPatientSearch />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path="/doctor/patient-history" 
+      element={
+        <WorkspaceRoute allowedRoles={ROLE_GROUPS.ALL_STAFF}>
+          <DoctorPatientSearch />
         </WorkspaceRoute>
       } 
     />
