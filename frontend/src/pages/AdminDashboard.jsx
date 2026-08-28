@@ -975,20 +975,7 @@ const AdminDashboard = () => {
             
             <div className="flex flex-wrap gap-2 justify-end">
               <Button 
-                onClick={() => {
-                  setStaffForm({ 
-                    name: '', countryCode: '+91', mobileNumber: '', pin: '', roleId: '', branchId: branches[0]?._id || '', departmentId: '',
-                    qualification: '', specialization: '', experience: 0, consultationFee: 500, emergencyFee: 1000,
-                    nurseQualification: '', nurseAssignedWard: '',
-                    pharmacistLicenseNumber: '', pharmacistCounterNumber: '',
-                    labTechSpecialization: '', labTechLicenseNumber: '',
-                    billingCounterNumber: '', billingMaxDiscountPercent: 0,
-                    receptionistDeskNumber: ''
-                  });
-                  setSelectedStaff(null);
-                  setIsStaffViewOnly(false);
-                  setIsStaffOpen(true);
-                }} 
+                onClick={handleOpenAddStaff} 
                 variant="secondary" 
                 className="!text-[10px] uppercase font-bold py-1.5 px-3"
               >
@@ -1433,20 +1420,7 @@ const AdminDashboard = () => {
           subtitle="Manage workforce accounts, role clearance, department wings, and clinical configurations across all hospital staff."
           action={
             <Button 
-              onClick={() => { 
-                setStaffFormData({
-                  name: '', countryCode: '+91', mobileNumber: '', pin: '', roleId: '', branchId: branches[0]?._id || '', departmentId: '',
-                  qualification: '', specialization: '', experience: 0, consultationFee: 500, emergencyFee: 1000,
-                  nurseQualification: '', nurseAssignedWard: '',
-                  pharmacistLicenseNumber: '', pharmacistCounterNumber: '',
-                  labTechSpecialization: '', labTechLicenseNumber: '',
-                  billingCounterNumber: '', billingMaxDiscountPercent: 0,
-                  receptionistDeskNumber: ''
-                });
-                setSelectedStaff(null); 
-                setIsStaffViewOnly(false); 
-                setIsStaffOpen(true); 
-              }} 
+              onClick={handleOpenAddStaff} 
               variant="primary" 
               icon={Plus} 
             >
