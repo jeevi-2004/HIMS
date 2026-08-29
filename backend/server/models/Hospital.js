@@ -132,6 +132,17 @@ const HospitalSchema = new mongoose.Schema({
       PatientPortal: false
     }
   },
+  geolocationSettings: {
+    type: Object,
+    default: {
+      enabled: false,
+      latitude: null,
+      longitude: null,
+      radiusMeters: 300,
+      enforceRoles: ['RECEPTIONIST'],
+      allowBypassWithPin: true
+    }
+  },
   billingWorkflowSettings: {
     type: Object,
     default: {

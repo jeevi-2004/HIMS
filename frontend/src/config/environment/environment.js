@@ -11,7 +11,7 @@ export const ENVIRONMENT = {
   IS_PRODUCTION: import.meta?.env?.PROD ?? false,
   IS_DEVELOPMENT: import.meta?.env?.DEV ?? true,
   
-  API_BASE_URL: getEnv('VITE_API_BASE_URL', 'http://localhost:5000/api'),
+  API_BASE_URL: getEnv('VITE_API_BASE_URL', '/api'),
   APP_NAME: getEnv('VITE_APP_NAME', 'VillZone Enterprise HIMS'),
   APP_VERSION: getEnv('VITE_APP_VERSION', '1.0.0'),
   BUILD_NUMBER: getEnv('VITE_BUILD_NUMBER', '2026.08.05.001'),
@@ -22,7 +22,7 @@ export const ENVIRONMENT = {
 
 export const validateEnvironment = () => {
   if (!ENVIRONMENT.API_BASE_URL) {
-    console.warn('[HIMS Config Warning] VITE_API_BASE_URL is undefined. Falling back to http://localhost:5000/api');
+    console.warn('[HIMS Config Warning] VITE_API_BASE_URL is undefined. Falling back to /api');
   }
 };
 

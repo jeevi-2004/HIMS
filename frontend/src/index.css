@@ -48,6 +48,17 @@
   @apply w-full bg-white border border-[#E5E7EB] rounded-xl px-4 py-2.5 text-[#111827] placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2F63F2]/10 focus:border-[#2F63F2] transition-all duration-200 text-sm box-border;
 }
 
+/* Remove default browser number input stepper / spin buttons (increase & decrease arrows) */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
 /* Loader skeletons */
 .skeleton-pulse {
   background: linear-gradient(

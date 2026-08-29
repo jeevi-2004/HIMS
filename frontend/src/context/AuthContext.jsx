@@ -75,7 +75,10 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Login error details:', error);
       const msg = error.response?.data?.message || 'Login failed. Please check connection and try again.';
-      return { success: false, message: msg };
+      const code = error.response?.data?.code;
+      const distanceMeters = error.response?.data?.distanceMeters;
+      const allowedRadius = error.response?.data?.allowedRadius;
+      return { success: false, message: msg, code, distanceMeters, allowedRadius };
     } finally {
       setLoading(false);
     }

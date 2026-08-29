@@ -817,7 +817,7 @@ class VoiceAnnouncementService {
    */
   async playCloudAudio(text, provider, voiceId) {
     try {
-      const response = await fetch('http://localhost:5000/api/tts/synthesize', {
+      const response = await fetch('/api/tts/synthesize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

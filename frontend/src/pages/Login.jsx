@@ -10,11 +10,10 @@ import Input from '../components/Input';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import { 
-  Building2, UserCheck, Key, Lock, Phone, Eye, EyeOff, CheckSquare, Square 
+  Building2, UserCheck, Key, Lock, Phone, Eye, EyeOff, CheckSquare, Square, MapPin, AlertTriangle, RefreshCw, ShieldAlert 
 } from 'lucide-react';
 import heroImg from '../assets/hospital_hero.png';
 import api from '../services/api';
-
 const Login = () => {
   const { login, setSession, user } = useAuth();
   const navigate = useNavigate();
@@ -144,6 +143,7 @@ const Login = () => {
       return;
     }
     setApiLoading(true);
+
     const res = await login({
       hospitalCode: data.hospitalCode,
       countryCode: data.countryCode || '+91',

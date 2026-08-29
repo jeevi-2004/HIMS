@@ -368,6 +368,35 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
         }
       };
 
+      // 3. Acquire GPS Location for Geofence validation
+      if (typeof window !== 'undefined' && 'geolocation' in navigator) {
+        try {
+          const getPos = (options) => new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+              (err) => reject(err),
+              options
+            );
+          });
+
+          let coords = null;
+          try {
+            coords = await getPos({ enableHighAccuracy: true, timeout: 6000, maximumAge: 0 });
+          } catch (e1) {
+            try {
+              coords = await getPos({ enableHighAccuracy: false, timeout: 12000, maximumAge: 60000 });
+            } catch (e2) {}
+          }
+
+          if (coords?.latitude != null && coords?.longitude != null) {
+            appPayload.latitude = coords.latitude;
+            appPayload.longitude = coords.longitude;
+          }
+        } catch (e) {
+          console.warn('Location capture notice:', e);
+        }
+      }
+
       const appRes = await api.post('/operations/appointments', appPayload);
       const createdApp = appRes.data.data;
 

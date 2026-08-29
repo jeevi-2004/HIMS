@@ -34,8 +34,7 @@ class WorkflowRealtimeService {
     if (typeof window === 'undefined' || !('EventSource' in window)) return;
 
     try {
-      const backendHost = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
-      const streamUrl = `${backendHost}/api/workflow/events/stream`;
+      const streamUrl = '/api/workflow/events/stream';
       this.eventSource = new EventSource(streamUrl);
 
       this.eventSource.onopen = () => {

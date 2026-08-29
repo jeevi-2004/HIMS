@@ -460,11 +460,39 @@ export default function AppointmentBookingModule() {
         consultationType: 'Appointment',
         chiefComplaint: 'General Consultation',
         consultationFee: Number(consultationFee) || 500,
-        paymentMethod: paymentMethod || 'Cash',
         billingStatus: paymentStatus === 'Paid' ? 'Paid' : 'Unpaid',
         appointmentSlot: selectedSlot,
         bookingSource: 'RECEPTION'
       };
+
+      // Acquire GPS Location for Geofence validation
+      if (typeof window !== 'undefined' && 'geolocation' in navigator) {
+        try {
+          const getPos = (options) => new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+              (err) => reject(err),
+              options
+            );
+          });
+
+          let coords = null;
+          try {
+            coords = await getPos({ enableHighAccuracy: true, timeout: 6000, maximumAge: 0 });
+          } catch (e1) {
+            try {
+              coords = await getPos({ enableHighAccuracy: false, timeout: 12000, maximumAge: 60000 });
+            } catch (e2) {}
+          }
+
+          if (coords?.latitude != null && coords?.longitude != null) {
+            payload.latitude = coords.latitude;
+            payload.longitude = coords.longitude;
+          }
+        } catch (e) {
+          console.warn('Location capture notice:', e);
+        }
+      }
 
       const res = await api.post('/operations/appointments', payload);
 

@@ -177,6 +177,60 @@ const bookAppointment = async (req, res, next) => {
     const isEmgApp = Boolean(isEmergency);
     const Hospital = require('../models/Hospital');
     const hospital = await Hospital.findById(req.user.hospitalId);
+
+    // Geofence Enforcement during OPD Token Generation
+    const geoSettings = hospital?.geolocationSettings || {};
+    if (geoSettings.enabled && geoSettings.latitude != null && geoSettings.longitude != null) {
+      const userRoleName = (req.user?.roleId?.name || req.user?.roleId || req.user?.role || '').toString().toUpperCase();
+      const isSuperAdmin = userRoleName.includes('SUPER_ADMIN');
+
+      if (!isSuperAdmin) {
+        const { latitude, longitude, bypassPin } = req.body;
+        const { isWithinGeofence } = require('../utils/geoUtils');
+
+        let bypassApproved = false;
+        if (bypassPin && geoSettings.allowBypassWithPin && hospital?.adminPin) {
+          const bcrypt = require('bcryptjs');
+          bypassApproved = await bcrypt.compare(bypassPin, hospital.adminPin);
+        }
+
+        if (!bypassApproved) {
+          if (latitude == null || longitude == null) {
+            return res.status(403).json({
+              success: false,
+              code: 'GPS_PERMISSION_REQUIRED',
+              message: `GPS Location is required to generate OPD Tokens under ${hospital?.name || 'hospital'}. Please allow location permissions on your device.`
+            });
+          }
+
+          const { isWithin, distanceMeters } = isWithinGeofence(
+            parseFloat(latitude),
+            parseFloat(longitude),
+            geoSettings.latitude,
+            geoSettings.longitude,
+            geoSettings.radiusMeters || 300
+          );
+
+          if (!isWithin) {
+            await logAudit(req.user._id, 'GPS_GEOFENCE_VIOLATION', 'APPOINTMENT', {
+              distanceMeters,
+              allowedRadius: geoSettings.radiusMeters || 300,
+              userLat: latitude,
+              userLng: longitude
+            }, req);
+
+            return res.status(403).json({
+              success: false,
+              code: 'GEOFENCE_OUT_OF_RANGE',
+              distanceMeters,
+              allowedRadius: geoSettings.radiusMeters || 300,
+              message: `OPD Token Generation Blocked: You are located ${distanceMeters}m away from hospital premises (${hospital?.name || 'hospital'}). OPD Token generation is permitted within ${geoSettings.radiusMeters || 300}m radius.`
+            });
+          }
+        }
+      }
+    }
+
     const configuredOpPrefix = hospital?.queueRulesSettings?.tokenPrefix || 'OP';
 
     const tokenPrefix = configuredOpPrefix;

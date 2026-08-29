@@ -55,9 +55,10 @@ app.use('/api/tts', ttsRoutes);
 app.use(errorHandler);
 
 // Start server
-const PORT = config.PORT;
-app.listen(PORT, () => {
-  console.log(`Server running in ${config.NODE_ENV} mode on port ${PORT}`);
+const PORT = config.PORT || 5000;
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, () => {
+  console.log(`Server running in ${config.NODE_ENV} mode on ${HOST}:${PORT}`);
 });
 
 module.exports = app;

@@ -1,13 +1,149 @@
 import React, { useState, useEffect } from 'react';
 import { useBillingSettings } from '../context/BillingSettingsContext';
-import Button from '../components/Button';
-import { CreditCard, Save, Lock, ArrowDown, Check, Pill, Settings, Volume2, Play, RefreshCw, Info, AlertTriangle, Search } from 'lucide-react';
+import { CreditCard, Save, Lock, ArrowDown, Check, Pill, Settings, Volume2, Play, RefreshCw, Info, AlertTriangle, Search, MapPin, Navigation, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
+import { useAuth } from '../context/AuthContext';
+import api from '../services/api';
 
 const HospitalBillingWorkflowSettings = () => {
   const { billingSettings, updateBillingSettings, loading } = useBillingSettings();
 
-  const [activeTab, setActiveTab] = useState('billing'); // 'billing' | 'delivery' | 'voice'
+  const [activeTab, setActiveTab] = useState('billing'); // 'billing' | 'delivery' | 'voice' | 'geofence'
+
+  const { user } = useAuth();
+  const hospitalId = user?.hospitalId?._id || user?.hospitalId || user?.hospital?._id || user?.hospital;
+
+  // Geofence Settings Form State
+  const [geoForm, setGeoForm] = useState({
+    enabled: false,
+    latitude: '',
+    longitude: '',
+    radiusMeters: 300,
+    enforceRoles: ['RECEPTIONIST', 'BILLING_CLERK']
+  });
+  const [savingGeo, setSavingGeo] = useState(false);
+  const [detectingGeo, setDetectingGeo] = useState(false);
+
+  useEffect(() => {
+    const geo = user?.hospital?.geolocationSettings || user?.hospitalId?.geolocationSettings;
+    if (geo) {
+      setGeoForm({
+        enabled: geo.enabled === true,
+        latitude: geo.latitude != null ? String(geo.latitude) : '',
+        longitude: geo.longitude != null ? String(geo.longitude) : '',
+        radiusMeters: geo.radiusMeters || 300,
+        enforceRoles: geo.enforceRoles || ['RECEPTIONIST', 'BILLING_CLERK']
+      });
+    }
+  }, [user]);
+
+  const [geoAccuracy, setGeoAccuracy] = useState(null);
+  const [geoStatusMsg, setGeoStatusMsg] = useState(null);
+  const [geoStatusType, setGeoStatusType] = useState(null);
+
+  const handleDetectLocation = () => {
+    if (typeof window === 'undefined' || !('geolocation' in navigator)) {
+      setGeoStatusMsg('⚠ Geolocation is not supported by your browser.');
+      setGeoStatusType('error');
+      return;
+    }
+    setDetectingGeo(true);
+    setGeoStatusMsg(null);
+    setGeoStatusType(null);
+
+    const onPositionSuccess = (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const acc = pos.coords.accuracy ? Math.round(pos.coords.accuracy) : null;
+
+      setGeoForm(prev => ({
+        ...prev,
+        latitude: String(lat),
+        longitude: String(lng)
+      }));
+      setDetectingGeo(false);
+      setGeoAccuracy(acc);
+      setGeoStatusMsg(`✓ Hospital location captured successfully${acc ? ` • Accuracy ±${acc}m` : ''}`);
+      setGeoStatusType('success');
+    };
+
+    const onPositionError = (err, isFallback = false) => {
+      if (!isFallback && (err.code === 2 || err.code === 3)) {
+        // Fallback to standard network/Wi-Fi positioning for PCs without hardware GPS
+        navigator.geolocation.getCurrentPosition(
+          onPositionSuccess,
+          (fallbackErr) => onPositionError(fallbackErr, true),
+          { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+        );
+        return;
+      }
+
+      setDetectingGeo(false);
+      setGeoAccuracy(null);
+      setGeoStatusType('error');
+
+      if (err.code === 1) { // PERMISSION_DENIED
+        setGeoStatusMsg('⚠ Location permission denied. Please allow location access or enter the coordinates manually.');
+      } else if (err.code === 2) { // POSITION_UNAVAILABLE
+        setGeoStatusMsg('⚠ Unable to determine your current location. Please try again.');
+      } else if (err.code === 3) { // TIMEOUT
+        setGeoStatusMsg('⚠ Location request timed out. Please try again or enter the coordinates manually.');
+      } else {
+        setGeoStatusMsg('⚠ Unable to detect your location. Please try again or enter coordinates manually.');
+      }
+    };
+
+    // First attempt high accuracy (8s timeout), then automatically fallback
+    navigator.geolocation.getCurrentPosition(
+      onPositionSuccess,
+      (err) => onPositionError(err, false),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+    );
+  };
+
+  const handleSaveGeoSettings = async () => {
+    const targetHospId = hospitalId;
+    if (!targetHospId) {
+      alert('Hospital ID not found');
+      return;
+    }
+
+    if (geoForm.enabled) {
+      const latNum = parseFloat(geoForm.latitude);
+      const lngNum = parseFloat(geoForm.longitude);
+      const radNum = parseInt(geoForm.radiusMeters);
+
+      if (!geoForm.latitude || isNaN(latNum) || latNum < -90 || latNum > 90) {
+        alert('Please capture or enter valid hospital location coordinates (-90 to 90) before enabling geofence.');
+        return;
+      }
+      if (!geoForm.longitude || isNaN(lngNum) || lngNum < -180 || lngNum > 180) {
+        alert('Please capture or enter valid hospital location coordinates (-180 to 180) before enabling geofence.');
+        return;
+      }
+      if (isNaN(radNum) || radNum <= 0) {
+        alert('Please enter a valid geofence radius greater than 0 meters.');
+        return;
+      }
+    }
+
+    setSavingGeo(true);
+    try {
+      const payload = {
+        enabled: geoForm.enabled,
+        latitude: geoForm.latitude ? parseFloat(geoForm.latitude) : null,
+        longitude: geoForm.longitude ? parseFloat(geoForm.longitude) : null,
+        radiusMeters: parseInt(geoForm.radiusMeters) || 300,
+        enforceRoles: geoForm.enforceRoles
+      };
+      await api.put(`/admin/hospitals/${targetHospId}/geolocation`, payload);
+      alert('Receptionist GPS Geofence Settings saved successfully!');
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to save Geofence Settings');
+    } finally {
+      setSavingGeo(false);
+    }
+  };
 
   // Voice Settings State
   const [availableVoices, setAvailableVoices] = useState([]);
@@ -84,7 +220,7 @@ const HospitalBillingWorkflowSettings = () => {
   // Fetch Backend TTS Status
   const fetchProviderStatus = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/tts/status');
+      const res = await fetch('/api/tts/status');
       if (res.ok) {
         const data = await res.json();
         if (data.status) setProviderStatus(data.status);
@@ -360,7 +496,20 @@ const HospitalBillingWorkflowSettings = () => {
           }`}
         >
           <Volume2 className="w-4 h-4" />
-          <span>Voice Announcement Settings</span>
+          <span>Voice Announcements</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('geofence')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            activeTab === 'geofence'
+              ? 'bg-[#2F63F2] text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <MapPin className="w-4 h-4" />
+          <span>Receptionist GPS Geofence</span>
         </button>
       </div>
 
@@ -1269,7 +1418,7 @@ const HospitalBillingWorkflowSettings = () => {
               </div>
             )}
           </div>
-        ) : (
+        ) : activeTab === 'delivery' ? (
           /* TAB 2 — PRESCRIPTION DELIVERY ROUTING */
           <div className="bg-white border border-slate-200/90 rounded-xl p-6 space-y-5 shadow-xs">
             <div>
@@ -1332,7 +1481,130 @@ const HospitalBillingWorkflowSettings = () => {
               </label>
             </div>
           </div>
-        )}
+        ) : activeTab === 'geofence' ? (
+          /* TAB 4: RECEPTIONIST GPS GEOFENCE SETTINGS */
+          <div className="bg-white border border-slate-200/90 rounded-2xl p-6 space-y-6 shadow-xs text-left">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <MapPin className="w-5 h-5 text-[#2F63F2]" />
+                  Receptionist GPS Geofence Access Control
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Enforce physical location checks during Receptionist and Staff login based on hospital premises latitude and longitude.
+                </p>
+              </div>
+              <Button
+                type="button"
+                onClick={handleSaveGeoSettings}
+                loading={savingGeo}
+                variant="primary"
+                className="text-xs font-bold uppercase tracking-wider"
+              >
+                Save Geofence Settings
+              </Button>
+            </div>
+
+            {/* Master Toggle */}
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-extrabold text-slate-900 block">Master Geofence Enforcement</span>
+                <span className="text-[11px] text-slate-500 block mt-0.5">
+                  When enabled, Receptionists logging in outside the configured radius will be blocked with a location alert.
+                </span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={geoForm.enabled}
+                  onChange={(e) => {
+                    const isChecked = e.target.checked;
+                    setGeoForm(prev => ({ ...prev, enabled: isChecked }));
+                    if (isChecked) {
+                      if (!geoForm.latitude || !geoForm.longitude) {
+                        handleDetectLocation();
+                      }
+                    } else {
+                      setGeoStatusMsg(null);
+                      setGeoStatusType(null);
+                    }
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#2F63F2]"></div>
+              </label>
+            </div>
+
+            {/* Coordinates Section */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">Hospital Coordinates (Latitude & Longitude)</label>
+                <button
+                  type="button"
+                  onClick={handleDetectLocation}
+                  disabled={detectingGeo}
+                  className="text-xs font-semibold text-[#2F63F2] hover:text-blue-800 flex items-center gap-1.5 px-3 py-1 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition-all cursor-pointer"
+                >
+                  <Navigation className={`w-3.5 h-3.5 ${detectingGeo ? 'animate-spin' : ''}`} />
+                  {detectingGeo ? 'Detecting Location...' : 'Auto-Detect Current GPS Location'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-600">Latitude (Decimal Degrees)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="e.g. 13.0827"
+                    value={geoForm.latitude}
+                    onChange={(e) => setGeoForm({ ...geoForm, latitude: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:border-[#2F63F2] focus:bg-white"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-600">Longitude (Decimal Degrees)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="e.g. 80.2707"
+                    value={geoForm.longitude}
+                    onChange={(e) => setGeoForm({ ...geoForm, longitude: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:border-[#2F63F2] focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              {geoStatusMsg && (
+                <div className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+                  geoStatusType === 'success' 
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                    : 'bg-rose-50 text-rose-800 border-rose-200'
+                }`}>
+                  <span>{geoStatusMsg}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Geofence Radius Input */}
+            <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-slate-900 block">Allowed Geofence Radius (Meters)</span>
+                  <span className="text-[11px] text-slate-500 block mt-0.5">Maximum distance from hospital center where Receptionist login is allowed</span>
+                </div>
+              </div>
+              <input
+                type="number"
+                min="10"
+                placeholder="300"
+                value={geoForm.radiusMeters}
+                onChange={(e) => setGeoForm({ ...geoForm, radiusMeters: e.target.value })}
+                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:border-[#2F63F2]"
+              />
+            </div>
+          </div>
+        ) : null}
 
         </div>
 
@@ -1397,26 +1669,33 @@ const HospitalBillingWorkflowSettings = () => {
                   </div>
                 </div>
               </div>
-            ) : activeTab === 'emergency' ? (
+            ) : activeTab === 'geofence' ? (
               <div className="space-y-3 text-xs">
                 <div>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Emergency Status</span>
-                  <span className={`font-bold text-xs block ${form.enableEmergencyModule ? 'text-rose-600' : 'text-slate-500'}`}>
-                    {form.enableEmergencyModule ? '🚨 ENABLED' : '🚫 DISABLED'}
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Geofence Status</span>
+                  <span className={`font-bold text-xs block ${geoForm.enabled ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {geoForm.enabled ? '🔒 ENFORCED (ACTIVE)' : '🔓 DISABLED'}
                   </span>
                 </div>
 
                 <div>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Token Prefix</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Target Coordinates</span>
                   <span className="font-bold text-slate-900 text-xs block font-mono">
-                    {form.emergencyTokenPrefix || 'EMG'}
+                    {geoForm.latitude && geoForm.longitude ? `${geoForm.latitude}, ${geoForm.longitude}` : 'Not Set'}
                   </span>
                 </div>
 
                 <div>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Queue Priority</span>
-                  <span className="font-bold text-slate-700 text-xs block">
-                    {form.emergencyQueuePriority === 'OVERRIDE' ? 'Top Queue Override' : 'Standard Queue'}
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Allowed Radius</span>
+                  <span className="font-bold text-[#2F63F2] text-xs block font-mono">
+                    {geoForm.radiusMeters} Meters
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Enforced Roles</span>
+                  <span className="font-bold text-slate-700 text-[11px] block">
+                    RECEPTIONIST (Reception Desk Only)
                   </span>
                 </div>
               </div>

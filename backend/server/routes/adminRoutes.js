@@ -43,8 +43,10 @@ const {
   createPrintTemplate,
   updatePrintTemplate,
   activatePrintTemplate,
-  duplicatePrintTemplate
+  duplicatePrintTemplate,
+  updateHospitalGeolocation
 } = require('../controllers/adminController');
+
 const { protect, authorize } = require('../middleware/auth');
 const { validateMobileNumber, checkUserMobileUniqueness } = require('../middleware/validation');
 const { USER_ROLES, ROLE_GROUPS } = require('../constants/roles');
@@ -68,6 +70,7 @@ router.delete('/hospitals/:id', authorize(USER_ROLES.SUPER_ADMIN), deleteHospita
 router.put('/hospitals/:id/features', authorize(USER_ROLES.SUPER_ADMIN), toggleHospitalFeatures);
 router.put('/hospitals/:id/status', authorize(USER_ROLES.SUPER_ADMIN), toggleHospitalStatus);
 router.put('/hospitals/:id/profile', authorize(...ROLE_GROUPS.ADMIN), updateHospitalProfile);
+router.put('/hospitals/:id/geolocation', authorize(...ROLE_GROUPS.ADMIN), updateHospitalGeolocation);
 
 // Prescription Print Setup & Template Management
 router.get('/hospitals/:hospitalId/print-templates', authorize(...ROLE_GROUPS.ADMIN), getPrintTemplates);

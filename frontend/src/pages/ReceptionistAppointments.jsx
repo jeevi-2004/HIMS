@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -22,7 +22,7 @@ import {
   X, Phone, ShieldAlert, Edit3, Heart, Megaphone, DoorOpen, DollarSign,
   CreditCard, Wallet, Camera, ShieldCheck, Search, Stethoscope, HelpCircle,
   Filter, ChevronRight, RefreshCw, Printer, ArrowRight, Sparkles, Check,
-  Layers, Lock, Siren, AlertCircle, Languages
+  Layers, Lock, Siren, AlertCircle, Languages, MapPin
 } from 'lucide-react';
 import { formatTimeTo12Hr } from '../utils/timeFormat';
 import { useAuth } from '../context/AuthContext';
@@ -810,6 +810,40 @@ const ReceptionistAppointments = () => {
   const [activeBottomSheetApp, setActiveBottomSheetApp] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // Inline Token Panel GPS Geofence Location State & Acquisition
+  const [inlineGpsLocation, setInlineGpsLocation] = useState({ lat: null, lng: null, loading: false, error: null });
+
+  const acquireInlineGps = useCallback(() => {
+    if (typeof window === 'undefined' || !('geolocation' in navigator)) {
+      setInlineGpsLocation({ lat: null, lng: null, loading: false, error: 'Geolocation not supported' });
+      return;
+    }
+    setInlineGpsLocation(prev => ({ ...prev, loading: true, error: null }));
+
+    const getPos = (options) => new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+        (err) => reject(err),
+        options
+      );
+    });
+
+    getPos({ enableHighAccuracy: true, timeout: 6000, maximumAge: 0 })
+      .catch(() => getPos({ enableHighAccuracy: false, timeout: 12000, maximumAge: 60000 }))
+      .then((coords) => {
+        setInlineGpsLocation({ lat: coords.latitude, lng: coords.longitude, loading: false, error: null });
+      })
+      .catch((err) => {
+        setInlineGpsLocation({ lat: null, lng: null, loading: false, error: 'Location permission required' });
+      });
+  }, []);
+
+  useEffect(() => {
+    if (isTokenPanelOpen) {
+      acquireInlineGps();
+    }
+  }, [isTokenPanelOpen, acquireInlineGps]);
+
   // Listen for FAB open event or URL action
   useEffect(() => {
     if (searchParams.get('action') === 'generate' || searchParams.get('generateToken') === 'true') {
@@ -991,7 +1025,34 @@ const ReceptionistAppointments = () => {
         initialBillingStatus = (panelPaymentStatus === 'Paid') ? 'Paid' : 'Unpaid';
       }
 
-      // 3. Generate Token via Appointment API (Queue State = READY / Waiting)
+      // 3. Attach GPS Location for Geofence validation
+      let submitLat = inlineGpsLocation.lat;
+      let submitLng = inlineGpsLocation.lng;
+
+      if (submitLat == null || submitLng == null) {
+        try {
+          const getPos = (options) => new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+              (err) => reject(err),
+              options
+            );
+          });
+          let coords = null;
+          try {
+            coords = await getPos({ enableHighAccuracy: true, timeout: 6000, maximumAge: 0 });
+          } catch (e1) {
+            try {
+              coords = await getPos({ enableHighAccuracy: false, timeout: 12000, maximumAge: 60000 });
+            } catch (e2) {}
+          }
+          if (coords?.latitude != null && coords?.longitude != null) {
+            submitLat = coords.latitude;
+            submitLng = coords.longitude;
+          }
+        } catch (e) {}
+      }
+
       const appPayload = {
         patientId: targetPatientId,
         doctorId: tokenDoctorId,
@@ -1002,7 +1063,9 @@ const ReceptionistAppointments = () => {
         isEmergency: isEmergencyConsult,
         billingStatus: initialBillingStatus,
         paymentMethod: (initialBillingStatus === 'Paid') ? panelPaymentMethod : undefined,
-        consultationFee: Number(panelConsultationFee) || selectedDoctorObj?.doctorProfile?.consultationFee || 500
+        consultationFee: Number(panelConsultationFee) || selectedDoctorObj?.doctorProfile?.consultationFee || 500,
+        latitude: submitLat,
+        longitude: submitLng
       };
 
       const bookingRes = await api.post('/operations/appointments', appPayload);
@@ -1654,6 +1717,31 @@ const ReceptionistAppointments = () => {
                 >
                   <X className="w-4 h-4" />
                 </button>
+              </div>
+
+              {/* GPS Geofence Status Indicator */}
+              <div className="flex items-center justify-between p-2.5 rounded-xl border text-xs font-semibold bg-slate-50 border-slate-200">
+                <div className="flex items-center gap-2">
+                  <MapPin className={`w-4 h-4 ${inlineGpsLocation.lat ? 'text-emerald-500' : inlineGpsLocation.error ? 'text-amber-500' : 'text-[#3563F6] animate-pulse'}`} />
+                  <span className="text-slate-700">
+                    {inlineGpsLocation.lat ? (
+                      `✓ Location Locked (${inlineGpsLocation.lat.toFixed(4)}, ${inlineGpsLocation.lng.toFixed(4)})`
+                    ) : inlineGpsLocation.loading ? (
+                      `⏳ Acquiring GPS Location...`
+                    ) : (
+                      `⚠ GPS Permission Required`
+                    )}
+                  </span>
+                </div>
+                {(!inlineGpsLocation.lat || inlineGpsLocation.error) && (
+                  <button
+                    type="button"
+                    onClick={acquireInlineGps}
+                    className="text-[11px] font-bold text-[#3563F6] underline hover:text-blue-800"
+                  >
+                    Retry GPS
+                  </button>
+                )}
               </div>
 
               {/* 1. SEARCH PATIENT SECTION */}

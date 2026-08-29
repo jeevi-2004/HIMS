@@ -1418,6 +1418,62 @@ const duplicatePrintTemplate = async (req, res, next) => {
   }
 };
 
+// UPDATE HOSPITAL GEOLOCATION SETTINGS
+const updateHospitalGeolocation = async (req, res, next) => {
+  const { id } = req.params;
+  const { enabled, latitude, longitude, radiusMeters, enforceRoles, allowBypassWithPin } = req.body;
+  try {
+    const Hospital = require('../models/Hospital');
+    const hospital = await Hospital.findById(id);
+    if (!hospital) {
+      return res.status(404).json({ success: false, message: 'Hospital not found' });
+    }
+
+    // Role check: Only SUPER_ADMIN or DOCTOR_ADMIN of this hospital can update geolocation settings
+    if (req.user.roleId?.name !== 'SUPER_ADMIN' && req.user.hospitalId?.toString() !== id) {
+      return res.status(403).json({ success: false, message: 'Access denied: Cannot configure geolocation for another hospital' });
+    }
+
+    // Validation when geofencing is enabled
+    if (enabled) {
+      const latNum = latitude !== undefined && latitude !== null ? parseFloat(latitude) : hospital.geolocationSettings?.latitude;
+      const lngNum = longitude !== undefined && longitude !== null ? parseFloat(longitude) : hospital.geolocationSettings?.longitude;
+      const radNum = radiusMeters !== undefined ? parseInt(radiusMeters) : (hospital.geolocationSettings?.radiusMeters || 300);
+
+      if (latNum === undefined || latNum === null || isNaN(latNum) || latNum < -90 || latNum > 90) {
+        return res.status(400).json({ success: false, message: 'Please capture or enter valid hospital location coordinates (-90 to 90) before enabling geofence.' });
+      }
+      if (lngNum === undefined || lngNum === null || isNaN(lngNum) || lngNum < -180 || lngNum > 180) {
+        return res.status(400).json({ success: false, message: 'Please capture or enter valid hospital location coordinates (-180 to 180) before enabling geofence.' });
+      }
+      if (isNaN(radNum) || radNum <= 0) {
+        return res.status(400).json({ success: false, message: 'Please provide a valid radius greater than 0 meters before enabling geofence.' });
+      }
+    }
+
+    const currentGeo = hospital.geolocationSettings || {};
+    hospital.geolocationSettings = {
+      enabled: enabled !== undefined ? enabled : currentGeo.enabled,
+      latitude: latitude !== undefined ? (latitude === null || latitude === '' ? null : parseFloat(latitude)) : currentGeo.latitude,
+      longitude: longitude !== undefined ? (longitude === null || longitude === '' ? null : parseFloat(longitude)) : currentGeo.longitude,
+      radiusMeters: radiusMeters !== undefined ? parseInt(radiusMeters) : (currentGeo.radiusMeters || 300),
+      enforceRoles: enforceRoles || currentGeo.enforceRoles || ['RECEPTIONIST', 'BILLING_CLERK'],
+      allowBypassWithPin: allowBypassWithPin !== undefined ? allowBypassWithPin : true
+    };
+
+    await hospital.save();
+    await logAudit(req.user._id, 'UPDATE_HOSPITAL_GEOLOCATION', 'HOSPITAL', { hospitalId: hospital._id, geolocationSettings: hospital.geolocationSettings }, req);
+
+    res.status(200).json({
+      success: true,
+      message: 'Hospital GPS Geofence settings updated successfully',
+      data: hospital.geolocationSettings
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   seedTenantAdminUser,
   createHospital,
@@ -1462,5 +1518,6 @@ module.exports = {
   createPrintTemplate,
   updatePrintTemplate,
   activatePrintTemplate,
-  duplicatePrintTemplate
+  duplicatePrintTemplate,
+  updateHospitalGeolocation
 };

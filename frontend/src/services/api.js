@@ -1,15 +1,8 @@
-const api = {
-  // Basic configurations
-  baseURL: 'http://localhost:5000/api',
-  
-  // Custom fetch wrapper because we can write a highly optimized Axios-like client
-  // Or use standard Axios since we installed it. Let's write Axios client.
-};
-
 import axios from 'axios';
+import ENVIRONMENT from '../config/environment/environment';
 
 const apiInstance = axios.create({
-  baseURL: 'http://localhost:5000/api',
+  baseURL: ENVIRONMENT.API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },

@@ -14,7 +14,7 @@ import Table from '../components/Table';
 import { 
   Building2, Hospital, GitBranch, ClipboardList, Users, ShieldCheck, 
   Activity, Plus, Key, ToggleLeft, CreditCard, ShieldAlert, Award, FileBarChart2, Settings,
-  Database, HardDrive, Cpu, Wifi, RefreshCw, Eye, Edit, Trash2, Power, CheckCircle, HelpCircle
+  Database, HardDrive, Cpu, Wifi, RefreshCw, Eye, Edit, Trash2, Power, CheckCircle, HelpCircle, MapPin
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -96,8 +96,79 @@ const SuperAdminDashboard = () => {
   const [planForm, setPlanForm] = useState({ name: '', code: '', description: '', price: '', billingCycle: 'Monthly', features: '' });
   const [hospitalForm, setHospitalForm] = useState({ 
     name: '', code: '', contactCountryCode: '+91', contactNumber: '', email: '', street: '', city: '', state: '', zip: '', country: 'India',
-    hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerCountryCode: '+91', ownerMobile: '', logo: '', subscriptionPlan: ''
+    hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerCountryCode: '+91', ownerMobile: '', logo: '', subscriptionPlan: '',
+    geoEnabled: false, geoLat: '', geoLng: '', geoRadius: 300
   });
+
+  // Geofence GPS Capture State
+  const [geoDetecting, setGeoDetecting] = useState(false);
+  const [geoSuccess, setGeoSuccess] = useState(false);
+  const [geoAccuracy, setGeoAccuracy] = useState(null);
+  const [geoStatusMsg, setGeoStatusMsg] = useState(null);
+  const [geoStatusType, setGeoStatusType] = useState(null);
+
+  const handleDetectHospitalLocation = () => {
+    if (typeof window === 'undefined' || !('geolocation' in navigator)) {
+      setGeoStatusMsg('⚠ Geolocation is not supported by your browser.');
+      setGeoStatusType('error');
+      setGeoSuccess(false);
+      return;
+    }
+    setGeoDetecting(true);
+    setGeoStatusMsg(null);
+    setGeoStatusType(null);
+
+    const onPositionSuccess = (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const acc = pos.coords.accuracy ? Math.round(pos.coords.accuracy) : null;
+
+      setHospitalForm(prev => ({
+        ...prev,
+        geoLat: String(lat),
+        geoLng: String(lng)
+      }));
+      setGeoDetecting(false);
+      setGeoSuccess(true);
+      setGeoAccuracy(acc);
+      setGeoStatusMsg(`✓ Hospital location captured successfully${acc ? ` • Accuracy ±${acc}m` : ''}`);
+      setGeoStatusType('success');
+    };
+
+    const onPositionError = (err, isFallback = false) => {
+      if (!isFallback && (err.code === 2 || err.code === 3)) {
+        // Fallback to standard network/Wi-Fi positioning for PCs without hardware GPS
+        navigator.geolocation.getCurrentPosition(
+          onPositionSuccess,
+          (fallbackErr) => onPositionError(fallbackErr, true),
+          { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+        );
+        return;
+      }
+
+      setGeoDetecting(false);
+      setGeoSuccess(false);
+      setGeoAccuracy(null);
+      setGeoStatusType('error');
+
+      if (err.code === 1) { // PERMISSION_DENIED
+        setGeoStatusMsg('⚠ Location permission denied. Please allow location access or enter the coordinates manually.');
+      } else if (err.code === 2) { // POSITION_UNAVAILABLE
+        setGeoStatusMsg('⚠ Unable to determine your current location. Please try again.');
+      } else if (err.code === 3) { // TIMEOUT
+        setGeoStatusMsg('⚠ Location request timed out. Please try again or enter the coordinates manually.');
+      } else {
+        setGeoStatusMsg('⚠ Unable to detect your location. Please try again or enter coordinates manually.');
+      }
+    };
+
+    // First attempt high accuracy (8s timeout), then automatically fallback
+    navigator.geolocation.getCurrentPosition(
+      onPositionSuccess,
+      (err) => onPositionError(err, false),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+    );
+  };
   const [branchForm, setBranchForm] = useState({ name: '', contactNumber: '', street: '', city: '', state: '', zip: '', country: 'India' });
   const [deptForm, setDeptForm] = useState({ name: '', code: '' });
   const [userForm, setUserForm] = useState({ name: '', countryCode: '+91', mobileNumber: '', pin: '', roleId: '', hospitalId: '', branchId: '', departmentId: '', hospitalCode: '' });
@@ -320,6 +391,22 @@ const SuperAdminDashboard = () => {
     }
     setHospitalErrors({});
 
+    // Validate Geofence if enabled
+    if (hospitalForm.geoEnabled) {
+      const latNum = parseFloat(hospitalForm.geoLat);
+      const lngNum = parseFloat(hospitalForm.geoLng);
+      const radNum = parseInt(hospitalForm.geoRadius);
+
+      if (!hospitalForm.geoLat || isNaN(latNum) || latNum < -90 || latNum > 90 || !hospitalForm.geoLng || isNaN(lngNum) || lngNum < -180 || lngNum > 180) {
+        toast.error('Please capture or enter the hospital location before enabling geofence.');
+        return;
+      }
+      if (isNaN(radNum) || radNum <= 0) {
+        toast.error('Please enter a valid geofence radius greater than 0 meters.');
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const payload = {
@@ -346,18 +433,35 @@ const SuperAdminDashboard = () => {
         planName: hospitalForm.subscriptionPlan || ((hospitalForm.opdOperationMode === 'TOKEN_ONLY') ? 'Plan 1: OPD Token Generation & Queue Suite' : 'Plan 2: Complete Digital OPD Suite')
       };
 
+      let res;
       if (selectedHospital) {
-        await api.put(`/admin/hospitals/${selectedHospital._id}`, payload);
+        res = await api.put(`/admin/hospitals/${selectedHospital._id}`, payload);
         toast.success('Hospital records updated successfully');
       } else {
-        await api.post('/admin/hospitals', payload);
+        res = await api.post('/admin/hospitals', payload);
         toast.success('Hospital registered successfully!');
+      }
+
+      const hospId = selectedHospital ? selectedHospital._id : res?.data?.data?._id;
+      if (hospId) {
+        await api.put(`/admin/hospitals/${hospId}/geolocation`, {
+          enabled: hospitalForm.geoEnabled,
+          latitude: hospitalForm.geoLat ? parseFloat(hospitalForm.geoLat) : null,
+          longitude: hospitalForm.geoLng ? parseFloat(hospitalForm.geoLng) : null,
+          radiusMeters: parseInt(hospitalForm.geoRadius) || 300
+        });
       }
 
       setHospitalForm({ 
         name: '', code: '', contactCountryCode: '+91', contactNumber: '', email: '', street: '', city: '', state: '', zip: '', country: 'India',
-        hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerCountryCode: '+91', ownerMobile: '', logo: '', subscriptionPlan: '', opdOperationMode: 'FULL_DIGITAL'
+        hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerCountryCode: '+91', ownerMobile: '', logo: '', subscriptionPlan: '', opdOperationMode: 'FULL_DIGITAL',
+        geoEnabled: false, geoLat: '', geoLng: '', geoRadius: 300
       });
+      setGeoDetecting(false);
+      setGeoSuccess(false);
+      setGeoAccuracy(null);
+      setGeoStatusMsg(null);
+      setGeoStatusType(null);
       setSelectedHospital(null);
       setHospitalErrors({});
       setIsHospitalOpen(false);
@@ -379,7 +483,13 @@ const SuperAdminDashboard = () => {
   };
 
   const handleEditHospital = (hosp) => {
+    const geo = hosp.geolocationSettings || {};
     setSelectedHospital(hosp);
+    setGeoDetecting(false);
+    setGeoSuccess(false);
+    setGeoAccuracy(null);
+    setGeoStatusMsg(null);
+    setGeoStatusType(null);
     setHospitalForm({
       name: hosp.name,
       code: hosp.code || '',
@@ -399,7 +509,11 @@ const SuperAdminDashboard = () => {
       ownerMobile: hosp.ownerMobile || '',
       logo: hosp.logo || '',
       opdOperationMode: hosp.opdOperationMode || 'FULL_DIGITAL',
-      subscriptionPlan: hosp.planName || (hosp.opdOperationMode === 'TOKEN_ONLY' ? 'Plan 1: OPD Token Generation & Queue Suite' : 'Plan 2: Complete Digital OPD Suite')
+      subscriptionPlan: hosp.planName || (hosp.opdOperationMode === 'TOKEN_ONLY' ? 'Plan 1: OPD Token Generation & Queue Suite' : 'Plan 2: Complete Digital OPD Suite'),
+      geoEnabled: geo.enabled === true,
+      geoLat: geo.latitude != null ? String(geo.latitude) : '',
+      geoLng: geo.longitude != null ? String(geo.longitude) : '',
+      geoRadius: geo.radiusMeters || 300
     });
     setIsHospitalOpen(true);
   };
@@ -1314,6 +1428,136 @@ const SuperAdminDashboard = () => {
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* Section 6: GPS Geofence Access Control (Receptionist) */}
+          <div className="p-5 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-[#2F63F2] uppercase tracking-widest flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-[#2F63F2]" />
+                Receptionist GPS Geofence Access Control
+              </h4>
+              <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={hospitalForm.geoEnabled}
+                  onChange={(e) => {
+                    const isChecked = e.target.checked;
+                    setHospitalForm(prev => ({ ...prev, geoEnabled: isChecked }));
+                    if (isChecked) {
+                      if (!hospitalForm.geoLat || !hospitalForm.geoLng) {
+                        handleDetectHospitalLocation();
+                      }
+                    } else {
+                      setGeoStatusMsg(null);
+                      setGeoStatusType(null);
+                    }
+                  }}
+                  className="rounded text-[#2F63F2] focus:ring-[#2F63F2] w-4 h-4 cursor-pointer"
+                />
+                <span>Enable Geofence</span>
+              </label>
+            </div>
+
+            {hospitalForm.geoEnabled ? (
+              <div className="pt-3 border-t border-slate-200/70 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800">Hospital Location</span>
+                  <button
+                    type="button"
+                    onClick={handleDetectHospitalLocation}
+                    disabled={geoDetecting}
+                    className={`text-xs font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                      geoDetecting
+                        ? 'bg-blue-50 text-[#2F63F2] border-blue-200 cursor-not-allowed opacity-80'
+                        : geoSuccess
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                        : 'bg-[#2F63F2] text-white border-transparent hover:bg-blue-700 shadow-xs'
+                    }`}
+                  >
+                    {geoDetecting ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>⏳ Detecting Location...</span>
+                      </>
+                    ) : geoSuccess ? (
+                      <>
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>✓ Location Captured</span>
+                      </>
+                    ) : (
+                      <>
+                        <MapPin className="w-3.5 h-3.5" />
+                        <span>📍 Capture Current Location</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <Input
+                    label="Hospital Latitude"
+                    placeholder="e.g. 13.0827"
+                    type="number"
+                    step="any"
+                    value={hospitalForm.geoLat}
+                    onChange={(e) => setHospitalForm({ ...hospitalForm, geoLat: e.target.value })}
+                  />
+                  <Input
+                    label="Hospital Longitude"
+                    placeholder="e.g. 80.2707"
+                    type="number"
+                    step="any"
+                    value={hospitalForm.geoLng}
+                    onChange={(e) => setHospitalForm({ ...hospitalForm, geoLng: e.target.value })}
+                  />
+                  <Input
+                    label="Allowed Radius (Meters)"
+                    placeholder="300"
+                    type="number"
+                    min="10"
+                    value={hospitalForm.geoRadius}
+                    onChange={(e) => setHospitalForm({ ...hospitalForm, geoRadius: e.target.value })}
+                  />
+                </div>
+
+                {geoStatusMsg && (
+                  <div className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+                    geoStatusType === 'success' 
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                      : 'bg-rose-50 text-rose-800 border-rose-200'
+                  }`}>
+                    <span>{geoStatusMsg}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 opacity-50 pointer-events-none">
+                <Input
+                  label="Hospital Latitude"
+                  placeholder="e.g. 13.0827"
+                  type="number"
+                  step="any"
+                  value={hospitalForm.geoLat}
+                  disabled={true}
+                />
+                <Input
+                  label="Hospital Longitude"
+                  placeholder="e.g. 80.2707"
+                  type="number"
+                  step="any"
+                  value={hospitalForm.geoLng}
+                  disabled={true}
+                />
+                <Input
+                  label="Allowed Radius (Meters)"
+                  placeholder="300"
+                  type="number"
+                  value={hospitalForm.geoRadius}
+                  disabled={true}
+                />
+              </div>
+            )}
           </div>
 
         </form>
