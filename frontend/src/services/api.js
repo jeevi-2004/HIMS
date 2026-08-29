@@ -1,9 +1,15 @@
+
+const api = {
+  // Basic configurations
+  baseURL: import.meta.env.VITE_API_BASE_URL,
+  // Custom fetch wrapper because we can write a highly optimized Axios-like client
+  // Or use standard Axios since we installed it. Let's write Axios client.
+};
 import axios from 'axios';
 import ENVIRONMENT from '../config/environment/environment';
-
 const apiInstance = axios.create({
-  baseURL: ENVIRONMENT.API_BASE_URL,
-  headers: {
+ baseURL: import.meta.env.VITE_API_BASE_URL,
+ headers: {
     'Content-Type': 'application/json',
   },
 });
