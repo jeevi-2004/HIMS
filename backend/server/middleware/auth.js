@@ -80,15 +80,14 @@ const protect = async (req, res, next) => {
     if (decoded.hospitalCode) {
       const Hospital = require('../models/Hospital');
       const hospObj = await Hospital.findOne({ code: decoded.hospitalCode.toUpperCase() });
-      if (!hospObj || hospObj.status !== 'active') {
+      if (!hospObj || hospObj.status === 'pending') {
         return res.status(403).json({
           success: false,
-          message: hospObj?.status === 'pending'
-            ? `Hospital account "${decoded.hospitalCode}" is awaiting subscription plan activation. Please contact Super Admin.`
-            : `Hospital account "${decoded.hospitalCode}" is currently inactive. Please contact your system administrator for assistance.`
+          message: `Hospital account "${decoded.hospitalCode}" is awaiting subscription plan activation. Please contact Super Admin.`
         });
       }
 
+      req.hospitalStatus = hospObj.status;
       const conn = await getTenantConnection(decoded.hospitalCode);
       await tenantLocalStorage.run({ connection: conn }, executeInContext);
     } else {
@@ -153,8 +152,20 @@ const hasPermission = (...requiredPermissions) => {
   };
 };
 
+// Require active hospital subscription for write operations
+const requireActiveSubscription = (req, res, next) => {
+  if (req.hospitalStatus === 'inactive' || req.user?.hospitalStatus === 'inactive') {
+    return res.status(403).json({
+      success: false,
+      message: 'Subscription Expired: Patient registration, Token generation, and Starting consultations are locked until your hospital plan is renewed by Super Admin.'
+    });
+  }
+  next();
+};
+
 module.exports = {
   protect,
   authorize,
-  hasPermission
+  hasPermission,
+  requireActiveSubscription
 };

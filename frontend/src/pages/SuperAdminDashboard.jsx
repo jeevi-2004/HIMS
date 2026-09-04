@@ -11,6 +11,7 @@ import Button from '../components/Button';
 import Modal from '../components/Modal';
 import Drawer from '../components/Drawer';
 import Table from '../components/Table';
+import PinInput from '../components/PinInput';
 import { 
   Building2, Hospital, GitBranch, ClipboardList, Users, ShieldCheck, 
   Activity, Plus, Key, ToggleLeft, CreditCard, ShieldAlert, Award, FileBarChart2, Settings,
@@ -1607,7 +1608,12 @@ const SuperAdminDashboard = () => {
               required 
               error={userMobileVal.error}
             />
-            <Input label="Security PIN (4 digits)" type="password" placeholder="e.g. 1234" maxLength={4} value={userForm.pin} onChange={(e) => setUserForm({ ...userForm, pin: e.target.value })} required />
+            <PinInput
+              length={6}
+              label="Security PIN (6 digits)"
+              value={userForm.pin}
+              onChange={(val) => setUserForm({ ...userForm, pin: val })}
+            />
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -1625,7 +1631,12 @@ const SuperAdminDashboard = () => {
       {/* 4. Reset User PIN Modal */}
       <Modal isOpen={isResetPinOpen} onClose={() => setIsResetPinOpen(false)} title={`Reset Security PIN: ${selectedUser?.name}`}>
         <form onSubmit={handleResetPin} className="space-y-4 text-left">
-          <Input label="New 4-Digit Security PIN" placeholder="e.g. 4321" maxLength={4} value={resetPinValue} onChange={(e) => setResetPinValue(e.target.value)} required />
+          <PinInput
+            length={6}
+            label="New 6-Digit Security PIN"
+            value={resetPinValue}
+            onChange={(val) => setResetPinValue(val)}
+          />
           <Button type="submit" variant="danger" className="w-full">Reset PIN</Button>
         </form>
       </Modal>
@@ -1676,9 +1687,9 @@ const SuperAdminDashboard = () => {
             <div className="space-y-1 text-slate-700">
               <p><strong>Hospital Code:</strong> <span className="font-mono font-bold text-[#2F63F2] text-sm ml-1">{selectedHospitalForActivation?.code}</span></p>
               <p><strong>Admin Mobile Number:</strong> <span className="font-mono font-bold text-slate-800 ml-1">{selectedHospitalForActivation?.ownerMobile || selectedHospitalForActivation?.adminMobile || selectedHospitalForActivation?.contactNumber}</span></p>
-              <p><strong>Default Security PIN:</strong> <span className="font-mono font-bold text-emerald-600 text-sm ml-1">1234</span></p>
+              <p><strong>Default Security PIN:</strong> <span className="font-mono font-bold text-emerald-600 text-sm ml-1">123456</span></p>
             </div>
-            <p className="text-[#EF4444] font-semibold mt-2.5 text-[11px]">Activating this plan creates the hospital administrator account. The administrator can log in using the Hospital Code, Mobile Number, and Default PIN 1234 above.</p>
+            <p className="text-[#EF4444] font-semibold mt-2.5 text-[11px]">Activating this plan creates the hospital administrator account. The administrator can log in using the Hospital Code, Mobile Number, and Default PIN 123456 above.</p>
           </div>
 
           <Button type="submit" variant="primary" className="w-full" loading={loading}>Activate Subscription Plan</Button>
@@ -1709,7 +1720,7 @@ const SuperAdminDashboard = () => {
             <div className="grid grid-cols-3 gap-2 pt-1 text-slate-700">
               <div><span className="text-[10px] text-slate-400 block font-semibold uppercase">Hospital Code</span><span className="font-mono font-bold text-[#2F63F2]">{selectedHospital?.code}</span></div>
               <div><span className="text-[10px] text-slate-400 block font-semibold uppercase">Admin Mobile</span><span className="font-mono font-bold">{selectedHospital?.ownerMobile || selectedHospital?.adminMobile || selectedHospital?.contactNumber}</span></div>
-              <div><span className="text-[10px] text-slate-400 block font-semibold uppercase">Default PIN</span><span className="font-mono font-bold text-emerald-600">1234</span></div>
+              <div><span className="text-[10px] text-slate-400 block font-semibold uppercase">Default PIN</span><span className="font-mono font-bold text-emerald-600">123456</span></div>
             </div>
           </div>
 

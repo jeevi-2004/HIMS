@@ -224,7 +224,7 @@ class VoiceAnnouncementService {
     // Load saved preferences from localStorage
     this.loadSavedPreferences();
 
-    // Multi-tab duplicate speech prevention via BroadcastChannel
+    // Multi-tab broadcast channel for reception voice announcements and sync
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
         this.channel = new BroadcastChannel('villzone_hims_voice_channel');
@@ -234,6 +234,22 @@ class VoiceAnnouncementService {
             this.lastAnnouncedTimestamp = event.data.timestamp;
             if (event.data.announcement) {
               this.lastVoiceAnnouncement = event.data.announcement;
+            }
+          } else if (event.data?.type === 'RECEPTION_VOICE_CALL') {
+            this.lastAnnouncedToken = event.data.token;
+            this.lastAnnouncedTimestamp = event.data.timestamp;
+            if (event.data.announcement) {
+              this.lastVoiceAnnouncement = event.data.announcement;
+            }
+
+            // Synthesize audio ONLY if running outside Doctor Desk screens (e.g. Reception, Display Board)
+            const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+            const isDoctorPage = pathname.includes('/doctor');
+            if (!isDoctorPage && event.data.announcementData) {
+              this.enqueueAnnouncement({
+                ...event.data.announcementData,
+                broadcastOnly: false
+              });
             }
           }
         };
@@ -949,11 +965,13 @@ class VoiceAnnouncementService {
   }
 
   enqueueAnnouncement(announcementData) {
-    const { tokenNumber, patientName, doctorName, mode = 'BOTH', isRepeat = false } = announcementData;
+    if (!announcementData) return false;
+
+    const { tokenNumber, patientName, doctorName, mode = 'BOTH', isRepeat = false, broadcastOnly = false } = announcementData;
     const now = Date.now();
 
     // Deduplication Protection: Prevent rapid duplicate events (< 8.0 seconds) for the same token number
-    const normToken = String(tokenNumber).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const normToken = String(tokenNumber || announcementData.token || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     if (normToken && this.lastAnnouncedToken === normToken && !isRepeat && (now - this.lastAnnouncedTimestamp) < 8000) {
       console.log(`[VOICE ANNOUNCEMENT] Rapid duplicate announcement for Token #${tokenNumber} suppressed.`);
       return false;
@@ -988,11 +1006,25 @@ class VoiceAnnouncementService {
     // Multi-tab Broadcast Notification
     if (this.channel) {
       this.channel.postMessage({
-        type: 'ANNOUNCEMENT_PLAYED',
+        type: broadcastOnly ? 'RECEPTION_VOICE_CALL' : 'ANNOUNCEMENT_PLAYED',
         token: tokenNumber,
         timestamp: now,
-        announcement: this.lastVoiceAnnouncement
+        announcement: this.lastVoiceAnnouncement,
+        announcementData: {
+          tokenNumber,
+          patientName,
+          doctorName,
+          mode,
+          isRepeat,
+          patientObj: announcementData.patientObj
+        }
       });
+    }
+
+    // If broadcastOnly is requested (e.g. from Doctor desk), do NOT play speech synthesis audio locally on Doctor's tab
+    if (broadcastOnly) {
+      console.log(`[VOICE ANNOUNCEMENT] Broadcast call sent to Reception desk for Token #${tokenNumber} (Local doctor speakers muted).`);
+      return true;
     }
 
     this.queue.push(queueItem);

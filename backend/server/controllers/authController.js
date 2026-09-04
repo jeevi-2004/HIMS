@@ -113,20 +113,6 @@ const login = async (req, res, next) => {
         });
       }
 
-      if (hospitalObj.status === 'inactive') {
-        return res.status(403).json({
-          success: false,
-          message: `Hospital account "${cleanHospitalCode}" is currently inactive. Please contact your system administrator for assistance.`
-        });
-      }
-
-      if (hospitalObj.status !== 'active') {
-        return res.status(403).json({
-          success: false,
-          message: `Hospital account "${cleanHospitalCode}" is currently inactive. Please contact your system administrator for assistance.`
-        });
-      }
-
       const conn = await getTenantConnection(cleanHospitalCode);
 
       return tenantLocalStorage.run({ connection: conn }, async () => {
@@ -165,11 +151,22 @@ const login = async (req, res, next) => {
           });
         }
 
-        const isMatch = await user.matchPin(pin);
+        let isMatch = await user.matchPin(pin);
+        if (!isMatch) {
+          const bcrypt = require('bcryptjs');
+          const isLegacyMatch = (pin === '123456' || pin === '1234') && user.pin && await bcrypt.compare('1234', user.pin);
+          if (isLegacyMatch) {
+            isMatch = true;
+            user.pin = '123456';
+            await user.save();
+            console.log(`[AUTH PIN MIGRATION] Auto-upgraded user ${user.mobileNumber} PIN from 1234 to 123456 in DB.`);
+          }
+        }
+
         if (!isMatch) {
           return res.status(401).json({
             success: false,
-            message: `Invalid 4-digit security PIN for mobile number ${rawMobile}. Default PIN is 1234.`
+            message: `Invalid 6-digit security PIN for mobile number ${rawMobile}. Default PIN is 123456.`
           });
         }
 
@@ -210,7 +207,8 @@ const login = async (req, res, next) => {
             permissions: user.roleId.permissions,
             hospitalId: user.hospitalId,
             branchId: user.branchId,
-            departmentId: user.departmentId
+            departmentId: user.departmentId,
+            hospitalStatus: hospitalObj.status
           }
         });
       });
@@ -277,7 +275,8 @@ const getProfile = async (req, res, next) => {
         department: user.departmentId,
         hospitalId: user.hospitalId?._id || user.hospitalId,
         branchId: user.branchId?._id || user.branchId,
-        departmentId: user.departmentId?._id || user.departmentId
+        departmentId: user.departmentId?._id || user.departmentId,
+        hospitalStatus: user.hospitalId?.status || req.hospitalStatus || 'active'
       }
     });
   } catch (error) {
@@ -340,8 +339,8 @@ const createUser = async (req, res, next) => {
       if (!mobileNumber || !pin) {
         return res.status(400).json({ success: false, message: 'Mobile Number and PIN are required for Staff roles' });
       }
-      if (pin.length !== 4 || isNaN(pin)) {
-        return res.status(400).json({ success: false, message: 'PIN must be exactly 4 numeric digits' });
+      if (pin.length !== 6 || isNaN(pin)) {
+        return res.status(400).json({ success: false, message: 'PIN must be exactly 6 numeric digits' });
       }
     }
 

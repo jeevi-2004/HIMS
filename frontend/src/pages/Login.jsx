@@ -9,6 +9,7 @@ import toast from 'react-hot-toast';
 import Input from '../components/Input';
 import Button from '../components/Button';
 import Card from '../components/Card';
+import PinInput from '../components/PinInput';
 import { 
   Building2, UserCheck, Key, Lock, Phone, Eye, EyeOff, CheckSquare, Square, MapPin, AlertTriangle, RefreshCw, ShieldAlert 
 } from 'lucide-react';
@@ -115,7 +116,7 @@ const Login = () => {
     registerStaff('countryCode');
     registerStaff('pin', {
       required: 'PIN is required',
-      minLength: { value: 4, message: 'Must be 4 digits' }
+      minLength: { value: 6, message: 'Must be 6 digits' }
     });
   }, [registerStaff]);
 
@@ -138,8 +139,8 @@ const Login = () => {
 
   // Submit Hospital User Login
   const onSubmitStaff = async (data) => {
-    if (data.pin.length !== 4) {
-      toast.error('PIN must be exactly 4 digits');
+    if (data.pin.length !== 6) {
+      toast.error('PIN must be exactly 6 digits');
       return;
     }
     setApiLoading(true);
@@ -167,8 +168,8 @@ const Login = () => {
       toast.error('Admin Mobile Number must be exactly 10 digits');
       return;
     }
-    if (regForm.adminPin.length !== 4) {
-      toast.error('Security PIN must be exactly 4 digits');
+    if (regForm.adminPin.length !== 6) {
+      toast.error('Security PIN must be exactly 6 digits');
       return;
     }
     setApiLoading(true);
@@ -424,14 +425,14 @@ const Login = () => {
                         required 
                         error={regAdminMobileVal.error}
                       />
-                      <Input
-                        label="Login Security PIN (4-Digit)"
-                        placeholder="••••"
-                        maxLength={4}
+                    <div className="col-span-2">
+                      <PinInput
+                        length={6}
+                        label="Login Security PIN (6-Digit)"
                         value={regForm.adminPin}
-                        onChange={(e) => setRegForm({ ...regForm, adminPin: e.target.value })}
-                        required
+                        onChange={(val) => setRegForm({ ...regForm, adminPin: val })}
                       />
+                    </div>
                     </div>
                   </div>
 
@@ -509,29 +510,12 @@ const Login = () => {
                     />
                   </div>
 
-                  <Input
-                    label="4-Digit Security PIN"
-                    name="pin"
-                    type={showPin ? 'text' : 'password'}
-                    placeholder="••••"
-                    maxLength={4}
-                    icon={Lock}
-                    error={staffErrors.pin?.message}
-                    required
+                  <PinInput
+                    length={6}
+                    label="6-Digit Security PIN"
                     value={watchStaff('pin') || ''}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/[^0-9]/g, '');
-                      setStaffValue('pin', val.slice(0, 4), { shouldValidate: true });
-                    }}
-                    rightElement={
-                      <button
-                        type="button"
-                        onClick={() => setShowPin(!showPin)}
-                        className="text-slate-400 hover:text-slate-600 focus:outline-none flex items-center justify-center"
-                      >
-                        {showPin ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                      </button>
-                    }
+                    onChange={(val) => setStaffValue('pin', val, { shouldValidate: true })}
+                    error={staffErrors.pin?.message}
                   />
 
 

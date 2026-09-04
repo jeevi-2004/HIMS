@@ -299,6 +299,11 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
       newErrors.additionalNotes = 'Please describe the complaint in Additional Notes.';
     }
 
+    if (user?.hospitalStatus === 'inactive' || user?.hospital?.status === 'inactive') {
+      toast.error('Subscription Expired: Patient registration and Token generation are locked until hospital plan is renewed by Super Admin.');
+      return;
+    }
+
     if (Object.keys(newErrors).length > 0) {
       setFormErrors(newErrors);
       return;
@@ -368,8 +373,9 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
         }
       };
 
-      // 3. Acquire GPS Location for Geofence validation
-      if (typeof window !== 'undefined' && 'geolocation' in navigator) {
+      // 3. Acquire GPS Location for Geofence validation ONLY if Geofence Enforcement is enabled in settings
+      const isGeofenceEnabled = billingSettings?.geofenceSettings?.enabled === true || user?.hospital?.geofenceSettings?.enabled === true;
+      if (isGeofenceEnabled && typeof window !== 'undefined' && 'geolocation' in navigator) {
         try {
           const getPos = (options) => new Promise((resolve, reject) => {
             navigator.geolocation.getCurrentPosition(

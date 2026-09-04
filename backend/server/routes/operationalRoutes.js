@@ -50,7 +50,7 @@ const {
   updateDoctorPresence,
   getDoctorPresence
 } = require('../controllers/operationalController');
-const { protect } = require('../middleware/auth');
+const { protect, requireActiveSubscription } = require('../middleware/auth');
 const { validateMobileNumber, checkUserMobileUniqueness } = require('../middleware/validation');
 
 // Protect all routes
@@ -93,22 +93,22 @@ router.delete('/clinical-diagnoses/:id', deleteClinicalDiagnosis);
 router.get('/reports/opd', getOPDReports);
 
 // Patients
-router.post('/patients', validateMobileNumber, checkUserMobileUniqueness, registerPatient);
+router.post('/patients', requireActiveSubscription, validateMobileNumber, checkUserMobileUniqueness, registerPatient);
 router.get('/patients', getPatients);
 router.get('/patients/search', searchPatients);
 router.put('/patients/:id', updatePatient);
 router.get('/patients/:patientId/history', getPatientHistory);
 
 // Appointments & Queue
-router.post('/appointments', bookAppointment);
+router.post('/appointments', requireActiveSubscription, bookAppointment);
 router.get('/appointments', getAppointments);
 router.get('/appointments/today', getAppointments);
 router.put('/appointments/:id/check-in', checkInAppointment);
 router.put('/appointments/:id/vitals', enterVitals);
-router.put('/appointments/:id/queue', updateQueueStatus);
+router.put('/appointments/:id/queue', requireActiveSubscription, updateQueueStatus);
 
 // Consultations & Prescription
-router.post('/consultations', createConsultation);
+router.post('/consultations', requireActiveSubscription, createConsultation);
 router.get('/consultations/:consultationId/snapshot', getConsultationSnapshot);
 
 // Pharmacy Catalog & Dispensing

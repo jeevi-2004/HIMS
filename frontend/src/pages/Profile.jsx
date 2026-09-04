@@ -7,6 +7,7 @@ import api from '../services/api';
 import Card from '../components/Card';
 import Input from '../components/Input';
 import Button from '../components/Button';
+import PinInput from '../components/PinInput';
 import { 
   Lock, Eye, EyeOff, LogOut, FileBarChart2, Settings, Printer, 
   CreditCard, GitBranch, ClipboardList, UserRound, HeartPulse, ChevronRight,
@@ -29,11 +30,11 @@ const Profile = () => {
     e.preventDefault();
     const errs = {};
 
-    if (!pinForm.oldPin || pinForm.oldPin.length !== 4) {
-      errs.oldPin = 'Please enter your current 4-digit PIN.';
+    if (!pinForm.oldPin || pinForm.oldPin.length !== 6) {
+      errs.oldPin = 'Please enter your current 6-digit PIN.';
     }
-    if (!pinForm.newPin || pinForm.newPin.length !== 4 || isNaN(pinForm.newPin)) {
-      errs.newPin = 'New PIN must be exactly 4 numeric digits.';
+    if (!pinForm.newPin || pinForm.newPin.length !== 6 || isNaN(pinForm.newPin)) {
+      errs.newPin = 'New PIN must be exactly 6 numeric digits.';
     }
     if (!pinForm.confirmPin) {
       errs.confirmPin = 'Please confirm your new PIN.';
@@ -126,77 +127,41 @@ const Profile = () => {
       <div className="md:col-span-2 space-y-6">
         {/* Security PIN Card */}
         {user?.role !== 'SUPER_ADMIN' && (
-          <Card title="Change Security PIN" subtitle="Update your 4-digit security PIN regularly to maintain account safety.">
+          <Card title="Change Security PIN" subtitle="Update your 6-digit security PIN regularly to maintain account safety.">
             <form onSubmit={handlePinChange} className="space-y-4">
               
-              <Input
+              <PinInput
+                length={6}
                 label="Old PIN"
-                placeholder="••••"
-                type={showOldPin ? 'text' : 'password'}
-                maxLength={4}
                 value={pinForm.oldPin}
-                onChange={(e) => {
-                  setPinForm({ ...pinForm, oldPin: e.target.value });
+                onChange={(val) => {
+                  setPinForm({ ...pinForm, oldPin: val });
                   if (pinErrors.oldPin) setPinErrors(prev => ({ ...prev, oldPin: undefined }));
                 }}
-                required
                 error={pinErrors.oldPin}
-                rightElement={
-                  <button
-                    type="button"
-                    onClick={() => setShowOldPin(!showOldPin)}
-                    className="text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
-                  >
-                    {showOldPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                }
               />
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input
+                <PinInput
+                  length={6}
                   label="New PIN"
-                  placeholder="••••"
-                  type={showNewPin ? 'text' : 'password'}
-                  maxLength={4}
                   value={pinForm.newPin}
-                  onChange={(e) => {
-                    setPinForm({ ...pinForm, newPin: e.target.value });
+                  onChange={(val) => {
+                    setPinForm({ ...pinForm, newPin: val });
                     if (pinErrors.newPin) setPinErrors(prev => ({ ...prev, newPin: undefined }));
                   }}
-                  required
                   error={pinErrors.newPin}
-                  rightElement={
-                    <button
-                      type="button"
-                      onClick={() => setShowNewPin(!showNewPin)}
-                      className="text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
-                    >
-                      {showNewPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  }
                 />
 
-                <Input
+                <PinInput
+                  length={6}
                   label="Confirm New PIN"
-                  placeholder="••••"
-                  type={showConfirmPin ? 'text' : 'password'}
-                  maxLength={4}
                   value={pinForm.confirmPin}
-                  onChange={(e) => {
-                    setPinForm({ ...pinForm, confirmPin: e.target.value });
+                  onChange={(val) => {
+                    setPinForm({ ...pinForm, confirmPin: val });
                     if (pinErrors.confirmPin) setPinErrors(prev => ({ ...prev, confirmPin: undefined }));
                   }}
-                  required
                   error={pinErrors.confirmPin}
-                  rightElement={
-                    <button
-                      type="button"
-                      onClick={() => setShowConfirmPin(!showConfirmPin)}
-                      className="text-slate-400 hover:text-slate-600 focus:outline-none transition-colors"
-                    >
-                      {showConfirmPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  }
                 />
               </div>
 

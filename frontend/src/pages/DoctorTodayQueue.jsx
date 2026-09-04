@@ -446,11 +446,14 @@ const DoctorTodayQueue = () => {
         const visitSt = getVisitStatus(row);
         const appSt = (row.status || row.queueStatus || '').toLowerCase();
         const evalResult = getAppointmentActions(row, 'Doctor');
-        const canStart = evalResult.actions.canStartConsultation;
+        const isSubscriptionInactive = user?.hospitalStatus === 'inactive' || user?.hospital?.status === 'inactive';
+        const canStart = evalResult.actions.canStartConsultation && !isSubscriptionInactive;
 
-        const isTokenOnlyPlan = user?.hospital?.opdOperationMode === 'TOKEN_ONLY' || user?.opdOperationMode === 'TOKEN_ONLY';
+        const isTokenOnlyPlan = user?.hospital?.opdOperationMode === 'TOKEN_ONLY' || 
+                                user?.opdOperationMode === 'TOKEN_ONLY' || 
+                                billingSettings?.opdOperationMode === 'TOKEN_ONLY';
 
-        // 1. IN CONSULTATION -> Show "Resume Consultation" (Plan 2) or "✓ Complete Token" (Plan 1)
+        // 1. IN CONSULTATION -> Show "Complete Token" + "Re-Call Voice" (Plan 1) or "Resume Consultation" (Plan 2)
         if (visitSt === VISIT_STATUSES.IN_CONSULTATION || appSt === 'in consultation' || appSt === 'in-consultation') {
           if (isTokenOnlyPlan) {
             return (
@@ -458,10 +461,31 @@ const DoctorTodayQueue = () => {
                 <button
                   type="button"
                   onClick={() => finishConsultationMutation.mutate(row._id)}
-                  className="h-8 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                  className="h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                  title="Complete Patient Visit"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>Complete Token</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    voiceAnnouncement.enqueueAnnouncement({
+                      tokenNumber: row.tokenNumber,
+                      patientName: row.patientId?.name || 'Patient',
+                      doctorName: row.doctorId?.name || row.doctorName || user?.name || 'Doctor',
+                      roomNumber: row.doctorId?.roomNumber || row.roomNumber || '',
+                      patientObj: row,
+                      isRepeat: true,
+                      broadcastOnly: true
+                    });
+                    toast.success(`📢 Re-calling Token #${row.tokenNumber} at Reception`);
+                  }}
+                  className="h-8 px-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-[#2F63F2] border border-blue-200 text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+                  title="Re-call patient voice announcement at Reception"
+                >
+                  <Volume2 className="w-3.5 h-3.5" />
+                  <span>Re-Call Voice</span>
                 </button>
               </div>
             );
@@ -478,13 +502,35 @@ const DoctorTodayQueue = () => {
           );
         }
 
-        // 2. COMPLETED -> Show "Completed Visit"
+        // 2. COMPLETED -> Show "Completed Visit" + "Re-Call Voice" for Plan 1
         if (isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy') {
           if (isTokenOnlyPlan) {
             return (
-              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 inline-flex items-center gap-1">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Completed
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 inline-flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Completed
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    voiceAnnouncement.enqueueAnnouncement({
+                      tokenNumber: row.tokenNumber,
+                      patientName: row.patientId?.name || 'Patient',
+                      doctorName: row.doctorId?.name || row.doctorName || user?.name || 'Doctor',
+                      roomNumber: row.doctorId?.roomNumber || row.roomNumber || '',
+                      patientObj: row,
+                      isRepeat: true,
+                      broadcastOnly: true
+                    });
+                    toast.success(`📢 Re-calling Token #${row.tokenNumber} at Reception`);
+                  }}
+                  className="h-8 px-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-[#2F63F2] border border-blue-200 text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+                  title="Re-call patient voice announcement at Reception"
+                >
+                  <Volume2 className="w-3.5 h-3.5" />
+                  <span>Re-Call Voice</span>
+                </button>
+              </div>
             );
           }
           return (
@@ -504,7 +550,7 @@ const DoctorTodayQueue = () => {
           return null;
         }
 
-        // 4. WAITING / SCHEDULED -> Show "Start Consultation"
+        // 4. WAITING / SCHEDULED -> Show "Accept Patient" for Plan 1 (Direct to Completed)
         if (isTokenOnlyPlan) {
           return (
             <button
@@ -515,22 +561,31 @@ const DoctorTodayQueue = () => {
                   toast.error(evalResult.reasons.startConsultation || 'Payment required before consultation.');
                   return;
                 }
-                api.put(`/operations/appointments/${row._id}/queue`, { status: 'In Consultation', queueStatus: 'In-Consultation' })
+                voiceAnnouncement.enqueueAnnouncement({
+                  tokenNumber: row.tokenNumber,
+                  patientName: row.patientId?.name || 'Patient',
+                  doctorName: row.doctorId?.name || row.doctorName || user?.name || 'Doctor',
+                  roomNumber: row.doctorId?.roomNumber || row.roomNumber || '',
+                  patientObj: row,
+                  broadcastOnly: true
+                });
+                api.put(`/operations/appointments/${row._id}/queue`, { status: 'Completed', queueStatus: 'Completed' })
                   .then(() => {
-                    toast.success(`Calling Token #${row.tokenNumber} (Voice call sent to Reception desk)`);
+                    toast.success(`✓ Token #${row.tokenNumber} Accepted & Completed! Voice call sent to Reception desk.`);
                     queryClient.invalidateQueries(['doctorQueue']);
                     queryClient.invalidateQueries(['appointments']);
                   })
-                  .catch(err => toast.error('Failed to update queue'));
+                  .catch(err => toast.error('Failed to update queue status'));
               }}
-              className={`h-8 px-3 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all ${
+              className={`h-8 px-3.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all ${
                 canStart 
                   ? 'bg-[#2F63F2] text-white hover:bg-blue-700 shadow-2xs cursor-pointer' 
                   : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
               }`}
+              title={canStart ? "Accept Patient & Call Token at Reception Desk" : "Payment Pending"}
             >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>{canStart ? 'Start Consultation' : 'Pending Payment'}</span>
+              <Volume2 className="w-3.5 h-3.5" />
+              <span>{canStart ? 'Accept Patient' : 'Pending Payment'}</span>
             </button>
           );
         }

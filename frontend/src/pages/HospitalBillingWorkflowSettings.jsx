@@ -4,6 +4,7 @@ import { CreditCard, Save, Lock, ArrowDown, Check, Pill, Settings, Volume2, Play
 import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import Button from '../components/Button';
 
 const HospitalBillingWorkflowSettings = () => {
   const { billingSettings, updateBillingSettings, loading } = useBillingSettings();

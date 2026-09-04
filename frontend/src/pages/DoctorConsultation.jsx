@@ -16,7 +16,7 @@ import {
 import {
   Pill, ShieldCheck, Check, Trash2, Plus, ArrowLeft, Volume2,
   FileText, Printer, Star, History as HistoryIcon, Copy, Stethoscope,
-  Sun, Moon, ChevronDown, ChevronUp, X, Edit3, Save, Send, Users
+  Sun, Moon, ChevronDown, ChevronUp, X, Edit3, Save, Send, Users, Zap
 } from 'lucide-react';
 import { getVisitStatus, isCompletedVisit, VISIT_STATUSES } from '../utils/visitStatus';
 import DoctorConsultationSidebar from '../components/DoctorConsultationSidebar';
@@ -58,7 +58,13 @@ const DoctorConsultation = () => {
   const mlist = useMemo(() => getMasterList('mlist'), []); // Medicines Catalog
   const dosages = useMemo(() => getMasterList('dosages'), []); // e.g. ['0','½','1','2','SOS']
   const frequencies = useMemo(() => getMasterList('frequencies'), []);
-  const durations = useMemo(() => getMasterList('durations'), []);
+  const rawDurations = useMemo(() => getMasterList('durations'), []);
+  const durations = useMemo(() => {
+    const list = Array.isArray(rawDurations) && rawDurations.length > 0 ? [...rawDurations] : ['1 Day', '3 Days', '5 Days', '7 Days', '10 Days', '14 Days', '15 Days', '30 Days', 'Other...'];
+    if (!list.includes('1 Day')) list.unshift('1 Day');
+    if (!list.includes('Other...')) list.push('Other...');
+    return list;
+  }, [rawDurations]);
   const foodInstructions = useMemo(() => getMasterList('foodInstructions'), []);
   const adviceList = useMemo(() => getMasterList('adviceList'), []);
   const followups = useMemo(() => getMasterList('followups'), []);
@@ -339,18 +345,18 @@ const DoctorConsultation = () => {
       if (snapshotData.followupReason) setFollowupReason(snapshotData.followupReason);
       if (snapshotData.prescriptions && snapshotData.prescriptions.length > 0) {
         setPrescriptionsList(snapshotData.prescriptions.map(p => {
-          const rawDose = p.dose || p.dosage || p.frequency || '1-0-1';
-          const parts = rawDose.includes('-') ? rawDose.split('-') : ['1', '0', '1'];
+          const rawDose = p.dose || p.dosage || p.frequency || '';
+          const parts = rawDose.includes('-') ? rawDose.split('-') : ['', '', ''];
           return {
             id: p._id || String(Date.now() + Math.random()),
             medicineId: p.medicineId || '',
             medicineName: p.medicineName || p.name || '',
-            morning: parts[0] || '1',
-            afternoon: parts[1] || '0',
-            night: parts[2] || '1',
-            food: p.timing || p.foodInstruction || p.food || p.instructions || 'After Food',
-            duration: p.duration || '5 Days',
-            quantity: p.quantity || 10,
+            morning: parts[0] || '',
+            afternoon: parts[1] || '',
+            night: parts[2] || '',
+            food: p.timing || p.foodInstruction || p.food || p.instructions || '',
+            duration: p.duration || '',
+            quantity: p.quantity || '',
             remarks: p.remarks || p.notes || ''
           };
         }));
@@ -424,16 +430,16 @@ const DoctorConsultation = () => {
         .filter(m => (m.medicineName && m.medicineName.trim()) || (m.name && m.name.trim()))
         .map(m => {
           const medName = (m.medicineName || m.name || '').trim();
-          const freqPattern = `${m.morning || '1'}-${m.afternoon || '0'}-${m.night || '1'}`;
-          const doseStr = m.dosage || (m.morning || m.afternoon || m.night ? freqPattern : '1 Tablet');
+          const freqPattern = (m.morning || m.afternoon || m.night) ? `${m.morning || '0'}-${m.afternoon || '0'}-${m.night || '0'}` : '';
+          const doseStr = m.dosage || freqPattern;
           return {
             medicineName: medName,
             name: medName,
             dosage: doseStr,
             frequency: m.frequency || freqPattern,
-            duration: m.duration || '5 Days',
-            food: m.food || m.foodInstruction || 'After Food',
-            instructions: m.food || m.remarks || m.foodInstruction || 'After Food'
+            duration: m.duration || '',
+            food: m.food || m.foodInstruction || '',
+            instructions: m.food || m.remarks || m.foodInstruction || ''
           };
         });
 
@@ -671,8 +677,10 @@ const DoctorConsultation = () => {
     const morning = m === 'SOS' ? 0 : parseFloat(m === '½' ? 0.5 : m) || 0;
     const afternoon = a === 'SOS' ? 0 : parseFloat(a === '½' ? 0.5 : a) || 0;
     const night = n === 'SOS' ? 0 : parseFloat(n === '½' ? 0.5 : n) || 0;
-    const days = parseInt(dur) || 1;
-    return Math.ceil((morning + afternoon + night) * days) || 10;
+    const days = parseInt(dur) || 0;
+    const totalDoses = morning + afternoon + night;
+    if (totalDoses === 0 || days === 0) return '';
+    return Math.ceil(totalDoses * days);
   };
 
   // Add a new blank editable row
@@ -685,12 +693,12 @@ const DoctorConsultation = () => {
       id: String(Date.now() + Math.random()),
       medicineId: '',
       medicineName: '',
-      morning: '1',
-      afternoon: '0',
-      night: '1',
-      food: 'After Food',
-      duration: '5 Days',
-      quantity: 10,
+      morning: '',
+      afternoon: '',
+      night: '',
+      food: '',
+      duration: '',
+      quantity: '',
       remarks: ''
     };
     setPrescriptionsList([...prescriptionsList, newRow]);
@@ -911,11 +919,11 @@ const DoctorConsultation = () => {
   // Add Frequently Used Medicines instantly as a new row
   const handleAddFrequentMed = (name) => {
     const catalogMed = mlist.find(m => m.name.toLowerCase().includes(name.toLowerCase()));
-    const m = catalogMed?.morning || '1';
-    const a = catalogMed?.afternoon || '0';
-    const n = catalogMed?.night || '1';
-    const dur = catalogMed?.duration || '5 Days';
-    const food = catalogMed?.food || 'After Food';
+    const m = catalogMed?.morning || '';
+    const a = catalogMed?.afternoon || '';
+    const n = catalogMed?.night || '';
+    const dur = catalogMed?.duration || '';
+    const food = catalogMed?.food || '';
     const qty = calculateQuantity(m, a, n, dur);
 
     const newRow = {
@@ -939,8 +947,31 @@ const DoctorConsultation = () => {
   const handleUpdatePrescriptionRow = (rowId, field, value) => {
     setPrescriptionsList(prev => prev.map(row => {
       if (row.id === rowId) {
-        const updatedRow = { ...row, [field]: value };
-        if (['morning', 'afternoon', 'night', 'duration'].includes(field)) {
+        let updatedRow = { ...row, [field]: value };
+        if (field === 'duration' && value === 'Other...') {
+          updatedRow.isCustomDuration = true;
+          updatedRow.customDurationDays = '';
+          updatedRow.duration = '';
+          updatedRow.quantity = '';
+        } else if (field === 'isCustomDuration' && value === false) {
+          updatedRow.isCustomDuration = false;
+          updatedRow.customDurationDays = '';
+          updatedRow.duration = '';
+          updatedRow.quantity = '';
+        } else if (field === 'customDurationDays') {
+          const rawNum = parseInt(value);
+          const daysNum = isNaN(rawNum) ? 0 : Math.max(0, rawNum);
+          updatedRow.customDurationDays = value === '' ? '' : String(daysNum);
+          updatedRow.duration = daysNum > 0 ? `${daysNum} Days` : '';
+          updatedRow.quantity = calculateQuantity(updatedRow.morning, updatedRow.afternoon, updatedRow.night, updatedRow.duration);
+        } else if (field === 'quantity') {
+          if (value === '' || value === null) {
+            updatedRow.quantity = '';
+          } else {
+            const rawQty = parseInt(value);
+            updatedRow.quantity = isNaN(rawQty) ? '' : Math.max(0, rawQty);
+          }
+        } else if (['morning', 'afternoon', 'night', 'duration'].includes(field)) {
           updatedRow.quantity = calculateQuantity(updatedRow.morning, updatedRow.afternoon, updatedRow.night, updatedRow.duration);
         }
         return updatedRow;
@@ -963,18 +994,18 @@ const DoctorConsultation = () => {
 
   // Autocomplete select for row input cell
   const handleAutofillPrescriptionRow = (rowId, med) => {
-    const qty = calculateQuantity(med.morning || '1', med.afternoon || '0', med.night || '1', med.duration || '5 Days');
+    const qty = calculateQuantity(med.morning || '', med.afternoon || '', med.night || '', med.duration || '');
     setPrescriptionsList(prev => prev.map(row => {
       if (row.id === rowId) {
         return {
           ...row,
           medicineId: med.id,
           medicineName: med.name,
-          morning: med.morning || '1',
-          afternoon: med.afternoon || '0',
-          night: med.night || '1',
-          food: med.food || 'After Food',
-          duration: med.duration || '5 Days',
+          morning: med.morning || '',
+          afternoon: med.afternoon || '',
+          night: med.night || '',
+          food: med.food || '',
+          duration: med.duration || '',
           quantity: qty
         };
       }
@@ -1295,34 +1326,6 @@ const DoctorConsultation = () => {
             </button>
           </div>
 
-          {/* MODE SEGMENTED CONTROL: OPD Starter | Full HIMS */}
-          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-inner">
-            <button
-              type="button"
-              onClick={() => handleSwitchMode('opd_starter')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 min-h-[36px] ${
-                consultationMode === 'opd_starter'
-                  ? 'bg-[#3563F6] text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
-              }`}
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <span>OPD Starter</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleSwitchMode('full_hims')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 min-h-[36px] ${
-                consultationMode === 'full_hims'
-                  ? 'bg-[#3563F6] text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
-              }`}
-            >
-              <Stethoscope className="w-3.5 h-3.5" />
-              <span>Full HIMS</span>
-            </button>
-          </div>
-
           <div className="flex items-center gap-2 flex-wrap">
             {draftSavedTime ? (
               <span className="text-xs text-emerald-700 font-mono font-extrabold bg-emerald-50 border border-emerald-200/80 px-3 py-1.5 rounded-xl flex items-center gap-1.5 shadow-2xs">
@@ -1332,59 +1335,6 @@ const DoctorConsultation = () => {
               <span className="text-xs text-slate-400 font-mono font-bold bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl shadow-2xs">
                 Auto-save active
               </span>
-            )}
-          </div>
-        </div>
-
-        {/* WORKFLOW STEPS INDICATOR BAR */}
-        <div className="bg-white border border-slate-200/80 rounded-2xl px-3.5 py-2.5 text-xs font-bold text-slate-600 shadow-2xs print:hidden overflow-x-auto whitespace-nowrap scrollbar-none">
-          <div className="flex items-center gap-1.5 text-[11px] sm:text-xs">
-            {consultationMode === 'opd_starter' ? (
-              <>
-                <span className="text-[#3563F6] font-extrabold bg-blue-50 px-2 py-1 rounded-lg border border-blue-100 flex items-center gap-1">
-                  👤 Patient
-                </span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
-                  🩺 Vitals
-                </span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
-                  📝 Consultation
-                </span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
-                  💊 Prescription
-                </span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-emerald-700 font-extrabold bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 flex items-center gap-1">
-                  <Check className="w-3.5 h-3.5 text-emerald-600" /> Finish
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="text-[#3563F6] font-extrabold bg-blue-50 px-2 py-1 rounded-lg border border-blue-100 flex items-center gap-1">
-                  📋 Patient History
-                </span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">🩺 Vitals</span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">🗣️ Chief Complaint</span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">📝 HPI/Notes</span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">🔍 Examination</span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">🏥 Diagnosis</span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">💊 Prescription</span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-slate-700 font-bold bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">📅 Follow-up</span>
-                <span className="text-slate-300 font-bold">→</span>
-                <span className="text-emerald-700 font-extrabold bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 flex items-center gap-1">
-                  <Check className="w-3.5 h-3.5 text-emerald-600" /> Finish
-                </span>
-              </>
             )}
           </div>
         </div>
@@ -2299,18 +2249,21 @@ const DoctorConsultation = () => {
                               <div className="bg-white border border-slate-200 rounded-full px-1.5 py-0.5 flex items-center gap-0.5 shadow-2xs">
                                 <Sun className="w-2.5 h-2.5 text-amber-500 shrink-0" />
                                 <select className="bg-transparent text-[10px] font-extrabold text-slate-800 focus:outline-none cursor-pointer appearance-none text-center" value={row.morning} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'morning', e.target.value)}>
+                                  <option value="">-</option>
                                   {dosages.map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>
                               </div>
                               <div className="bg-white border border-slate-200 rounded-full px-1.5 py-0.5 flex items-center gap-0.5 shadow-2xs">
                                 <Sun className="w-2.5 h-2.5 text-orange-500 shrink-0" />
                                 <select className="bg-transparent text-[10px] font-extrabold text-slate-800 focus:outline-none cursor-pointer appearance-none text-center" value={row.afternoon} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'afternoon', e.target.value)}>
+                                  <option value="">-</option>
                                   {dosages.map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>
                               </div>
                               <div className="bg-white border border-slate-200 rounded-full px-1.5 py-0.5 flex items-center gap-0.5 shadow-2xs">
                                 <Moon className="w-2.5 h-2.5 text-indigo-500 shrink-0" />
                                 <select className="bg-transparent text-[10px] font-extrabold text-slate-800 focus:outline-none cursor-pointer appearance-none text-center" value={row.night} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'night', e.target.value)}>
+                                  <option value="">-</option>
                                   {dosages.map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>
                               </div>
@@ -2321,21 +2274,64 @@ const DoctorConsultation = () => {
                           <div className="grid grid-cols-3 gap-2">
                             <div>
                               <span className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Duration</span>
-                              <div className="relative">
-                                <select className="w-full bg-white border border-slate-200 rounded-lg py-1 px-2 pr-5 text-[10px] font-semibold text-slate-800 cursor-pointer focus:outline-none focus:border-[#3563F6] appearance-none shadow-2xs" value={row.duration} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'duration', e.target.value)}>
-                                  {durations.map(dur => <option key={dur} value={dur}>{dur}</option>)}
-                                </select>
-                                <ChevronDown className="w-3 h-3 text-slate-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                              </div>
+                              {(() => {
+                                const isCustom = row.isCustomDuration || (row.duration && !durations.includes(row.duration));
+                                if (isCustom) {
+                                  return (
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        disabled={isReadOnly}
+                                        type="number"
+                                        min="0"
+                                        placeholder="Days"
+                                        className="w-full bg-white border border-slate-200 rounded-lg py-1 px-1.5 text-center text-[10px] font-bold text-slate-800 focus:outline-none focus:border-[#3563F6] shadow-2xs"
+                                        value={row.customDurationDays !== undefined ? row.customDurationDays : (parseInt(row.duration) || '')}
+                                        onWheel={(e) => e.target.blur()}
+                                        onKeyDown={(e) => (e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.preventDefault()}
+                                        onChange={(e) => handleUpdatePrescriptionRow(row.id, 'customDurationDays', e.target.value)}
+                                      />
+                                      {!isReadOnly && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUpdatePrescriptionRow(row.id, 'isCustomDuration', false)}
+                                          className="text-slate-400 hover:text-slate-600 text-[10px] font-bold px-0.5 shrink-0"
+                                          title="Switch to list"
+                                        >
+                                          ✕
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div className="relative">
+                                    <select className="w-full bg-white border border-slate-200 rounded-lg py-1 px-2 pr-5 text-[10px] font-semibold text-slate-800 cursor-pointer focus:outline-none focus:border-[#3563F6] appearance-none shadow-2xs" value={durations.includes(row.duration) ? row.duration : (row.duration ? 'Other...' : '')} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'duration', e.target.value)}>
+                                      <option value="">Select Duration</option>
+                                      {durations.map(dur => <option key={dur} value={dur}>{dur}</option>)}
+                                    </select>
+                                    <ChevronDown className="w-3 h-3 text-slate-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                  </div>
+                                );
+                              })()}
                             </div>
                             <div>
                               <span className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Qty</span>
-                              <input type="number" className="w-full bg-white border border-slate-200 rounded-lg py-1 text-center text-[10px] font-black text-slate-800 focus:outline-none focus:border-[#3563F6] shadow-2xs" value={row.quantity} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'quantity', parseInt(e.target.value) || 0)} />
+                              <input
+                                type="number"
+                                min="0"
+                                placeholder="0"
+                                className="w-full bg-white border border-slate-200 rounded-lg py-1 text-center text-[10px] font-black text-slate-800 focus:outline-none focus:border-[#3563F6] shadow-2xs"
+                                value={row.quantity || ''}
+                                onWheel={(e) => e.target.blur()}
+                                onKeyDown={(e) => (e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.preventDefault()}
+                                onChange={(e) => handleUpdatePrescriptionRow(row.id, 'quantity', e.target.value)}
+                              />
                             </div>
                             <div>
                               <span className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Food</span>
                               <div className="relative">
                                 <select className="w-full bg-white border border-slate-200 rounded-lg py-1 px-2 pr-5 text-[10px] font-semibold text-slate-800 cursor-pointer focus:outline-none focus:border-[#3563F6] appearance-none shadow-2xs" value={row.food} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'food', e.target.value)}>
+                                  <option value="">Select Food</option>
                                   {foodInstructions.map(food => <option key={food} value={food}>{food}</option>)}
                                 </select>
                                 <ChevronDown className="w-3 h-3 text-slate-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -2445,18 +2441,21 @@ const DoctorConsultation = () => {
                               <div className="bg-white border border-slate-200 rounded-full px-2 py-0.5 flex items-center justify-center gap-1 shadow-2xs shrink-0">
                                 <Sun className="w-3 h-3 text-amber-500 shrink-0" />
                                 <select disabled={isReadOnly} className="bg-transparent text-xs font-extrabold text-slate-800 focus:outline-none cursor-pointer appearance-none text-center pr-0.5" value={row.morning} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'morning', e.target.value)}>
+                                  <option value="">-</option>
                                   {dosages.map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>
                               </div>
                               <div className="bg-white border border-slate-200 rounded-full px-2 py-0.5 flex items-center justify-center gap-1 shadow-2xs shrink-0">
                                 <Sun className="w-3 h-3 text-orange-500 shrink-0" />
                                 <select disabled={isReadOnly} className="bg-transparent text-xs font-extrabold text-slate-800 focus:outline-none cursor-pointer appearance-none text-center pr-0.5" value={row.afternoon} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'afternoon', e.target.value)}>
+                                  <option value="">-</option>
                                   {dosages.map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>
                               </div>
                               <div className="bg-white border border-slate-200 rounded-full px-2 py-0.5 flex items-center justify-center gap-1 shadow-2xs shrink-0">
                                 <Moon className="w-3 h-3 text-indigo-500 shrink-0" />
                                 <select disabled={isReadOnly} className="bg-transparent text-xs font-extrabold text-slate-800 focus:outline-none cursor-pointer appearance-none text-center pr-0.5" value={row.night} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'night', e.target.value)}>
+                                  <option value="">-</option>
                                   {dosages.map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>
                               </div>
@@ -2465,23 +2464,68 @@ const DoctorConsultation = () => {
 
                           {/* Duration Cell */}
                           <td className="py-3 px-2">
-                            <div className="relative inline-block w-full min-w-[110px]">
-                              <select disabled={isReadOnly} className="w-full bg-white border border-slate-200 rounded-full py-1.5 px-3.5 pr-7 text-xs font-semibold text-slate-800 cursor-pointer focus:outline-none focus:border-[#3563F6] appearance-none shadow-2xs" value={row.duration} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'duration', e.target.value)}>
-                                {durations.map(dur => <option key={dur} value={dur}>{dur}</option>)}
-                              </select>
-                              <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                            </div>
+                            {(() => {
+                              const isCustom = row.isCustomDuration || (row.duration && !durations.includes(row.duration));
+                              if (isCustom) {
+                                return (
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      disabled={isReadOnly}
+                                      type="number"
+                                      min="0"
+                                      placeholder="Days"
+                                      className="w-16 bg-white border border-slate-200 rounded-full py-1.5 px-2 text-center text-xs font-bold text-slate-800 focus:outline-none focus:border-[#3563F6] shadow-2xs"
+                                      value={row.customDurationDays !== undefined ? row.customDurationDays : (parseInt(row.duration) || '')}
+                                      onWheel={(e) => e.target.blur()}
+                                      onKeyDown={(e) => (e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.preventDefault()}
+                                      onChange={(e) => handleUpdatePrescriptionRow(row.id, 'customDurationDays', e.target.value)}
+                                    />
+                                    <span className="text-[10px] font-bold text-slate-500">Days</span>
+                                    {!isReadOnly && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdatePrescriptionRow(row.id, 'isCustomDuration', false)}
+                                        className="text-slate-400 hover:text-slate-600 text-[10px] font-bold px-1 cursor-pointer"
+                                        title="Switch to list"
+                                      >
+                                        ✕
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div className="relative inline-block w-full min-w-[110px]">
+                                  <select disabled={isReadOnly} className="w-full bg-white border border-slate-200 rounded-full py-1.5 px-3.5 pr-7 text-xs font-semibold text-slate-800 cursor-pointer focus:outline-none focus:border-[#3563F6] appearance-none shadow-2xs" value={durations.includes(row.duration) ? row.duration : (row.duration ? 'Other...' : '')} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'duration', e.target.value)}>
+                                    <option value="">Select Duration</option>
+                                    {durations.map(dur => <option key={dur} value={dur}>{dur}</option>)}
+                                  </select>
+                                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                </div>
+                              );
+                            })()}
                           </td>
 
                           {/* Qty Cell */}
                           <td className="py-3 px-2 text-center">
-                            <input disabled={isReadOnly} type="number" className="w-14 bg-white border border-slate-200 rounded-full py-1.5 text-center text-xs font-black text-slate-800 focus:outline-none focus:border-[#3563F6] shadow-2xs mx-auto" value={row.quantity} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'quantity', parseInt(e.target.value) || 0)} />
+                            <input
+                              disabled={isReadOnly}
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              className="w-14 bg-white border border-slate-200 rounded-full py-1.5 text-center text-xs font-black text-slate-800 focus:outline-none focus:border-[#3563F6] shadow-2xs mx-auto"
+                              value={row.quantity || ''}
+                              onWheel={(e) => e.target.blur()}
+                              onKeyDown={(e) => (e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.preventDefault()}
+                              onChange={(e) => handleUpdatePrescriptionRow(row.id, 'quantity', e.target.value)}
+                            />
                           </td>
 
                           {/* Food Cell */}
                           <td className="py-3 px-2">
                             <div className="relative inline-block w-full min-w-[120px]">
                               <select disabled={isReadOnly} className="w-full bg-white border border-slate-200 rounded-full py-1.5 px-3.5 pr-7 text-xs font-semibold text-slate-800 cursor-pointer focus:outline-none focus:border-[#3563F6] appearance-none shadow-2xs" value={row.food} onChange={(e) => handleUpdatePrescriptionRow(row.id, 'food', e.target.value)}>
+                                <option value="">Select Food</option>
                                 {foodInstructions.map(food => <option key={food} value={food}>{food}</option>)}
                               </select>
                               <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -2716,21 +2760,21 @@ const DoctorConsultation = () => {
           </div>
 
           {/* Section 5: Consultation Type & Final Completion Toolbar (Bottom of Workspace) */}
-          <div className="p-3 sm:p-4 bg-slate-50 border border-slate-200/90 rounded-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 pt-4 print:hidden">
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
+          <div className="p-3.5 sm:p-4 bg-slate-50 border border-slate-200/90 rounded-2xl flex flex-col xl:flex-row items-start xl:items-center justify-between gap-3.5 print:hidden overflow-hidden">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full xl:w-auto flex-wrap">
+              <div className="flex items-center gap-2 shrink-0">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#3563F6] animate-pulse" />
                 <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">Consultation Type</h4>
               </div>
 
-              {/* Consultation Type Selector Enum */}
-              <div className="flex items-center gap-1 bg-white border border-slate-200 p-1 rounded-xl">
+              {/* Consultation Type Selector Enum (Responsive 2x2 grid on mobile, flex row on desktop) */}
+              <div className="grid grid-cols-2 sm:flex sm:items-center gap-1 bg-white border border-slate-200 p-1 rounded-xl w-full sm:w-auto shrink-0">
                 {['New Consultation', 'Follow-up', 'Emergency', 'Teleconsultation'].map((type) => (
                   <button
                     key={type}
                     type="button"
                     onClick={() => setConsultationType(type)}
-                    className={`px-2.5 py-1 text-[11px] font-extrabold rounded-lg transition-all ${
+                    className={`px-2.5 py-1.5 text-center text-[11px] font-extrabold rounded-lg transition-all whitespace-nowrap ${
                       consultationType === type
                         ? 'bg-[#2F63F2] text-white shadow-2xs'
                         : 'text-slate-600 hover:bg-slate-100'
@@ -2741,8 +2785,8 @@ const DoctorConsultation = () => {
                 ))}
               </div>
 
-              {/* Manual Fee Entry Input */}
-              <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">
+              {/* Manual Fee Entry Input & Status Badge */}
+              <div className="flex items-center gap-2 sm:pl-3 border-t sm:border-t-0 sm:border-l border-slate-200 pt-2 sm:pt-0 w-full sm:w-auto shrink-0">
                 <span className="text-[11px] font-bold text-slate-600">Fee (₹):</span>
                 <input
                   type="number"
@@ -2757,14 +2801,14 @@ const DoctorConsultation = () => {
                   }`}
                 />
                 {!isFeeEditable && (
-                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md flex items-center gap-1 whitespace-nowrap">
+                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-md flex items-center gap-1 whitespace-nowrap shadow-2xs">
                     🔒 {appointment?.billingStatus === 'Paid' || appointment?.paymentStatus === 'Paid' ? 'Paid' : 'Read Only'}
                   </span>
                 )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap shrink-0 w-full sm:w-auto">
+            <div className="flex items-center justify-start xl:justify-end gap-2 sm:gap-2.5 shrink-0 w-full xl:w-auto flex-wrap pt-2 xl:pt-0 border-t xl:border-t-0 border-slate-200/70">
               {!isReadOnly && (
                 <Button
                   onClick={() => {

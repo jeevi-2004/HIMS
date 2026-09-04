@@ -16,7 +16,7 @@ const defaultMasters = {
   dlist: [],
   dosages: ['0', '½', '1', '2', 'SOS'],
   frequencies: ['OD', 'BD', 'TDS', 'QID', 'SOS', 'STAT', 'HS'],
-  durations: ['1 Day', '3 Days', '5 Days', '7 Days', '10 Days', '15 Days', '30 Days'],
+  durations: ['1 Day', '3 Days', '5 Days', '7 Days', '10 Days', '14 Days', '15 Days', '30 Days', 'Other...'],
   foodInstructions: ['Before Food', 'After Food', 'With Food'],
   adviceList: ['Drink Water', 'Take Rest', 'Steam Inhalation', 'Avoid Cold Drinks', 'Avoid Oily Food', 'Finish Antibiotics', 'Return if Fever Continues', 'Low Salt Diet', 'Diabetic Diet'],
   followups: ['1 Day', '2 Days', '3 Days', '5 Days', '7 Days', '15 Days', '30 Days', '1 Month', '3 Months'],
@@ -43,6 +43,17 @@ export const initClinicalMasters = () => {
       localStorage.setItem(`cm_${key}`, JSON.stringify(defaultMasters[key]));
     }
   });
+
+  // Sanitize durations in local storage
+  const rawDurations = localStorage.getItem('cm_durations');
+  if (rawDurations) {
+    try {
+      const parsedDurations = JSON.parse(rawDurations);
+      if (Array.isArray(parsedDurations) && (!parsedDurations.includes('Other...') || !parsedDurations.includes('1 Day'))) {
+        localStorage.setItem('cm_durations', JSON.stringify(defaultMasters.durations));
+      }
+    } catch {}
+  }
 
   // Sanitize foodInstructions in local storage
   const rawFood = localStorage.getItem('cm_foodInstructions');

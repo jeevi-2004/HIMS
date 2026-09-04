@@ -465,8 +465,9 @@ export default function AppointmentBookingModule() {
         bookingSource: 'RECEPTION'
       };
 
-      // Acquire GPS Location for Geofence validation
-      if (typeof window !== 'undefined' && 'geolocation' in navigator) {
+      // Acquire GPS Location for Geofence validation ONLY if enabled
+      const isGeofenceEnabled = user?.hospital?.geofenceSettings?.enabled === true;
+      if (isGeofenceEnabled && typeof window !== 'undefined' && 'geolocation' in navigator) {
         try {
           const getPos = (options) => new Promise((resolve, reject) => {
             navigator.geolocation.getCurrentPosition(

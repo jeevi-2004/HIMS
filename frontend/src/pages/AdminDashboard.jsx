@@ -12,6 +12,7 @@ import Button from '../components/Button';
 import Modal from '../components/Modal';
 import Drawer from '../components/Drawer';
 import Table from '../components/Table';
+import PinInput from '../components/PinInput';
 import DatePicker from '../components/DatePicker';
 import Autocomplete from '../components/Autocomplete';
 import { 
@@ -563,8 +564,8 @@ const AdminDashboard = () => {
     if (!staffForm.mobileNumber || !/^(?:\+91[\-\s]?|91[\-\s]?)?[6-9]\d{9}$/.test(staffForm.mobileNumber)) {
       errs.mobileNumber = 'Please enter a valid 10-digit Indian mobile number.';
     }
-    if (!selectedStaff && (!staffForm.pin || staffForm.pin.length !== 4)) {
-      errs.pin = 'Security PIN must be 4 numeric digits.';
+    if (!selectedStaff && (!staffForm.pin || staffForm.pin.length !== 6)) {
+      errs.pin = 'Security PIN must be 6 numeric digits.';
     }
     if (!staffForm.roleId) {
       errs.roleId = 'Role Clearance selection is required.';
@@ -1980,18 +1981,14 @@ const AdminDashboard = () => {
               error={staffErrors.mobileNumber || staffMobileVal.error}
             />
             {!selectedStaff && (
-              <Input 
-                label="Security PIN (4 digits)" 
-                type="password" 
-                placeholder="e.g. 1234" 
-                maxLength={4} 
+              <PinInput 
+                length={6}
+                label="Security PIN (6 digits)" 
                 value={staffForm.pin} 
-                autoComplete="new-password"
-                onChange={(e) => {
-                  setStaffForm({ ...staffForm, pin: e.target.value.replace(/[^0-9]/g, '') });
+                onChange={(val) => {
+                  setStaffForm({ ...staffForm, pin: val });
                   if (staffErrors.pin) setStaffErrors(prev => ({ ...prev, pin: undefined }));
                 }} 
-                required 
                 error={staffErrors.pin}
               />
             )}

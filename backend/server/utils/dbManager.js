@@ -3,19 +3,47 @@ const config = require('../config/config');
 
 const tenantConnections = {};
 
+function getTenantDatabaseUri(mainUri, databaseName) {
+  if (!mainUri) {
+    return `mongodb://localhost:27017/${databaseName}`;
+  }
+
+  try {
+    const parsed = new URL(mainUri);
+    const originalDb = parsed.pathname ? parsed.pathname.replace(/^\//, '') : '';
+    parsed.pathname = '/' + databaseName;
+
+    // If authentication credentials are provided in the connection string, set authSource if missing
+    if (parsed.username) {
+      if (!parsed.searchParams.has('authSource')) {
+        parsed.searchParams.set('authSource', originalDb || 'admin');
+      }
+    }
+    return parsed.toString();
+  } catch (err) {
+    const lastSlash = mainUri.lastIndexOf('/');
+    if (lastSlash !== -1) {
+      const base = mainUri.substring(0, lastSlash);
+      return `${base}/${databaseName}`;
+    }
+    return `${mainUri}/${databaseName}`;
+  }
+}
+
 async function getTenantConnection(hospitalCode) {
   const code = hospitalCode.toUpperCase();
 
   if (tenantConnections[code]) {
-    return tenantConnections[code];
+    if (tenantConnections[code].readyState === 1) {
+      return tenantConnections[code];
+    }
+    if (tenantConnections[code].readyState === 0 || tenantConnections[code].readyState === 3) {
+      delete tenantConnections[code];
+    }
   }
 
-  const baseUri = config.MONGO_URI 
-    ? config.MONGO_URI.substring(0, config.MONGO_URI.lastIndexOf('/'))
-    : 'mongodb://localhost:27017';
-
   const databaseName = `hospital_${code.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
-  const databaseUri = `${baseUri}/${databaseName}`;
+  const databaseUri = getTenantDatabaseUri(config.MONGO_URI, databaseName);
 
   console.log(`Establishing connection to tenant database: ${databaseName}`);
 
@@ -50,5 +78,6 @@ async function getTenantConnection(hospitalCode) {
 }
 
 module.exports = {
-  getTenantConnection
+  getTenantConnection,
+  getTenantDatabaseUri
 };

@@ -141,7 +141,7 @@ const seedTenantAdminUser = async (hospital) => {
     ].map(m => (m || '').toString().trim()).filter(Boolean);
 
     const primaryMobile = targetMobiles[0] || '9876543210';
-    const defaultPin = hospital.adminPin || '1234';
+    const defaultPin = hospital.adminPin || '123456';
     const adminDisplayName = hospital.ownerName && hospital.ownerName.trim() ? hospital.ownerName.trim() : `${hospital.name} Admin`;
 
     // Seed default Facility inside tenant database based on hospital City Name (Option A: City Only)
