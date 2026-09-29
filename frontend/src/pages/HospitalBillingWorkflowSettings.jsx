@@ -5,6 +5,7 @@ import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import Button from '../components/Button';
+import useFormDraft from '../hooks/useFormDraft';
 
 const HospitalBillingWorkflowSettings = () => {
   const { billingSettings, updateBillingSettings, loading } = useBillingSettings();
@@ -22,6 +23,14 @@ const HospitalBillingWorkflowSettings = () => {
     radiusMeters: 300,
     enforceRoles: ['RECEPTIONIST', 'BILLING_CLERK']
   });
+
+  const { clearDraft: clearGeoDraft } = useFormDraft(
+    `settings_hospital_geofence_${hospitalId || 'default'}`,
+    geoForm,
+    setGeoForm,
+    { enabled: Boolean(hospitalId) }
+  );
+
   const [savingGeo, setSavingGeo] = useState(false);
   const [detectingGeo, setDetectingGeo] = useState(false);
 
@@ -138,6 +147,7 @@ const HospitalBillingWorkflowSettings = () => {
         enforceRoles: geoForm.enforceRoles
       };
       await api.put(`/admin/hospitals/${targetHospId}/geolocation`, payload);
+      clearGeoDraft();
       alert('Receptionist GPS Geofence Settings saved successfully!');
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to save Geofence Settings');

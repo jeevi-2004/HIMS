@@ -94,6 +94,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       localStorage.removeItem('vzh_token');
       localStorage.removeItem('vzh_user');
+      localStorage.removeItem('villzone_billing_settings');
       setUser(null);
       setLoading(false);
     }

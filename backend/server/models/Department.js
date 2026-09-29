@@ -13,6 +13,11 @@ const DepartmentSchema = new mongoose.Schema({
     unique: true,
     trim: true,
     uppercase: true
+  },
+  description: {
+    type: String,
+    trim: true,
+    default: ''
   }
 }, {
   timestamps: true

@@ -24,3 +24,4 @@ router.post('/change-pin', protect, changePin);
 router.post('/set-pin', protect, setPin);
 
 module.exports = router;
+// trigger restart

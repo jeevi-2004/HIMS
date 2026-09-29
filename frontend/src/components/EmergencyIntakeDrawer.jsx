@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { 
   AlertTriangle, X, Search, UserPlus, CheckCircle2, FileText, 
@@ -7,6 +7,8 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import api from '../services/api';
+import { workflowRealtime } from '../services/workflowRealtimeService';
+import useFormDraft from '../hooks/useFormDraft';
 
 const COMPLAINT_CHIPS = [
   'Chest Pain', 'Road Traffic Accident', 'Stroke', 'Head Injury', 
@@ -79,9 +81,59 @@ const EmergencyIntakeDrawer = ({ isOpen, onClose, doctors = [], onSuccess }) => 
     broughtByName: 'Ambulance Crew'
   });
 
+  // Auto-save & restoration hook for emergency intake
+  const emergencyDraftData = useMemo(() => ({
+    identityMode,
+    unknownForm,
+    selectedComplaintChip,
+    otherComplaintText,
+    selectedDoctorId,
+    arrivalMode,
+    consultationFee,
+    vitals
+  }), [identityMode, unknownForm, selectedComplaintChip, otherComplaintText, selectedDoctorId, arrivalMode, consultationFee, vitals]);
+
+  const setEmergencyDraftData = useCallback((saved) => {
+    if (!saved) return;
+    if (saved.identityMode !== undefined) setIdentityMode(saved.identityMode);
+    if (saved.unknownForm) setUnknownForm(prev => ({ ...prev, ...saved.unknownForm }));
+    if (saved.selectedComplaintChip !== undefined) setSelectedComplaintChip(saved.selectedComplaintChip);
+    if (saved.otherComplaintText !== undefined) setOtherComplaintText(saved.otherComplaintText);
+    if (saved.selectedDoctorId !== undefined) setSelectedDoctorId(saved.selectedDoctorId);
+    if (saved.arrivalMode !== undefined) setArrivalMode(saved.arrivalMode);
+    if (saved.consultationFee !== undefined) setConsultationFee(saved.consultationFee);
+    if (saved.vitals) setVitals(prev => ({ ...prev, ...saved.vitals }));
+  }, []);
+
+  const { clearDraft: clearEmergencyDraft } = useFormDraft(
+    'reception_emergency_intake',
+    emergencyDraftData,
+    setEmergencyDraftData
+  );
+
   // Collapsed Advanced Vitals Toggle
   const [showAdvancedDetails, setShowAdvancedDetails] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [doctorPresenceMap, setDoctorPresenceMap] = useState({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    api.get('/operations/doctors/presence')
+      .then(res => setDoctorPresenceMap(res.data?.data || {}))
+      .catch(() => {});
+
+    const unsubscribe = workflowRealtime.subscribe(evt => {
+      if (evt?.type === 'DOCTOR_PRESENCE_UPDATED' && (evt.doctorId || evt.appointmentId)) {
+        const docId = String(evt.doctorId || evt.appointmentId);
+        setDoctorPresenceMap(prev => ({
+          ...prev,
+          [docId]: Boolean(evt.isOnline)
+        }));
+      }
+    });
+
+    return () => unsubscribe();
+  }, [isOpen]);
 
   // Auto-select first available doctor
   useEffect(() => {
@@ -205,6 +257,7 @@ const EmergencyIntakeDrawer = ({ isOpen, onClose, doctors = [], onSuccess }) => 
       const createdApp = appRes.data?.data;
 
       toast.success(`🚨 Emergency Token Generated: #${createdApp?.tokenNumber || 'EMG-01'}`);
+      clearEmergencyDraft();
       
       if (onSuccess) onSuccess(createdApp);
       onClose();
@@ -571,11 +624,15 @@ const EmergencyIntakeDrawer = ({ isOpen, onClose, doctors = [], onSuccess }) => 
                       onChange={(e) => setSelectedDoctorId(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-[#E5E7EB] rounded-xl text-[16px] font-semibold text-slate-800 h-[44px]"
                     >
-                      {doctors.map((d) => (
-                        <option key={d._id} value={d._id}>
-                          Dr. {d.name?.replace(/^Dr\.\s*/i, '')} ({d.departmentId?.name || 'Emergency OPD'})
-                        </option>
-                      ))}
+                      {doctors.map((d) => {
+                        const docId = String(d._id || d.id);
+                        const isOnline = Boolean(doctorPresenceMap[docId] ?? doctorPresenceMap[d._id]);
+                        return (
+                          <option key={docId} value={docId}>
+                            {isOnline ? '🟢' : '⚪'} Dr. {d.name?.replace(/^Dr\.\s*/i, '')} ({d.departmentId?.name || 'Emergency OPD'}) — {isOnline ? 'ONLINE' : 'OFFLINE'}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
 

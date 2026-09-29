@@ -175,32 +175,46 @@ const seedTenantAdminUser = async (hospital) => {
       await mainBranch.save();
     }
 
-    // Ensure all configured admin numbers can log in as DOCTOR_ADMIN
-    for (const mob of targetMobiles) {
-      let existingUser = await User.findOne({ mobileNumber: mob });
-      if (!existingUser) {
-        const empCode = `VZE-${(hospital.code || 'HOSP').replace(/[^A-Z0-9]/gi, '')}-ADMIN`;
-        existingUser = await User.create({
-          name: adminDisplayName,
-          countryCode: hospital.ownerCountryCode || hospital.adminCountryCode || hospital.contactCountryCode || '+91',
-          mobileNumber: mob,
-          pin: defaultPin,
-          roleId: adminRole._id,
-          hospitalId: hospital._id,
-          branchId: mainBranch._id,
-          hospitalCode: hospital.code.toUpperCase(),
-          employeeCode: empCode,
-          status: 'active'
-        });
-      } else {
-        existingUser.name = adminDisplayName;
-        existingUser.hospitalCode = hospital.code.toUpperCase();
-        existingUser.pin = defaultPin;
-        existingUser.branchId = mainBranch._id;
-        existingUser.status = 'active';
-        await existingUser.save();
-      }
-      if (!adminUser) adminUser = existingUser;
+    // Look for existing admin user by mobile or role
+    let existingUser = await User.findOne({
+      $or: [
+        { mobileNumber: primaryMobile },
+        { roleId: adminRole._id }
+      ]
+    });
+
+    if (!existingUser) {
+      const empCode = `VZE-${(hospital.code || 'HOSP').replace(/[^A-Z0-9]/gi, '')}-ADMIN-${primaryMobile.slice(-4)}`;
+      existingUser = await User.create({
+        name: adminDisplayName,
+        countryCode: hospital.ownerCountryCode || hospital.adminCountryCode || hospital.contactCountryCode || '+91',
+        mobileNumber: primaryMobile,
+        pin: defaultPin,
+        roleId: adminRole._id,
+        hospitalId: hospital._id,
+        branchId: mainBranch._id,
+        hospitalCode: hospital.code.toUpperCase(),
+        employeeCode: empCode,
+        status: 'active'
+      });
+    } else {
+      existingUser.name = adminDisplayName;
+      existingUser.hospitalCode = hospital.code.toUpperCase();
+      existingUser.pin = defaultPin;
+      existingUser.branchId = mainBranch._id;
+      existingUser.status = 'active';
+      await existingUser.save();
+    }
+    adminUser = existingUser;
+
+    // Clean up any extra auto-seeded duplicate admin accounts
+    if (existingUser) {
+      await User.deleteMany({
+        _id: { $ne: existingUser._id },
+        roleId: adminRole._id,
+        name: adminDisplayName,
+        employeeCode: { $regex: /^VZE-.*-ADMIN-/i }
+      }).catch(() => {});
     }
 
     hospital.adminMobile = primaryMobile;
@@ -276,6 +290,7 @@ const createHospital = async (req, res, next) => {
     await logAudit(req.user._id, 'CREATE_HOSPITAL', 'HOSPITAL', { hospitalId: hospital._id, code }, req);
     res.status(201).json({ success: true, data: hospital });
   } catch (error) {
+    console.error('ACTIVATE_HOSPITAL_PLAN ERROR:', error);
     next(error);
   }
 };
@@ -292,6 +307,7 @@ const getHospitals = async (req, res, next) => {
     const hospitals = await Hospital.find(query);
     res.status(200).json({ success: true, data: hospitals });
   } catch (error) {
+    console.error('ERROR fetching hospitals:', error);
     next(error);
   }
 };
@@ -338,6 +354,7 @@ const createBranch = async (req, res, next) => {
     await logAudit(req.user._id, 'CREATE_BRANCH', 'BRANCH', { branchId: branch._id, code }, req);
     res.status(201).json({ success: true, data: branch });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -375,6 +392,7 @@ const getBranches = async (req, res, next) => {
 
     res.status(200).json({ success: true, data: branches });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -383,17 +401,44 @@ const getBranches = async (req, res, next) => {
 // DEPARTMENT MANAGEMENT
 // ==========================================
 
+const updateBranch = async (req, res, next) => {
+  const { name, contactNumber, address } = req.body;
+  try {
+    const branch = await Branch.findById(req.params.id);
+    if (!branch) {
+      return res.status(404).json({ success: false, message: 'Branch not found' });
+    }
+
+    if (name) branch.name = name;
+    if (contactNumber) branch.contactNumber = contactNumber;
+    if (address) branch.address = address;
+
+    await branch.save();
+
+    const logAudit = require('../utils/auditLogger');
+    await logAudit(req.user._id, 'UPDATE_BRANCH', 'BRANCH', { branchId: branch._id, code: branch.code }, req);
+    res.status(200).json({ success: true, data: branch });
+  } catch (error) {
+    console.error('ERROR:', error);
+    next(error);
+  }
+};
+
+// ==========================================
+
 const createDepartment = async (req, res, next) => {
-  const { name, code } = req.body;
+  const { name, code, description } = req.body;
   try {
     const dept = await Department.create({
       name,
-      code: code.toUpperCase()
+      code: code.toUpperCase(),
+      description: description || ''
     });
 
     await logAudit(req.user._id, 'CREATE_DEPARTMENT', 'DEPARTMENT', { deptId: dept._id, code: dept.code }, req);
     res.status(201).json({ success: true, data: dept });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -403,6 +448,46 @@ const getDepartments = async (req, res, next) => {
     const depts = await Department.find({});
     res.status(200).json({ success: true, data: depts });
   } catch (error) {
+    console.error('ERROR:', error);
+    next(error);
+  }
+};
+
+const updateDepartment = async (req, res, next) => {
+  const { name, code, description } = req.body;
+  try {
+    const dept = await Department.findById(req.params.id);
+    if (!dept) {
+      return res.status(404).json({ success: false, message: 'Department not found' });
+    }
+
+    if (name) dept.name = name;
+    if (code) dept.code = code.toUpperCase();
+    if (description !== undefined) dept.description = description;
+
+    await dept.save();
+
+    await logAudit(req.user._id, 'UPDATE_DEPARTMENT', 'DEPARTMENT', { deptId: dept._id, code: dept.code }, req);
+    res.status(200).json({ success: true, data: dept });
+  } catch (error) {
+    console.error('ERROR:', error);
+    next(error);
+  }
+};
+
+const deleteDepartment = async (req, res, next) => {
+  try {
+    const dept = await Department.findById(req.params.id);
+    if (!dept) {
+      return res.status(404).json({ success: false, message: 'Department not found' });
+    }
+
+    await dept.deleteOne();
+
+    await logAudit(req.user._id, 'DELETE_DEPARTMENT', 'DEPARTMENT', { deptId: dept._id, code: dept.code }, req);
+    res.status(200).json({ success: true, message: 'Department deleted successfully' });
+  } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -443,15 +528,64 @@ const getUsers = async (req, res, next) => {
       }
     }
 
+    // Auto-clean any legacy duplicate seeded DOCTOR_ADMIN accounts if multiple exist
+    try {
+      const doctorAdminRole = await Role.findOne({ name: 'DOCTOR_ADMIN' });
+      if (doctorAdminRole) {
+        const adminUsers = await User.find({ roleId: doctorAdminRole._id });
+        if (adminUsers.length > 1) {
+          const byName = {};
+          for (const u of adminUsers) {
+            const n = (u.name || '').trim().toLowerCase();
+            if (!byName[n]) byName[n] = [];
+            byName[n].push(u);
+          }
+          for (const list of Object.values(byName)) {
+            if (list.length > 1) {
+              const autoSeeded = list.filter(u => /^VZE-.*-ADMIN-/i.test(u.employeeCode || ''));
+              if (autoSeeded.length > 1) {
+                const [keep, ...duplicates] = autoSeeded;
+                for (const dup of duplicates) {
+                  await User.findByIdAndDelete(dup._id).catch(() => {});
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[Duplicate Admin Cleanup Error]:', e);
+    }
+
     const users = await User.find(query)
       .populate('roleId', 'name description')
       .populate('hospitalId', 'name code')
       .populate('branchId', 'name code')
       .populate('departmentId', 'name code')
-      .select('-password -pin');
+      .select('-password');
 
-    res.status(200).json({ success: true, data: users });
+    const processedUsers = await Promise.all(users.map(async (u) => {
+      const userObj = u.toObject ? u.toObject() : { ...u };
+      const isSuperAdmin = userObj.roleId?.name === 'SUPER_ADMIN';
+
+      if (!isSuperAdmin) {
+        // If rawPin is the old default '123456' or missing or invalid length, replace with the employee's unique PIN
+        if (!userObj.rawPin || userObj.rawPin === '123456' || userObj.rawPin.length !== 6) {
+          if (userObj.mobileNumber && userObj.mobileNumber.length >= 6) {
+            const uniquePin = userObj.mobileNumber.slice(-6);
+            userObj.rawPin = uniquePin;
+            u.rawPin = uniquePin;
+            u.pin = uniquePin;
+            await u.save().catch(() => {});
+          }
+        }
+      }
+      return userObj;
+    }));
+
+    res.status(200).json({ success: true, data: processedUsers });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -477,6 +611,7 @@ const updateUserStatus = async (req, res, next) => {
 
     res.status(200).json({ success: true, message: 'User status updated successfully', data: user });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -495,6 +630,7 @@ const getRoles = async (req, res, next) => {
     const roles = await Role.find(query);
     res.status(200).json({ success: true, data: roles });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -504,6 +640,7 @@ const getPermissions = async (req, res, next) => {
     const permissions = await Permission.find();
     res.status(200).json({ success: true, data: permissions });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -531,6 +668,7 @@ const getAuditLogs = async (req, res, next) => {
 
     res.status(200).json({ success: true, data: logs });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -601,6 +739,7 @@ const activateHospitalPlan = async (req, res, next) => {
       data: hospital
     });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -613,6 +752,7 @@ const getPlans = async (req, res, next) => {
     const plans = await Plan.find();
     res.status(200).json({ success: true, data: plans });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -636,6 +776,7 @@ const createPlan = async (req, res, next) => {
     await logAudit(req.user._id, 'CREATE_PLAN', 'PLAN', { planId: plan._id, code: plan.code }, req);
     res.status(201).json({ success: true, data: plan });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -656,6 +797,7 @@ const updatePlan = async (req, res, next) => {
     await logAudit(req.user._id, 'UPDATE_PLAN', 'PLAN', { planId: plan._id, code: plan.code }, req);
     res.status(200).json({ success: true, data: plan });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -676,6 +818,7 @@ const updatePlanStatus = async (req, res, next) => {
     await logAudit(req.user._id, 'UPDATE_PLAN_STATUS', 'PLAN', { planId: plan._id, code: plan.code, isActive }, req);
     res.status(200).json({ success: true, data: plan });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -691,6 +834,7 @@ const deletePlan = async (req, res, next) => {
     await logAudit(req.user._id, 'DELETE_PLAN', 'PLAN', { planId: plan._id, code: plan.code }, req);
     res.status(200).json({ success: true, message: 'Plan deleted successfully' });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -729,6 +873,7 @@ const updateHospital = async (req, res, next) => {
     await logAudit(req.user._id, 'UPDATE_HOSPITAL', 'HOSPITAL', { hospitalId: hospital._id, code: hospital.code }, req);
     res.status(200).json({ success: true, data: hospital });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -745,6 +890,7 @@ const deleteHospital = async (req, res, next) => {
     await logAudit(req.user._id, 'DELETE_HOSPITAL', 'HOSPITAL', { hospitalId: hospital._id, code: hospital.code }, req);
     res.status(200).json({ success: true, message: 'Hospital deleted successfully' });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -764,6 +910,7 @@ const toggleHospitalFeatures = async (req, res, next) => {
     await logAudit(req.user._id, 'TOGGLE_HOSPITAL_FEATURES', 'HOSPITAL', { hospitalId: hospital._id, featureModules }, req);
     res.status(200).json({ success: true, data: hospital });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -805,6 +952,7 @@ const toggleHospitalStatus = async (req, res, next) => {
     await logAudit(req.user._id, 'TOGGLE_HOSPITAL_STATUS', 'HOSPITAL', { hospitalId: hospital._id, status }, req);
     res.status(200).json({ success: true, data: hospital });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -817,6 +965,7 @@ const getLicenses = async (req, res, next) => {
     const licenses = await License.find().populate('hospitalId', 'name code');
     res.status(200).json({ success: true, data: licenses });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -842,6 +991,7 @@ const createLicense = async (req, res, next) => {
     await logAudit(req.user._id, 'CREATE_LICENSE', 'LICENSE', { licenseId: license._id, key }, req);
     res.status(201).json({ success: true, data: license });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -865,6 +1015,7 @@ const renewLicense = async (req, res, next) => {
     await logAudit(req.user._id, 'RENEW_LICENSE', 'LICENSE', { licenseId: license._id }, req);
     res.status(200).json({ success: true, data: license });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -880,6 +1031,7 @@ const getSettings = async (req, res, next) => {
     }
     res.status(200).json({ success: true, data: settings });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -903,6 +1055,7 @@ const saveSettings = async (req, res, next) => {
     await logAudit(req.user._id, 'UPDATE_SETTINGS', 'SETTINGS', {}, req);
     res.status(200).json({ success: true, data: settings });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -915,6 +1068,7 @@ const getServices = async (req, res, next) => {
     const services = await Service.find();
     res.status(200).json({ success: true, data: services });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -926,6 +1080,7 @@ const createService = async (req, res, next) => {
     await logAudit(req.user._id, 'CREATE_SERVICE', 'SERVICE', { serviceId: service._id, name }, req);
     res.status(201).json({ success: true, data: service });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -945,6 +1100,7 @@ const updateService = async (req, res, next) => {
     await logAudit(req.user._id, 'UPDATE_SERVICE', 'SERVICE', { serviceId: service._id }, req);
     res.status(200).json({ success: true, data: service });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -959,6 +1115,7 @@ const deleteService = async (req, res, next) => {
     await logAudit(req.user._id, 'DELETE_SERVICE', 'SERVICE', { serviceId: service._id }, req);
     res.status(200).json({ success: true, message: 'Service deleted successfully' });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -988,6 +1145,7 @@ const updateDoctorProfile = async (req, res, next) => {
     await logAudit(req.user._id, 'UPDATE_DOCTOR_PROFILE', 'USER', { doctorId: doctor._id }, req);
     res.status(200).json({ success: true, data: doctor });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1019,6 +1177,7 @@ const updateHospitalProfile = async (req, res, next) => {
     await logAudit(req.user._id, 'UPDATE_HOSPITAL_PROFILE', 'HOSPITAL', { hospitalId: hospital._id }, req);
     res.status(200).json({ success: true, data: hospital });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1066,6 +1225,7 @@ const updateUser = async (req, res, next) => {
     await logAudit(req.user._id, 'UPDATE_USER', 'USER', { userId: user._id }, req);
     res.status(200).json({ success: true, data: user });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1082,6 +1242,7 @@ const deleteUser = async (req, res, next) => {
     await logAudit(req.user._id, 'DELETE_USER', 'USER', { userId: user._id, employeeCode: user.employeeCode }, req);
     res.status(200).json({ success: true, message: 'User deleted successfully' });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1093,6 +1254,9 @@ const getBillingSettings = async (req, res, next) => {
     let hospital;
     if (hospitalId) {
       hospital = await Hospital.findById(hospitalId);
+    }
+    if (!hospital && req.user.hospitalCode) {
+      hospital = await Hospital.findOne({ code: req.user.hospitalCode.toUpperCase() });
     }
     if (!hospital) {
       hospital = await Hospital.findOne({});
@@ -1117,12 +1281,13 @@ const getBillingSettings = async (req, res, next) => {
     const settings = {
       ...defaults,
       ...(hospital?.billingWorkflowSettings || {}),
-      opdOperationMode: hospital?.opdOperationMode || 'FULL_DIGITAL',
-      planName: hospital?.planName || 'Plan 2: Complete Digital OPD Suite',
+      opdOperationMode: hospital?.opdOperationMode || 'TOKEN_ONLY',
+      planName: hospital?.planName || (hospital?.opdOperationMode === 'FULL_DIGITAL' ? 'Plan 2: Complete Digital OPD Suite' : 'Plan 1: Token Generation & Queue Management'),
       queueRulesSettings: hospital?.queueRulesSettings || defaultQueueRules
     };
     res.status(200).json({ success: true, data: settings });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1217,6 +1382,7 @@ const updateBillingSettings = async (req, res, next) => {
       }
     });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1235,6 +1401,7 @@ const getPrintTemplates = async (req, res, next) => {
     const templates = await PrescriptionPrintTemplate.find({ hospitalId }).sort({ isDefault: -1, updatedAt: -1 });
     res.status(200).json({ success: true, data: templates });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1276,6 +1443,7 @@ const getActivePrintTemplate = async (req, res, next) => {
 
     res.status(200).json({ success: true, data: template });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1312,6 +1480,7 @@ const createPrintTemplate = async (req, res, next) => {
 
     res.status(201).json({ success: true, data: template });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1354,6 +1523,7 @@ const updatePrintTemplate = async (req, res, next) => {
 
     res.status(200).json({ success: true, data: updated });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1387,6 +1557,7 @@ const activatePrintTemplate = async (req, res, next) => {
 
     res.status(200).json({ success: true, data: template });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1414,6 +1585,7 @@ const duplicatePrintTemplate = async (req, res, next) => {
     const newTemplate = await PrescriptionPrintTemplate.create(dupObj);
     res.status(201).json({ success: true, data: newTemplate });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1470,6 +1642,7 @@ const updateHospitalGeolocation = async (req, res, next) => {
       data: hospital.geolocationSettings
     });
   } catch (error) {
+    console.error('ERROR:', error);
     next(error);
   }
 };
@@ -1481,8 +1654,11 @@ module.exports = {
   activateHospitalPlan,
   createBranch,
   getBranches,
+  updateBranch,
   createDepartment,
   getDepartments,
+  updateDepartment,
+  deleteDepartment,
   getUsers,
   updateUserStatus,
   getRoles,

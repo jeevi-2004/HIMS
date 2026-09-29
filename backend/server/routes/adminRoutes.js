@@ -6,8 +6,11 @@ const {
   activateHospitalPlan,
   createBranch,
   getBranches,
+  updateBranch,
   createDepartment,
   getDepartments,
+  updateDepartment,
+  deleteDepartment,
   getUsers,
   updateUserStatus,
   getRoles,
@@ -97,10 +100,13 @@ router.put('/hospital/billing-settings', authorize(...ROLE_GROUPS.ADMIN), update
 // Branch Management (Super Admin & Doctor Admin only to create, all can view based on context)
 router.post('/branches', authorize(...ROLE_GROUPS.ADMIN), validateMobileNumber, createBranch);
 router.get('/branches', getBranches);
+router.put('/branches/:id', authorize(...ROLE_GROUPS.ADMIN), updateBranch);
 
-// Department Management (Super and Doctor admins can create, all can view)
+// Department Management (Super and Doctor admins can create/update/delete, all can view)
 router.post('/departments', authorize(...ROLE_GROUPS.ADMIN), createDepartment);
-router.get('/departments', getDepartments);
+router.get('/departments', authorize(USER_ROLES.SUPER_ADMIN, ...ROLE_GROUPS.ALL_STAFF), getDepartments);
+router.put('/departments/:id', authorize(...ROLE_GROUPS.ADMIN), updateDepartment);
+router.delete('/departments/:id', authorize(...ROLE_GROUPS.ADMIN), deleteDepartment);
 
 // User Management (Admins only)
 router.get('/users', authorize(USER_ROLES.SUPER_ADMIN, ...ROLE_GROUPS.ALL_STAFF), getUsers);
@@ -116,7 +122,7 @@ router.put('/services/:id', authorize(USER_ROLES.DOCTOR_ADMIN), updateService);
 router.delete('/services/:id', authorize(USER_ROLES.DOCTOR_ADMIN), deleteService);
 
 // Role & Permission Metadata
-router.get('/roles', getRoles);
+router.get('/roles', authorize(USER_ROLES.SUPER_ADMIN, ...ROLE_GROUPS.ALL_STAFF), getRoles);
 router.get('/permissions', authorize(USER_ROLES.SUPER_ADMIN), getPermissions);
 
 // Security & Audit Logs (Admins only)

@@ -5,7 +5,7 @@ const tenantConnections = {};
 
 function getTenantDatabaseUri(mainUri, databaseName) {
   if (!mainUri) {
-    return `mongodb://localhost:27017/${databaseName}`;
+    return `mongodb://jeevithavillzone_db_user:uDQWYc2aAfC68L299@ac-fsj27eb-shard-00-00.lusmhsf.mongodb.net:27017,ac-fsj27eb-shard-00-01.lusmhsf.mongodb.net:27017,ac-fsj27eb-shard-00-02.lusmhsf.mongodb.net:27017/${databaseName}?ssl=true&replicaSet=atlas-fsj27eb-shard-0&authSource=admin&retryWrites=true&w=majority&appName=HIMS`;
   }
 
   try {
@@ -16,17 +16,22 @@ function getTenantDatabaseUri(mainUri, databaseName) {
     // If authentication credentials are provided in the connection string, set authSource if missing
     if (parsed.username) {
       if (!parsed.searchParams.has('authSource')) {
-        parsed.searchParams.set('authSource', originalDb || 'admin');
+        parsed.searchParams.set('authSource', 'admin');
       }
     }
     return parsed.toString();
   } catch (err) {
-    const lastSlash = mainUri.lastIndexOf('/');
+    // Fallback: manually replace the database name in the URI string without losing query params
+    const qIndex = mainUri.indexOf('?');
+    const query = qIndex !== -1 ? mainUri.substring(qIndex) : '';
+    const uriWithoutQuery = qIndex !== -1 ? mainUri.substring(0, qIndex) : mainUri;
+    
+    const lastSlash = uriWithoutQuery.lastIndexOf('/');
     if (lastSlash !== -1) {
-      const base = mainUri.substring(0, lastSlash);
-      return `${base}/${databaseName}`;
+      const base = uriWithoutQuery.substring(0, lastSlash);
+      return `${base}/${databaseName}${query}`;
     }
-    return `${mainUri}/${databaseName}`;
+    return `${mainUri}/${databaseName}${query}`;
   }
 }
 

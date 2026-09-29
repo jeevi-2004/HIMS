@@ -6,7 +6,7 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 module.exports = {
   PORT: process.env.PORT || 5000,
-  MONGO_URI: process.env.MONGO_URI || 'mongodb://localhost:27017/villzone_platform',
+  MONGO_URI: process.env.MONGO_URI || 'mongodb+srv://jeevithavillzone_db_user:uDQWYc2aAfC68L299@hims.lusmhsf.mongodb.net/villzone_platform?appName=HIMS',
   JWT_SECRET: process.env.JWT_SECRET || 'villzone_hims_jwt_secret_key_2026_super_secure_auth',
   JWT_EXPIRE: process.env.JWT_EXPIRE || '24h',
   NODE_ENV: process.env.NODE_ENV || 'development',

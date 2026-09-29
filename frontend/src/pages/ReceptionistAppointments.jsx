@@ -912,22 +912,40 @@ const ReceptionistAppointments = () => {
   // In-Memory Doctor Presence State
   const [doctorPresenceMap, setDoctorPresenceMap] = useState({});
 
+  const fetchDoctorPresence = useCallback(async () => {
+    try {
+      const res = await api.get('/operations/doctors/presence');
+      if (res.data?.data) {
+        setDoctorPresenceMap(res.data.data);
+      }
+    } catch (err) {
+      console.error('[PRESENCE] Failed to fetch doctor presence:', err);
+    }
+  }, []);
+
   useEffect(() => {
-    api.get('/operations/doctors/presence')
-      .then(res => setDoctorPresenceMap(res.data?.data || {}))
-      .catch(() => {});
+    fetchDoctorPresence();
+
+    const interval = setInterval(fetchDoctorPresence, 8000);
+    const handleFocus = () => fetchDoctorPresence();
+    window.addEventListener('focus', handleFocus);
 
     const unsubscribe = workflowRealtime.subscribe(evt => {
-      if (evt.type === 'DOCTOR_PRESENCE_UPDATED' && evt.doctorId) {
+      if (evt?.type === 'DOCTOR_PRESENCE_UPDATED' && (evt.doctorId || evt.appointmentId)) {
+        const docId = String(evt.doctorId || evt.appointmentId);
         setDoctorPresenceMap(prev => ({
           ...prev,
-          [evt.doctorId]: evt.isOnline
+          [docId]: Boolean(evt.isOnline)
         }));
       }
     });
 
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      unsubscribe();
+    };
+  }, [fetchDoctorPresence]);
 
   useEffect(() => {
     if (tokenDoctorId && doctors) {
@@ -1165,7 +1183,9 @@ const ReceptionistAppointments = () => {
   useEffect(() => {
     const unsubscribe = workflowRealtime.subscribe((event) => {
       refetch();
-      if (event && event.type === 'PatientCalled') {
+      if (event && event.type === 'TriggerVoiceCall') {
+        voiceAnnouncement.announceCall(event);
+      } else if (event && event.type === 'PatientCalled') {
         const qState = (event.queueState || event.status || '').toUpperCase();
         if (qState === 'CALLED' || qState.includes('CONSULTATION')) {
           voiceAnnouncement.announceCall(event);
@@ -1186,7 +1206,11 @@ const ReceptionistAppointments = () => {
         const appDocId = String(app.doctorId?._id || app.doctorId || '');
         if (appDocId !== docId) return false;
         const qState = (app.workflow?.queueState || app.queueStatus || app.status || 'WAITING').toUpperCase();
-        return qState === 'WAITING' || qState === 'READY' || qState === 'SCHEDULED';
+        const st = app.status || app.queueStatus || 'Waiting';
+        const isScheduled = st === 'Scheduled' || qState === 'SCHEDULED' || (!app.tokenNumber && st !== 'Completed' && st !== 'In Consultation' && st !== 'Sent to Pharmacy' && st !== 'Cancelled' && st !== 'Admitted');
+        
+        if (isScheduled) return false;
+        return qState === 'WAITING' || qState === 'READY';
       }).length;
 
       return {
@@ -1553,7 +1577,8 @@ const ReceptionistAppointments = () => {
           <button
             type="button"
             onClick={() => {
-              const activeCall = (appointments || []).find(a => (a.status || a.queueStatus) === 'Called' || (a.status || a.queueStatus) === 'In Consultation');
+              const activeCall = (appointments || []).find(a => ['Called', 'In Consultation', 'CALLED', 'IN_CONSULTATION'].includes(a.status || a.queueStatus)) 
+                || (appointments || []).find(a => ['Waiting', 'WAITING'].includes(a.status || a.queueStatus));
               if (activeCall) {
                 voiceAnnouncement.announceCall({
                   tokenNumber: activeCall.tokenNumber,
@@ -1621,7 +1646,8 @@ const ReceptionistAppointments = () => {
           <button
             type="button"
             onClick={() => {
-              const activeCall = (appointments || []).find(a => (a.status || a.queueStatus) === 'Called' || (a.status || a.queueStatus) === 'In Consultation');
+              const activeCall = (appointments || []).find(a => ['Called', 'In Consultation', 'CALLED', 'IN_CONSULTATION'].includes(a.status || a.queueStatus)) 
+                || (appointments || []).find(a => ['Waiting', 'WAITING'].includes(a.status || a.queueStatus));
               if (activeCall) {
                 voiceAnnouncement.announceCall({
                   tokenNumber: activeCall.tokenNumber,
@@ -1796,7 +1822,11 @@ const ReceptionistAppointments = () => {
                       type="text"
                       placeholder="Search Mobile / UHID / Patient Name"
                       value={tokenSearchQuery}
-                      onChange={(e) => setTokenSearchQuery(e.target.value)}
+                      onChange={(e) => {
+                        let val = e.target.value;
+                        val = val.replace(/\b\w/g, char => char.toUpperCase());
+                        setTokenSearchQuery(val);
+                      }}
                       className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#3563F6]/20 focus:border-[#3563F6] focus:bg-white transition-all min-h-[42px]"
                     />
 
@@ -1837,7 +1867,10 @@ const ReceptionistAppointments = () => {
                       id="panel-patient-mobile"
                       label="Mobile Number"
                       value={tokenPatientForm.mobileNumber}
-                      onChange={(val) => setTokenPatientForm({ ...tokenPatientForm, mobileNumber: val })}
+                      onChange={(val) => {
+                        const clean = String(val).replace(/[^0-9]/g, '').slice(0, 10);
+                        setTokenPatientForm({ ...tokenPatientForm, mobileNumber: clean });
+                      }}
                     />
 
                     <Input
@@ -1845,20 +1878,23 @@ const ReceptionistAppointments = () => {
                       label="Patient Name"
                       placeholder="Full Name"
                       value={tokenPatientForm.name}
-                      onChange={(e) => setTokenPatientForm({ ...tokenPatientForm, name: e?.target ? e.target.value : e })}
+                      onChange={(e) => {
+                        let val = e?.target ? e.target.value : e;
+                        val = val.replace(/[^a-zA-Z\s]/g, '');
+                        val = val.replace(/\b\w/g, char => char.toUpperCase());
+                        setTokenPatientForm({ ...tokenPatientForm, name: val });
+                      }}
                     />
 
                     <Input
                       id="panel-patient-age"
                       label="Age"
-                      type="number"
-                      min={1}
-                      max={120}
+                      type="text"
                       placeholder="Years"
                       value={tokenPatientForm.age}
                       onChange={(e) => {
                         const raw = e?.target ? e.target.value : e;
-                        const clean = String(raw).replace(/[^0-9]/g, '');
+                        const clean = String(raw).replace(/[^0-9]/g, '').slice(0, 2);
                         setTokenPatientForm({ ...tokenPatientForm, age: clean });
                       }}
                     />
@@ -1885,7 +1921,12 @@ const ReceptionistAppointments = () => {
                       label="Place / Village"
                       placeholder="City / Village"
                       value={tokenPatientForm.place}
-                      onChange={(e) => setTokenPatientForm({ ...tokenPatientForm, place: e?.target ? e.target.value : e })}
+                      onChange={(e) => {
+                        let val = e?.target ? e.target.value : e;
+                        val = val.replace(/[^a-zA-Z\s]/g, '');
+                        val = val.replace(/\b\w/g, char => char.toUpperCase());
+                        setTokenPatientForm({ ...tokenPatientForm, place: val });
+                      }}
                     />
 
                     <div>
@@ -1977,13 +2018,14 @@ const ReceptionistAppointments = () => {
                   <select
                     value={tokenDoctorId}
                     onChange={(e) => setTokenDoctorId(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#3563F6]/20 focus:border-[#3563F6] h-[44px]"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border-2 border-[#3563F6] rounded-2xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-4 focus:ring-[#3563F6]/15 h-[46px] transition-all shadow-xs cursor-pointer"
                   >
                     <option value="">-- Select Consulting Doctor --</option>
                     {sortedDoctorsWithQueueCount?.map((d) => {
-                      const isOnline = Boolean(doctorPresenceMap[d._id]);
+                      const docId = String(d._id || d.id);
+                      const isOnline = Boolean(doctorPresenceMap[docId] ?? doctorPresenceMap[d._id]);
                       return (
-                        <option key={d._id} value={d._id}>
+                        <option key={docId} value={docId} className="font-semibold py-1">
                           {isOnline ? '🟢' : '⚪'} Dr. {d.name?.replace(/^Dr\.\s*/i, '')} ({isOnline ? 'ONLINE' : 'OFFLINE'} | Waiting: {d.waitingCount})
                         </option>
                       );

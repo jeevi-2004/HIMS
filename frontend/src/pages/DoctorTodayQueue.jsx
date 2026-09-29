@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useBillingSettings } from '../context/BillingSettingsContext';
 import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
+import { workflowRealtime } from '../services/workflowRealtimeService';
 import { formatTimeTo12Hr } from '../utils/timeFormat';
 import { 
   getVisitStatus, 
@@ -93,7 +94,9 @@ const DoctorTodayQueue = () => {
   useEffect(() => {
     initClinicalMasters();
     if (user?._id) {
-      api.post('/operations/doctors/presence', { isOnline: true }).catch(() => {});
+      const docId = String(user._id);
+      api.post('/operations/doctors/presence', { doctorId: docId, isOnline: true }).catch(() => {});
+      workflowRealtime.broadcastLocalEvent('DOCTOR_PRESENCE_UPDATED', { doctorId: docId, isOnline: true });
     }
   }, [user?._id]);
 
@@ -197,6 +200,14 @@ const DoctorTodayQueue = () => {
     refetchInterval: 15000,
     refetchIntervalInBackground: true
   });
+
+  // Listen to real-time workflow events for immediate queue updates
+  useEffect(() => {
+    const unsubscribe = workflowRealtime.subscribe((event) => {
+      refetch();
+    });
+    return () => unsubscribe();
+  }, [refetch]);
 
   // Filter Queue based on Date Range
   const dateFilteredQueue = useMemo(() => {
@@ -561,11 +572,19 @@ const DoctorTodayQueue = () => {
                   toast.error(evalResult.reasons.startConsultation || 'Payment required before consultation.');
                   return;
                 }
-                voiceAnnouncement.enqueueAnnouncement({
+                console.log("[PLAN1][DOCTOR] ACCEPT_PATIENT clicked");
+                console.log("[PLAN1][DOCTOR] RECEPTION_VOICE_CALL SENT");
+                const callPayload = {
                   tokenNumber: row.tokenNumber,
                   patientName: row.patientId?.name || 'Patient',
                   doctorName: row.doctorId?.name || row.doctorName || user?.name || 'Doctor',
                   roomNumber: row.doctorId?.roomNumber || row.roomNumber || '',
+                  type: 'TriggerVoiceCall'
+                };
+                api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
+                
+                voiceAnnouncement.enqueueAnnouncement({
+                  ...callPayload,
                   patientObj: row,
                   broadcastOnly: true
                 });

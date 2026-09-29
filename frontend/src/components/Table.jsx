@@ -143,7 +143,7 @@ const Table = ({
                   </div>
                 </th>
               ))}
-              {actions.length > 0 && <th className="p-4 sticky top-0 bg-slate-50 z-10 text-right whitespace-nowrap">Actions</th>}
+              {actions.length > 0 && <th className="p-4 pr-11 sticky top-0 bg-slate-50 z-10 text-right whitespace-nowrap font-bold uppercase tracking-wider text-[10px] text-[#6B7280]">Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-[#E5E7EB] text-xs text-[#111827] font-medium">
@@ -173,7 +173,7 @@ const Table = ({
 
                 {/* Inline Action Buttons or 3-Dot Dropdown Menu */}
                 {actions.length > 0 && (
-                  <td className="p-4 text-right whitespace-nowrap min-w-[160px] sm:min-w-[200px]">
+                  <td className="p-4 text-right whitespace-nowrap">
                     {inlineActions ? (
                       <div className="flex items-center justify-end gap-2">
                         {actions
@@ -188,7 +188,9 @@ const Table = ({
                             const isDisabled = typeof act.disabled === 'function' ? act.disabled(row) : !!act.disabled;
                             const variant = act.variant;
 
-                            let btnStyle = 'px-3 py-1.5 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all cursor-pointer border ';
+                            let btnStyle = act.iconOnly 
+                              ? 'p-1.5 rounded-lg flex items-center justify-center transition-all cursor-pointer border '
+                              : 'px-3 py-1.5 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all cursor-pointer border ';
                             if (variant === 'primary' || act.isPrimary) {
                               btnStyle += 'bg-[#2F63F2] text-white border-[#2F63F2] hover:bg-blue-700 shadow-xs';
                             } else if (variant === 'success') {
@@ -215,10 +217,11 @@ const Table = ({
                                 disabled={isDisabled}
                                 onClick={() => !isDisabled && act.onClick(row)}
                                 className={btnStyle}
-                                title={actLabel}
+                                title={act.tooltip || actLabel}
+                                aria-label={act.ariaLabel || actLabel}
                               >
                                 {renderActionIcon(act.icon, row)}
-                                <span>{actLabel}</span>
+                                {!act.iconOnly && <span>{actLabel}</span>}
                               </button>
                             );
                           })}
@@ -231,13 +234,15 @@ const Table = ({
                           const isDisabled = typeof act.disabled === 'function' ? act.disabled(row) : !!act.disabled;
                           const variant = typeof act.variant === 'function' ? act.variant(row) : act.variant;
 
-                          let btnStyle = 'px-3 py-1.5 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all ';
+                          let btnStyle = act.iconOnly 
+                            ? 'p-1.5 rounded-lg flex items-center justify-center transition-all '
+                            : 'px-3 py-1.5 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all ';
 
                           if (isDisabled && (actLabel === 'Waiting...' || actLabel === 'Next in Queue')) {
                             btnStyle += 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-85 shadow-none';
                           } else if (actLabel === 'In Progress' || variant === 'purple') {
                             btnStyle += 'bg-purple-50 text-purple-700 border border-purple-200 font-bold';
-                          } else if (actLabel === 'View' || variant === 'view') {
+                          } else if (actLabel === 'View' || variant === 'view' || String(actLabel).toLowerCase().includes('view')) {
                             btnStyle += 'border border-[#2F63F2] text-[#2F63F2] bg-white hover:bg-[#2F63F2]/10 shadow-xs cursor-pointer';
                           } else if (actLabel === 'Skipped' || actLabel === 'Skip' || variant === 'amber') {
                             btnStyle += 'bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100 shadow-xs cursor-pointer font-bold';
@@ -259,7 +264,7 @@ const Table = ({
                               aria-label={act.ariaLabel || actLabel}
                             >
                               {renderActionIcon(act.icon, row)}
-                              <span>{actLabel}</span>
+                              {!act.iconOnly && <span>{actLabel}</span>}
                             </button>
                           );
                         })}

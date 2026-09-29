@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -7,6 +7,7 @@ import Button from './Button';
 import OpdTokenPrintModal from './OpdTokenPrintModal';
 import MobileNumber from './MobileNumber';
 import Input from './Input';
+import { useFormDraft } from '../hooks/useFormDraft';
 import {
   Search, CheckCircle2, Printer, ArrowRight, UserCheck,
   Clock, RefreshCw, Ticket, AlertTriangle, ShieldAlert,
@@ -73,30 +74,72 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
   const [completedBooking, setCompletedBooking] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Draft Auto-Save & Restoration Hook
+  const bookingDraftState = useMemo(() => ({
+    quickPatient,
+    selectedComplaints,
+    additionalNotes,
+    doctorId,
+    paymentMethod
+  }), [quickPatient, selectedComplaints, additionalNotes, doctorId, paymentMethod]);
+
+  const setBookingDraftState = useCallback((saved) => {
+    if (!saved) return;
+    const next = typeof saved === 'function' ? saved() : saved;
+    if (!next) return;
+    if (next.quickPatient) setQuickPatient(prev => ({ ...prev, ...next.quickPatient }));
+    if (next.selectedComplaints) setSelectedComplaints(next.selectedComplaints);
+    if (next.additionalNotes !== undefined) setAdditionalNotes(next.additionalNotes);
+    if (next.doctorId !== undefined) setDoctorId(next.doctorId);
+    if (next.paymentMethod !== undefined) setPaymentMethod(next.paymentMethod);
+  }, []);
+
+  const bookingDraft = useFormDraft('reception_appointment_booking', bookingDraftState, setBookingDraftState, {
+    enabled: isOpen && !initialPatient
+  });
+
   // Form Validation Errors State
   const [formErrors, setFormErrors] = useState({});
 
   // Doctor Online Presence Map
   const [doctorPresenceMap, setDoctorPresenceMap] = useState({});
 
+  const fetchDoctorPresence = useCallback(async () => {
+    try {
+      const res = await api.get('/operations/doctors/presence');
+      if (res.data?.data) {
+        setDoctorPresenceMap(res.data.data);
+      }
+    } catch (err) {
+      console.error('[PRESENCE] Modal presence fetch error:', err);
+    }
+  }, []);
+
   useEffect(() => {
     if (!isOpen) return;
     setFormErrors({});
-    api.get('/operations/doctors/presence')
-      .then(res => setDoctorPresenceMap(res.data?.data || {}))
-      .catch(() => {});
+    fetchDoctorPresence();
+
+    const interval = setInterval(fetchDoctorPresence, 8000);
+    const handleFocus = () => fetchDoctorPresence();
+    window.addEventListener('focus', handleFocus);
 
     const unsubscribe = workflowRealtime.subscribe(evt => {
-      if (evt.type === 'DOCTOR_PRESENCE_UPDATED' && evt.doctorId) {
+      if (evt?.type === 'DOCTOR_PRESENCE_UPDATED' && (evt.doctorId || evt.appointmentId)) {
+        const docId = String(evt.doctorId || evt.appointmentId);
         setDoctorPresenceMap(prev => ({
           ...prev,
-          [evt.doctorId]: evt.isOnline
+          [docId]: Boolean(evt.isOnline)
         }));
       }
     });
 
-    return () => unsubscribe();
-  }, [isOpen]);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      unsubscribe();
+    };
+  }, [isOpen, fetchDoctorPresence]);
 
   // Sync initial patient & reset payment state when modal opens
   useEffect(() => {
@@ -423,6 +466,7 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
         isEmergency
       });
 
+      bookingDraft.clearDraft();
       setStep('success');
 
       if (onSuccess) {
@@ -555,11 +599,12 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
                   />
 
                   <Input
-                    label="Patient Name / Number"
-                    placeholder="Enter full name or number"
+                    label="Patient Name"
+                    placeholder="Enter full name"
                     value={quickPatient.name}
                     onChange={(e) => {
-                      setQuickPatient({ ...quickPatient, name: e.target.value });
+                      const val = e.target.value.replace(/[^a-zA-Z\s]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+                      setQuickPatient({ ...quickPatient, name: val });
                       if (formErrors.quickName) setFormErrors(prev => ({ ...prev, quickName: undefined }));
                     }}
                     required
@@ -574,7 +619,7 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
                     placeholder="e.g. 32"
                     value={quickPatient.age}
                     onChange={(e) => {
-                      const cleanVal = e.target.value.replace(/[^0-9]/g, '');
+                      const cleanVal = e.target.value.replace(/\D/g, '').slice(0, 2);
                       setQuickPatient({ ...quickPatient, age: cleanVal });
                       if (formErrors.quickAge) setFormErrors(prev => ({ ...prev, quickAge: undefined }));
                     }}
@@ -608,7 +653,10 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
                     label="Place / Village (Optional)"
                     placeholder="Enter city or village"
                     value={quickPatient.place}
-                    onChange={(e) => setQuickPatient({ ...quickPatient, place: e.target.value })}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^a-zA-Z\s]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+                      setQuickPatient({ ...quickPatient, place: val });
+                    }}
                   />
 
                   <div className="flex flex-col gap-1.5">
@@ -716,9 +764,10 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
                 >
                   <option value="">-- Select Consulting Doctor --</option>
                   {doctors?.map(d => {
-                    const isOnline = Boolean(doctorPresenceMap[d._id]);
+                    const docId = String(d._id || d.id);
+                    const isOnline = Boolean(doctorPresenceMap[docId] ?? doctorPresenceMap[d._id]);
                     return (
-                      <option key={d._id} value={d._id}>
+                      <option key={docId} value={docId}>
                         {isOnline ? '🟢' : '⚪'} {d.name} ({d.departmentId?.name || 'OPD'}) — {isOnline ? 'ONLINE' : 'OFFLINE'}
                       </option>
                     );

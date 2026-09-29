@@ -2,6 +2,7 @@ import React from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useWorkspace } from '../context/WorkspaceContext';
+import { useBillingSettings } from '../context/BillingSettingsContext';
 import toast from 'react-hot-toast';
 import { getNavigationByRole } from '../config/navigation';
 import { USER_ROLES } from '../constants/roles';
@@ -15,6 +16,7 @@ import {
 const SharedSidebar = ({ sidebarOpen, setSidebarOpen }) => {
   const { user, logout } = useAuth();
   const { workspaceMode, setWorkspaceMode, allowedWorkspaces, showSwitcher } = useWorkspace();
+  const { billingSettings } = useBillingSettings();
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -41,7 +43,7 @@ const SharedSidebar = ({ sidebarOpen, setSidebarOpen }) => {
   };
 
   // Configuration-driven Navigation Layer
-  const hospitalMode = user?.hospital?.opdOperationMode || user?.opdOperationMode || 'FULL_DIGITAL';
+  const hospitalMode = user?.hospital?.opdOperationMode || user?.opdOperationMode || billingSettings?.opdOperationMode || 'TOKEN_ONLY';
   const rawConfigNav = getNavigationByRole(user?.role, workspaceMode, hospitalMode);
   
   const currentNav = [

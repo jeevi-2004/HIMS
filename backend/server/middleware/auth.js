@@ -81,6 +81,7 @@ const protect = async (req, res, next) => {
       const Hospital = require('../models/Hospital');
       const hospObj = await Hospital.findOne({ code: decoded.hospitalCode.toUpperCase() });
       if (!hospObj || hospObj.status === 'pending') {
+        require('fs').appendFileSync('debug.log', `AUTH 403: Hospital pending or not found. Code: ${decoded.hospitalCode}\n`);
         return res.status(403).json({
           success: false,
           message: `Hospital account "${decoded.hospitalCode}" is awaiting subscription plan activation. Please contact Super Admin.`
@@ -106,6 +107,7 @@ const protect = async (req, res, next) => {
 const authorize = (...roles) => {
   return (req, res, next) => {
     if (!req.user || !req.user.roleId) {
+      require('fs').appendFileSync('debug.log', `AUTHORIZE 403: No role assigned. User: ${req.user ? req.user.username : 'undefined'}\n`);
       return res.status(403).json({
         success: false,
         message: 'Forbidden: No role assigned'
@@ -114,6 +116,7 @@ const authorize = (...roles) => {
 
     const userRole = req.user.roleId.name;
     if (!roles.includes(userRole)) {
+      require('fs').appendFileSync('debug.log', `AUTHORIZE 403: Role '${userRole}' not authorized. Allowed: ${roles}\n`);
       return res.status(403).json({
         success: false,
         message: `Forbidden: Role '${userRole}' is not authorized to access this resource`

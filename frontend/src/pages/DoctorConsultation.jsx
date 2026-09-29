@@ -23,6 +23,7 @@ import DoctorConsultationSidebar from '../components/DoctorConsultationSidebar';
 import PatientHistoryDrawer from '../components/PatientHistoryDrawer';
 import { triggerPrint } from '../modules/prescription-print/printUtils';
 import { DEFAULT_PRINT_CONFIG } from '../modules/prescription-print/prescriptionPrint.types';
+import { workflowRealtime } from '../services/workflowRealtimeService';
 
 const DoctorConsultation = () => {
   const params = useParams();
@@ -38,9 +39,7 @@ const DoctorConsultation = () => {
     if (e && typeof e.stopPropagation === 'function') {
       e.stopPropagation();
     }
-    if (consultationId) {
-      localStorage.removeItem(`consult_draft_${consultationId}`);
-    }
+    // Retain consultation draft for auto-restore when returning to this consultation
     queryClient.invalidateQueries(['doctorQueue']);
     queryClient.invalidateQueries(['appointments']);
     navigate('/doctor/dashboard', { replace: true });
@@ -50,7 +49,9 @@ const DoctorConsultation = () => {
   useEffect(() => {
     initClinicalMasters();
     if (user?._id) {
-      api.post('/operations/doctors/presence', { isOnline: true }).catch(() => {});
+      const docId = String(user._id);
+      api.post('/operations/doctors/presence', { doctorId: docId, isOnline: true }).catch(() => {});
+      workflowRealtime.broadcastLocalEvent('DOCTOR_PRESENCE_UPDATED', { doctorId: docId, isOnline: true });
     }
   }, [user?._id]);
 
@@ -635,7 +636,7 @@ const DoctorConsultation = () => {
   useEffect(() => {
     if (!consultationId || isReadOnly) return;
 
-    const interval = setInterval(() => {
+    const timer = setTimeout(() => {
       const draftObj = {
         clinicalNotes,
         primaryDiagnosis: diagnoses[0] || primaryDiagnosis,
@@ -651,13 +652,17 @@ const DoctorConsultation = () => {
         customInvestigation,
         vitals
       };
-      localStorage.setItem(`consult_draft_${consultationId}`, JSON.stringify(draftObj));
-      setDraftSavedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-    }, 30000);
+      try {
+        localStorage.setItem(`consult_draft_${consultationId}`, JSON.stringify(draftObj));
+        setDraftSavedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      } catch (e) {
+        console.error('Failed to auto-save consultation draft', e);
+      }
+    }, 500);
 
-    return () => clearInterval(interval);
+    return () => clearTimeout(timer);
   }, [
-    consultationId, clinicalNotes, primaryDiagnosis, diagnoses, diagnosisStatus, prescriptionsList,
+    consultationId, isReadOnly, clinicalNotes, primaryDiagnosis, diagnoses, diagnosisStatus, prescriptionsList,
     checkedAdvice, customAdvice, followupRequired, followupDate, followupReason,
     checkedInvestigations, customInvestigation, vitals
   ]);

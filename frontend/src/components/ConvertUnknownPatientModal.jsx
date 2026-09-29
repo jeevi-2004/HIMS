@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { UserCheck, X, ShieldCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../services/api';
+import useFormDraft from '../hooks/useFormDraft';
 
 const ConvertUnknownPatientModal = ({ isOpen, onClose, patient, onSuccess }) => {
   if (!isOpen || !patient) return null;
@@ -14,6 +15,13 @@ const ConvertUnknownPatientModal = ({ isOpen, onClose, patient, onSuccess }) => 
     address: '',
     aadhaarNumber: ''
   });
+
+  const { clearDraft: clearConvertDraft } = useFormDraft(
+    `reception_convert_patient_${patient._id || 'temp'}`,
+    form,
+    setForm,
+    { enabled: Boolean(isOpen && patient?._id) }
+  );
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -42,6 +50,7 @@ const ConvertUnknownPatientModal = ({ isOpen, onClose, patient, onSuccess }) => 
 
       await api.put(`/operations/patients/${patient._id}`, payload);
       toast.success(`Converted ${patient.name} to permanent record: ${form.name}!`);
+      clearConvertDraft();
       if (onSuccess) onSuccess();
       onClose();
     } catch (err) {

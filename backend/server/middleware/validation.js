@@ -18,6 +18,7 @@ const validateMobileNumber = (req, res, next) => {
           typeof mobile !== 'string' ||
           !/^(?:\+91[\-\s]?|91[\-\s]?)?[6-9]\d{9}$/.test(mobile)
         ) {
+          require('fs').appendFileSync('debug.log', `VALIDATION 400: mobile invalid: ${mobile}\n`);
           return res.status(400).json({
             success: false,
             message: 'Please enter a valid mobile number.'
@@ -49,6 +50,7 @@ const checkUserMobileUniqueness = async (req, res, next) => {
     }
     const existingUser = await User.findOne(userQuery);
     if (existingUser) {
+      require('fs').appendFileSync('debug.log', `VALIDATION 409: Mobile already exists: ${mobileNumber}\n`);
       return res.status(409).json({
         success: false,
         message: 'Mobile number already exists.'

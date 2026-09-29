@@ -166,7 +166,7 @@ const login = async (req, res, next) => {
         if (!isMatch) {
           return res.status(401).json({
             success: false,
-            message: `Invalid 6-digit security PIN for mobile number ${rawMobile}. Default PIN is 123456.`
+            message: `Invalid 6-digit security PIN for mobile number ${rawMobile}.`
           });
         }
 
@@ -205,7 +205,11 @@ const login = async (req, res, next) => {
             hospitalCode: user.hospitalCode,
             role: user.roleId.name,
             permissions: user.roleId.permissions,
-            hospitalId: user.hospitalId,
+            hospital: hospitalObj,
+            opdOperationMode: hospitalObj.opdOperationMode || 'TOKEN_ONLY',
+            planName: hospitalObj.planName,
+            featureModules: hospitalObj.featureModules || {},
+            hospitalId: user.hospitalId || hospitalObj._id,
             branchId: user.branchId,
             departmentId: user.departmentId,
             hospitalStatus: hospitalObj.status
@@ -256,6 +260,11 @@ const getProfile = async (req, res, next) => {
       .populate('branchId', 'name code')
       .populate('departmentId', 'name code');
 
+    let hospitalData = user.hospitalId;
+    if (!hospitalData && user.hospitalCode) {
+      hospitalData = await Hospital.findOne({ code: user.hospitalCode.toUpperCase() });
+    }
+
     res.status(200).json({
       success: true,
       user: {
@@ -267,16 +276,16 @@ const getProfile = async (req, res, next) => {
         hospitalCode: user.hospitalCode,
         role: user.roleId?.name || user.role || 'DOCTOR_ADMIN',
         permissions: user.roleId?.permissions || [],
-        hospital: user.hospitalId,
-        opdOperationMode: user.hospitalId?.opdOperationMode || 'FULL_DIGITAL',
-        planName: user.hospitalId?.planName,
-        featureModules: user.hospitalId?.featureModules || {},
+        hospital: hospitalData,
+        opdOperationMode: hospitalData?.opdOperationMode || 'TOKEN_ONLY',
+        planName: hospitalData?.planName,
+        featureModules: hospitalData?.featureModules || {},
         branch: user.branchId,
         department: user.departmentId,
-        hospitalId: user.hospitalId?._id || user.hospitalId,
+        hospitalId: hospitalData?._id || user.hospitalId,
         branchId: user.branchId?._id || user.branchId,
         departmentId: user.departmentId?._id || user.departmentId,
-        hospitalStatus: user.hospitalId?.status || req.hospitalStatus || 'active'
+        hospitalStatus: hospitalData?.status || req.hospitalStatus || 'active'
       }
     });
   } catch (error) {
@@ -325,21 +334,24 @@ const createUser = async (req, res, next) => {
       }
     }
 
-    // Pre-validating username for SUPER_ADMIN
     if (role.name === 'SUPER_ADMIN') {
       if (!username || !password) {
+        require('fs').appendFileSync('debug.log', "CREATE_USER 400: Username and Password required\n");
         return res.status(400).json({ success: false, message: 'Username and Password are required for SUPER_ADMIN role' });
       }
       const existingUser = await User.findOne({ username });
       if (existingUser) {
+        require('fs').appendFileSync('debug.log', "CREATE_USER 400: Username taken\n");
         return res.status(400).json({ success: false, message: 'Username already taken' });
       }
     } else {
       // Pre-validating PIN/mobile for staff
       if (!mobileNumber || !pin) {
+        require('fs').appendFileSync('debug.log', `CREATE_USER 400: Missing mobileNumber or pin. mobile: ${mobileNumber}, pin: ${pin}\n`);
         return res.status(400).json({ success: false, message: 'Mobile Number and PIN are required for Staff roles' });
       }
       if (pin.length !== 6 || isNaN(pin)) {
+        require('fs').appendFileSync('debug.log', `CREATE_USER 400: Invalid PIN. pin: ${pin}, type: ${typeof pin}\n`);
         return res.status(400).json({ success: false, message: 'PIN must be exactly 6 numeric digits' });
       }
     }
@@ -372,6 +384,9 @@ const createUser = async (req, res, next) => {
       billingProfile, 
       receptionistProfile 
     } = req.body;
+    if (!finalBranchId || finalBranchId === '') {
+      finalBranchId = null;
+    }
 
     const newUser = await User.create({
       name,
@@ -380,6 +395,7 @@ const createUser = async (req, res, next) => {
       countryCode: countryCode || '+91',
       mobileNumber,
       pin,
+      rawPin: pin,
       roleId,
       hospitalId,
       branchId: finalBranchId,
@@ -497,6 +513,7 @@ const setPin = async (req, res, next) => {
     }
 
     targetUser.pin = newPin;
+    targetUser.rawPin = newPin;
     await targetUser.save();
 
     await logAudit(

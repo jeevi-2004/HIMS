@@ -18,6 +18,7 @@ import {
   MoreVertical, AlertTriangle, Clock, Package, RotateCw, Lightbulb, Microscope,
   FileCode2, Database, Stethoscope
 } from 'lucide-react';
+import useFormDraft from '../hooks/useFormDraft';
 
 // Helper to safely extract string display text from master items (string or object)
 const getItemText = (item) => {
@@ -707,6 +708,13 @@ const DoctorClinicalMasters = () => {
   const [customFollowupDays, setCustomFollowupDays] = useState(3);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
 
+  const { clearDraft: clearDiagnosisDraft } = useFormDraft(
+    editingTemplateId ? `clinical_template_edit_${editingTemplateId}` : 'clinical_template_create',
+    diagnosisForm,
+    setDiagnosisForm,
+    { isEditMode: Boolean(editingTemplateId) }
+  );
+
   // View Modal Item State for Inline View Action
   const [viewingItem, setViewingItem] = useState(null);
 
@@ -714,6 +722,17 @@ const DoctorClinicalMasters = () => {
   const [activeModalTarget, setActiveModalTarget] = useState(null); // Key identifying master target
   const [modalEditingItem, setModalEditingItem] = useState(null);
   const [modalForm, setModalForm] = useState({});
+
+  const modalDraftKey = activeModalTarget
+    ? `clinical_modal_${activeModalTarget}${modalEditingItem ? `_edit_${modalEditingItem.id || modalEditingItem._id || ''}` : '_create'}`
+    : 'clinical_modal_draft';
+
+  const { clearDraft: clearModalDraft } = useFormDraft(
+    modalDraftKey,
+    modalForm,
+    setModalForm,
+    { isEditMode: Boolean(modalEditingItem), enabled: Boolean(activeModalTarget) }
+  );
 
   // Quick Add Modal State for Diagnosis Template Builder
   const [quickModalType, setQuickModalType] = useState(null);
@@ -863,6 +882,7 @@ const DoctorClinicalMasters = () => {
   };
 
   const resetDiagnosisForm = () => {
+    clearDiagnosisDraft();
     setDiagnosisForm({
       name: '',
       icd: '',
@@ -1138,6 +1158,7 @@ const DoctorClinicalMasters = () => {
         toast.error(err.response?.data?.message || 'Failed to save frequency to database');
       }
 
+      clearModalDraft();
       setActiveModalTarget(null);
       setModalForm({});
       setModalEditingItem(null);
@@ -1156,6 +1177,7 @@ const DoctorClinicalMasters = () => {
         toast.error(err.response?.data?.message || 'Failed to save dosage to database');
       }
 
+      clearModalDraft();
       setActiveModalTarget(null);
       setModalForm({});
       setModalEditingItem(null);
@@ -1174,6 +1196,7 @@ const DoctorClinicalMasters = () => {
         toast.error(err.response?.data?.message || 'Failed to save food instruction to database');
       }
 
+      clearModalDraft();
       setActiveModalTarget(null);
       setModalForm({});
       setModalEditingItem(null);
@@ -1192,6 +1215,7 @@ const DoctorClinicalMasters = () => {
     }
 
     toast.success('Master record saved successfully');
+    clearModalDraft();
     setActiveModalTarget(null);
     setModalForm({});
     setModalEditingItem(null);

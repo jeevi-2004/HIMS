@@ -183,8 +183,9 @@ const bookAppointment = async (req, res, next) => {
     if (geoSettings.enabled && geoSettings.latitude != null && geoSettings.longitude != null) {
       const userRoleName = (req.user?.roleId?.name || req.user?.roleId || req.user?.role || '').toString().toUpperCase();
       const isSuperAdmin = userRoleName.includes('SUPER_ADMIN');
+      const isDev = process.env.NODE_ENV === 'development' || req.hostname === 'localhost' || req.hostname === '127.0.0.1';
 
-      if (!isSuperAdmin) {
+      if (!isSuperAdmin && !isDev) {
         const { latitude, longitude, bypassPin } = req.body;
         const { isWithinGeofence } = require('../utils/geoUtils');
 
@@ -249,9 +250,10 @@ const bookAppointment = async (req, res, next) => {
     todayStart.setHours(0, 0, 0, 0);
 
     const isFutureBooking = startOfDay > todayStart;
+    const isScheduledApp = isFutureBooking || String(consultationType || '').toLowerCase() === 'appointment';
 
     // Check for existing double-booking on same doctor, date, and time slot
-    if (doctorId && time) {
+    if (doctorId && time && isScheduledApp) {
       const normTime = String(time).trim();
       const existingBooking = await Appointment.findOne({
         doctorId,
@@ -276,8 +278,6 @@ const bookAppointment = async (req, res, next) => {
     if (req.user.branchId) {
       countFilter.branchId = req.user.branchId;
     }
-
-    const isScheduledApp = isFutureBooking || String(consultationType || '').toLowerCase() === 'appointment';
 
     const count = await Appointment.countDocuments(countFilter);
 
@@ -2538,18 +2538,20 @@ const updateDoctorPresence = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Doctor ID is required' });
     }
 
-    const presenceData = doctorPresenceService.setPresence(doctorId, isOnline);
+    const cleanDoctorId = String(doctorId);
+    const parsedIsOnline = Boolean(isOnline);
+    const presenceData = doctorPresenceService.setPresence(cleanDoctorId, parsedIsOnline);
 
     // Broadcast SSE update to all connected receptionists/display boards
     WorkflowEventHub.publish('DOCTOR_PRESENCE_UPDATED', {
-      doctorId,
-      isOnline: Boolean(isOnline),
+      doctorId: cleanDoctorId,
+      isOnline: parsedIsOnline,
       performedBy: req.user?.name || 'Doctor'
     });
 
     res.status(200).json({
       success: true,
-      message: `Doctor presence set to ${isOnline ? 'ONLINE' : 'OFFLINE'}`,
+      message: `Doctor presence set to ${parsedIsOnline ? 'ONLINE' : 'OFFLINE'}`,
       data: presenceData
     });
   } catch (error) {

@@ -15,10 +15,11 @@ import Table from '../components/Table';
 import PinInput from '../components/PinInput';
 import DatePicker from '../components/DatePicker';
 import Autocomplete from '../components/Autocomplete';
+import { useFormDraft } from '../hooks/useFormDraft';
 import { 
   GitBranch, ClipboardList, Users, ShieldCheck, ShieldAlert, Plus, Key, Activity, Calendar, 
   FileBarChart2, Settings, Building2, History, UserRound, Pill, 
-  CreditCard, Clock, Trash2, Edit, CheckCircle, PlusCircle, Search, Eye,
+  CreditCard, Clock, Trash2, Edit, CheckCircle, PlusCircle, Search, Eye, EyeOff, Lock,
   Ticket, Stethoscope, FileText, Database
 } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -92,6 +93,7 @@ const AdminDashboard = () => {
   const [isDoctorProfileOpen, setIsDoctorProfileOpen] = useState(false);
   const [isResetPinOpen, setIsResetPinOpen] = useState(false);
   const [isStaffViewOnly, setIsStaffViewOnly] = useState(false);
+  const [showStaffPin, setShowStaffPin] = useState(false);
 
   // Receptionist-style Modals (Quick Actions)
   const [isRegOpen, setIsRegOpen] = useState(false);
@@ -132,6 +134,12 @@ const AdminDashboard = () => {
   const [doctorProfileForm, setDoctorProfileForm] = useState({
     qualification: '', specialization: '', experience: 1, consultationFee: 300
   });
+
+  // Draft Auto-Save & Restoration Hooks
+  const branchDraft = useFormDraft('admin_branch_create', branchForm, setBranchForm, { isEditMode: Boolean(selectedBranch) });
+  const deptDraft = useFormDraft('admin_dept_create', deptForm, setDeptForm, { isEditMode: Boolean(selectedDept) });
+  const serviceDraft = useFormDraft('admin_service_create', serviceForm, setServiceForm, { isEditMode: Boolean(selectedService) });
+  const staffDraft = useFormDraft('admin_staff_create', staffForm, setStaffForm, { isEditMode: Boolean(selectedStaff) });
 
   // Settings Configuration Binds
   const [profileForm, setProfileForm] = useState({
@@ -434,6 +442,7 @@ const AdminDashboard = () => {
       } else {
         const res = await api.post('/admin/branches', payload);
         const newBranch = res.data?.data;
+        branchDraft.clearDraft();
         toast.success('New branch registered successfully');
 
         if (quickContextFromStaff === 'branch' && newBranch?._id) {
@@ -483,6 +492,7 @@ const AdminDashboard = () => {
       } else {
         const res = await api.post('/admin/departments', deptForm);
         const newDept = res.data?.data;
+        deptDraft.clearDraft();
         toast.success('Department registered successfully');
 
         if (quickContextFromStaff === 'department' && newDept?._id) {
@@ -518,6 +528,7 @@ const AdminDashboard = () => {
         toast.success('Service configuration updated');
       } else {
         await api.post('/admin/services', serviceForm);
+        serviceDraft.clearDraft();
         toast.success('Diagnostic/Clinical service added');
       }
       setIsServiceOpen(false);
@@ -644,6 +655,7 @@ const AdminDashboard = () => {
           hospitalCode: user.hospitalCode
         };
         await api.post('/auth/create-user', createPayload);
+        staffDraft.clearDraft();
         toast.success('Staff added successfully');
       }
       setIsStaffOpen(false);
@@ -698,10 +710,23 @@ const AdminDashboard = () => {
     setIsStaffOpen(true);
   };
 
-  const handleOpenAddStaff = () => {
+  const handleOpenAddStaff = async () => {
     setSelectedStaff(null);
     setIsStaffViewOnly(false);
     setStaffErrors({});
+    
+    // Fetch roles and departments if they are empty
+    if (roles.length === 0 || departments.length === 0) {
+      try {
+        const [rls, depts] = await Promise.all([
+          api.get('/admin/roles').catch(() => ({ data: { data: [] } })),
+          api.get('/admin/departments').catch(() => ({ data: { data: [] } }))
+        ]);
+        if (rls.data?.data) setRoles(Array.isArray(rls.data.data) ? rls.data.data : []);
+        if (depts.data?.data) setDepartments(Array.isArray(depts.data.data) ? depts.data.data : []);
+      } catch (err) {}
+    }
+
     setStaffForm({
       name: '',
       countryCode: '+91',
@@ -739,6 +764,7 @@ const AdminDashboard = () => {
     });
     setSelectedStaff(null);
     setIsStaffViewOnly(false);
+    setShowStaffPin(false);
     setStaffErrors({});
     setIsStaffOpen(true);
   };
@@ -746,11 +772,18 @@ const AdminDashboard = () => {
   const handleViewStaff = (row) => {
     setSelectedStaff(row);
     setIsStaffViewOnly(true);
+    setShowStaffPin(false);
+    const isSuperAdmin = row.roleId?.name === 'SUPER_ADMIN';
+    const resolvedPin = isSuperAdmin
+      ? '123456'
+      : (row.rawPin && String(row.rawPin).length === 6 && row.rawPin !== '123456')
+        ? String(row.rawPin)
+        : (row.mobileNumber && row.mobileNumber.length >= 6 ? row.mobileNumber.slice(-6) : (row.rawPin || ''));
     setStaffForm({
       name: row.name || '',
       countryCode: row.countryCode || '+91',
       mobileNumber: row.mobileNumber || '',
-      pin: '••••',
+      pin: resolvedPin,
       roleId: row.roleId?._id || row.roleId || '',
       branchId: row.branchId?._id || row.branchId || '',
       departmentId: row.departmentId?._id || row.departmentId || '',
@@ -1510,7 +1543,7 @@ const AdminDashboard = () => {
               return true;
             })}
             actions={[
-              { label: 'View Details', icon: Eye, isPrimary: true, variant: 'view', onClick: (row) => handleViewStaff(row) },
+              { label: 'View Details', tooltip: 'View details', icon: Eye, isPrimary: true, variant: 'view', iconOnly: true, onClick: (row) => handleViewStaff(row) },
               { label: 'Edit Roster Info', icon: Edit, onClick: (row) => handleEditStaff(row) },
               { label: 'Reset Security PIN', icon: Key, onClick: (row) => { setSelectedStaff(row); setIsResetPinOpen(true); } },
               { 
@@ -1649,7 +1682,7 @@ const AdminDashboard = () => {
             ]}
             data={filteredStaffData.filter(s => s.roleId?.name !== 'SUPER_ADMIN')}
             actions={[
-              { label: 'View details', icon: Eye, onClick: (row) => handleViewStaff(row) },
+              { label: 'View details', tooltip: 'View details', icon: Eye, isPrimary: true, variant: 'view', iconOnly: true, onClick: (row) => handleViewStaff(row) },
               { label: 'Edit Info', icon: Edit, onClick: (row) => handleEditStaff(row) },
               { label: 'Reset PIN', icon: Key, onClick: (row) => { setSelectedStaff(row); setIsResetPinOpen(true); } },
               { 
@@ -1721,7 +1754,7 @@ const AdminDashboard = () => {
             ]}
             data={filteredStaffData.filter(s => s.roleId?.name !== 'SUPER_ADMIN')}
             actions={[
-              { label: 'View details', icon: Eye, onClick: (row) => handleViewStaff(row) },
+              { label: 'View details', tooltip: 'View details', icon: Eye, isPrimary: true, variant: 'view', iconOnly: true, onClick: (row) => handleViewStaff(row) },
               { label: 'Edit Info', icon: Edit, onClick: (row) => handleEditStaff(row) },
               { label: 'Reset PIN', icon: Key, onClick: (row) => { setSelectedStaff(row); setIsResetPinOpen(true); } },
               { 
@@ -1928,9 +1961,36 @@ const AdminDashboard = () => {
       {/* Add Department Modal */}
       <Modal isOpen={isDeptOpen} onClose={() => setIsDeptOpen(false)} title={selectedDept ? "Modify Department" : "Create Department Module"}>
         <form onSubmit={handleSaveDept} className="space-y-4 text-left">
-          <Input label="Department Name" placeholder="e.g. Cardiology" value={deptForm.name} onChange={(e) => setDeptForm({ ...deptForm, name: e.target.value })} required />
-          <Input label="Short Code" placeholder="e.g. CARD" value={deptForm.code} onChange={(e) => setDeptForm({ ...deptForm, code: e.target.value })} required />
-          <Input label="Description" placeholder="Optional notes" value={deptForm.description} onChange={(e) => setDeptForm({ ...deptForm, description: e.target.value })} />
+          <Input 
+            label="Department Name" 
+            placeholder="e.g. Cardiology" 
+            value={deptForm.name} 
+            onChange={(e) => {
+              let val = e.target.value.replace(/[^a-zA-Z\s]/g, '');
+              val = val.replace(/\b\w/g, char => char.toUpperCase());
+              setDeptForm({ ...deptForm, name: val });
+            }} 
+            required 
+          />
+          <Input 
+            label="Short Code" 
+            placeholder="e.g. CARD" 
+            value={deptForm.code} 
+            onChange={(e) => {
+              let val = e.target.value.replace(/[^a-zA-Z0-9]/g, '');
+              setDeptForm({ ...deptForm, code: val });
+            }} 
+            required 
+          />
+          <Input 
+            label="Description" 
+            placeholder="Optional notes" 
+            value={deptForm.description} 
+            onChange={(e) => {
+              let val = e.target.value.replace(/[^a-zA-Z\s]/g, '');
+              setDeptForm({ ...deptForm, description: val });
+            }} 
+          />
           <Button type="submit" variant="primary" className="w-full">
             {selectedDept ? "Save Changes" : "Create Department"}
           </Button>
@@ -1958,7 +2018,9 @@ const AdminDashboard = () => {
             placeholder="Dr. Rajesh Patel" 
             value={staffForm.name} 
             onChange={(e) => {
-              setStaffForm({ ...staffForm, name: e.target.value });
+              let val = e.target.value.replace(/[^a-zA-Z\s.]/g, '');
+              val = val.replace(/\b\w/g, char => char.toUpperCase());
+              setStaffForm({ ...staffForm, name: val });
               if (staffErrors.name) setStaffErrors(prev => ({ ...prev, name: undefined }));
             }} 
             required 
@@ -1980,18 +2042,49 @@ const AdminDashboard = () => {
               disabled={isStaffViewOnly}
               error={staffErrors.mobileNumber || staffMobileVal.error}
             />
-            {!selectedStaff && (
-              <PinInput 
-                length={6}
-                label="Security PIN (6 digits)" 
-                value={staffForm.pin} 
-                onChange={(val) => {
-                  setStaffForm({ ...staffForm, pin: val });
-                  if (staffErrors.pin) setStaffErrors(prev => ({ ...prev, pin: undefined }));
-                }} 
-                error={staffErrors.pin}
-              />
-            )}
+            <div className="flex flex-col gap-1.5 text-left">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1 flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5 text-[#2F63F2]" />
+                  <span>Security PIN (6 Digits)</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowStaffPin(!showStaffPin)}
+                  className="text-[11px] font-semibold text-slate-500 hover:text-[#2F63F2] flex items-center gap-1 transition-colors cursor-pointer pr-1"
+                >
+                  {showStaffPin ? (
+                    <>
+                      <EyeOff className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Hide PIN</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Show PIN</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              <div className="relative">
+                <input
+                  type={showStaffPin ? 'text' : 'password'}
+                  placeholder="e.g. 123456"
+                  maxLength={6}
+                  value={isStaffViewOnly ? (showStaffPin ? (staffForm.pin || '—') : (staffForm.pin || '••••••')) : staffForm.pin}
+                  onChange={(e) => {
+                    if (!selectedStaff || !isStaffViewOnly) {
+                      const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
+                      setStaffForm({ ...staffForm, pin: val });
+                      if (staffErrors.pin) setStaffErrors(prev => ({ ...prev, pin: undefined }));
+                    }
+                  }}
+                  disabled={isStaffViewOnly || (!!selectedStaff && !isStaffViewOnly)}
+                  className={`enterprise-input w-full font-mono tracking-wider ${staffErrors.pin ? 'border-[#EF4444] focus:ring-[#EF4444]/10 focus:border-[#EF4444]' : ''} ${isStaffViewOnly ? 'bg-slate-50 text-slate-700' : ''}`}
+                />
+              </div>
+              {staffErrors.pin && <span className="text-xs text-[#EF4444] pl-1 mt-0.5">{staffErrors.pin}</span>}
+            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-4">
@@ -2087,7 +2180,17 @@ const AdminDashboard = () => {
                     <Stethoscope className="w-4 h-4" /> Doctor Clinical Profile Setup
                   </h4>
                   <div className="grid grid-cols-2 gap-4">
-                    <Input label="Specialization" placeholder="e.g. Cardiologist" value={staffForm.specialization} onChange={(e) => setStaffForm({ ...staffForm, specialization: e.target.value })} disabled={isStaffViewOnly} />
+                    <Input 
+                      label="Specialization" 
+                      placeholder="e.g. Cardiologist" 
+                      value={staffForm.specialization} 
+                      onChange={(e) => {
+                        let val = e.target.value;
+                        val = val.replace(/\b\w/g, char => char.toUpperCase());
+                        setStaffForm({ ...staffForm, specialization: val });
+                      }} 
+                      disabled={isStaffViewOnly} 
+                    />
                     <Input label="Qualification" placeholder="e.g. MBBS, MD" value={staffForm.qualification} onChange={(e) => setStaffForm({ ...staffForm, qualification: e.target.value.toUpperCase() })} disabled={isStaffViewOnly} />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -2161,7 +2264,17 @@ const AdminDashboard = () => {
                   <h4 className="text-xs font-bold uppercase tracking-wider text-blue-600 flex items-center gap-2">
                     <Users className="w-4 h-4" /> Receptionist Desk Profile
                   </h4>
-                  <Input label="Reception Desk ID" placeholder="e.g. Desk-02" value={staffForm.receptionistDeskNumber} onChange={(e) => setStaffForm({ ...staffForm, receptionistDeskNumber: e.target.value })} disabled={isStaffViewOnly} />
+                  <Input 
+                    label="Reception Desk ID" 
+                    placeholder="e.g. Desk-02" 
+                    value={staffForm.receptionistDeskNumber} 
+                    onChange={(e) => {
+                      let val = e.target.value;
+                      val = val.replace(/\b\w/g, char => char.toUpperCase());
+                      setStaffForm({ ...staffForm, receptionistDeskNumber: val });
+                    }} 
+                    disabled={isStaffViewOnly} 
+                  />
                 </div>
               );
             }
@@ -2206,9 +2319,15 @@ const AdminDashboard = () => {
       {/* QUICK ACTION: Register Patient Modal */}
       <Modal isOpen={isRegOpen} onClose={() => setIsRegOpen(false)} title="Register Patient Intake" size="lg">
         <form onSubmit={handleRegisterSubmit} className="space-y-4 text-left">
-          <Input label="Patient Full Name" placeholder="Rajesh Kumar" value={patientForm.name} onChange={(e) => setPatientForm({ ...patientForm, name: e.target.value })} required />
+          <Input label="Patient Full Name" placeholder="Rajesh Kumar" value={patientForm.name} onChange={(e) => {
+            const val = e.target.value.replace(/[^a-zA-Z\s]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+            setPatientForm({ ...patientForm, name: val });
+          }} required />
           <div className="grid grid-cols-2 gap-4">
-            <Input label="Age (Years)" type="number" placeholder="28" value={patientForm.age} onChange={(e) => setPatientForm({ ...patientForm, age: e.target.value })} required />
+            <Input label="Age (Years)" type="number" placeholder="28" value={patientForm.age} onChange={(e) => {
+              const val = e.target.value.replace(/\D/g, '').slice(0, 2);
+              setPatientForm({ ...patientForm, age: val });
+            }} required />
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Gender</label>
               <select className="enterprise-input" value={patientForm.gender} onChange={(e) => setPatientForm({ ...patientForm, gender: e.target.value })} required>
@@ -2224,7 +2343,10 @@ const AdminDashboard = () => {
             countryValue={patientForm.countryCode}
             onCountryChange={(cc) => setPatientForm({ ...patientForm, countryCode: cc })}
             numberValue={patientForm.mobileNumber}
-            onNumberChange={(num) => setPatientForm({ ...patientForm, mobileNumber: num })}
+            onNumberChange={(num) => {
+              const val = num.replace(/\D/g, '').slice(0, 10);
+              setPatientForm({ ...patientForm, mobileNumber: val });
+            }}
             required
             error={patientMobileVal.error}
           />
@@ -2243,23 +2365,41 @@ const AdminDashboard = () => {
                 <option value="O-">O-</option>
               </select>
             </div>
-            <Input label="Known Allergies" placeholder="Dust, Penicillin" value={patientForm.allergies} onChange={(e) => setPatientForm({ ...patientForm, allergies: e.target.value })} />
+            <Input label="Known Allergies" placeholder="Dust, Penicillin" value={patientForm.allergies} onChange={(e) => {
+              const val = e.target.value.replace(/[^a-zA-Z\s,]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+              setPatientForm({ ...patientForm, allergies: val });
+            }} />
           </div>
 
           <div className="border-t border-slate-100 pt-3 space-y-2">
             <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider pl-1">Emergency Contact</h4>
             <div className="grid grid-cols-2 gap-2">
-              <input className="enterprise-input py-2 text-xs" placeholder="Contact Name" value={patientForm.contactName} onChange={(e) => setPatientForm({ ...patientForm, contactName: e.target.value })} />
-              <input className="enterprise-input py-2 text-xs" placeholder="Contact Phone" value={patientForm.contactPhone} onChange={(e) => setPatientForm({ ...patientForm, contactPhone: e.target.value })} />
+              <input className="enterprise-input py-2 text-xs" placeholder="Contact Name" value={patientForm.contactName} onChange={(e) => {
+                const val = e.target.value.replace(/[^a-zA-Z\s]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+                setPatientForm({ ...patientForm, contactName: val });
+              }} />
+              <input className="enterprise-input py-2 text-xs" placeholder="Contact Phone" value={patientForm.contactPhone} onChange={(e) => {
+                const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                setPatientForm({ ...patientForm, contactPhone: val });
+              }} />
             </div>
           </div>
 
           <div className="border-t border-slate-100 pt-3 space-y-2">
             <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider pl-1">Address Details</h4>
             <div className="grid grid-cols-2 gap-2">
-              <input className="enterprise-input py-2 text-xs" placeholder="Street" value={patientForm.street} onChange={(e) => setPatientForm({ ...patientForm, street: e.target.value })} />
-              <input className="enterprise-input py-2 text-xs" placeholder="City" value={patientForm.city} onChange={(e) => setPatientForm({ ...patientForm, city: e.target.value })} />
-              <input className="enterprise-input py-2 text-xs" placeholder="State" value={patientForm.state} onChange={(e) => setPatientForm({ ...patientForm, state: e.target.value })} />
+              <input className="enterprise-input py-2 text-xs" placeholder="Street" value={patientForm.street} onChange={(e) => {
+                const val = e.target.value.replace(/\b\w/g, c => c.toUpperCase());
+                setPatientForm({ ...patientForm, street: val });
+              }} />
+              <input className="enterprise-input py-2 text-xs" placeholder="City" value={patientForm.city} onChange={(e) => {
+                const val = e.target.value.replace(/[^a-zA-Z\s]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+                setPatientForm({ ...patientForm, city: val });
+              }} />
+              <input className="enterprise-input py-2 text-xs" placeholder="State" value={patientForm.state} onChange={(e) => {
+                const val = e.target.value.replace(/[^a-zA-Z\s]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+                setPatientForm({ ...patientForm, state: val });
+              }} />
               <input className="enterprise-input py-2 text-xs" placeholder="ZIP Code" value={patientForm.zip} onChange={(e) => setPatientForm({ ...patientForm, zip: e.target.value })} />
             </div>
           </div>
@@ -2301,7 +2441,10 @@ const AdminDashboard = () => {
 
           <div className="grid grid-cols-2 gap-4">
             <DatePicker label="Appointment Date" value={appForm.date} onChange={(date) => setAppForm({ ...appForm, date })} />
-            <Input label="Timing Slot" placeholder="e.g. 10:30 AM" value={appForm.time} onChange={(e) => setAppForm({ ...appForm, time: e.target.value })} required />
+            <Input label="Timing Slot" placeholder="e.g. 10:30 AM" value={appForm.time} onChange={(e) => {
+              const val = e.target.value.replace(/[^0-9:\sAPMapm]/g, '').toUpperCase();
+              setAppForm({ ...appForm, time: val });
+            }} required />
           </div>
 
           <Button type="submit" variant="primary" className="w-full mt-2 py-3" loading={bookAppointmentMutation.isPending} disabled={!selectedPatientForBooking}>

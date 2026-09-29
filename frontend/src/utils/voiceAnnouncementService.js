@@ -236,20 +236,28 @@ class VoiceAnnouncementService {
               this.lastVoiceAnnouncement = event.data.announcement;
             }
           } else if (event.data?.type === 'RECEPTION_VOICE_CALL') {
-            this.lastAnnouncedToken = event.data.token;
-            this.lastAnnouncedTimestamp = event.data.timestamp;
+            console.log("[PLAN1][RECEPTION] RECEPTION_VOICE_CALL RECEIVED", event.data);
+            
+            // DO NOT update lastAnnouncedToken/Timestamp here, otherwise 
+            // the deduplication logic inside enqueueAnnouncement will immediately suppress it!
+            
             if (event.data.announcement) {
               this.lastVoiceAnnouncement = event.data.announcement;
             }
 
-            // Synthesize audio ONLY if running outside Doctor Desk screens (e.g. Reception, Display Board)
+            // Synthesize audio ONLY on Receptionist screens
             const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
-            const isDoctorPage = pathname.includes('/doctor');
-            if (!isDoctorPage && event.data.announcementData) {
+            const isReceptionistPage = pathname.includes('/reception');
+            if (isReceptionistPage && event.data.announcementData) {
+              console.log("[PLAN1][RECEPTION] VOICE PLAY FUNCTION CALLED");
+              // Automatically show the same toast that clicking manually would show!
+              toast.success(`Voice Calling Token #${event.data.token}...`, { duration: 4000 });
               this.enqueueAnnouncement({
                 ...event.data.announcementData,
                 broadcastOnly: false
               });
+            } else {
+              console.log("[PLAN1][RECEPTION] NOT RECEPTION PAGE OR NO DATA. isReceptionistPage:", isReceptionistPage, "pathname:", pathname);
             }
           }
         };
@@ -1146,8 +1154,9 @@ class VoiceAnnouncementService {
           uEng.volume = 1.0;
           if (englishVoice) uEng.voice = englishVoice;
 
-          uEng.onend = () => finishCurrent();
-          uEng.onerror = () => finishCurrent();
+          uEng.onend = () => { console.log("[PLAN1][RECEPTION] AUDIO PLAY SUCCESS"); finishCurrent(); };
+          uEng.onerror = (e) => { console.log("[PLAN1][RECEPTION] AUDIO PLAY FAILED", e); finishCurrent(); };
+          console.log("[PLAN1][RECEPTION] AUDIO PLAY STARTED");
           window.speechSynthesis.speak(uEng);
         } else {
           finishCurrent();
@@ -1171,8 +1180,9 @@ class VoiceAnnouncementService {
           };
 
           uEng.onend = onEngFinish;
-          uEng.onerror = onEngFinish;
+          uEng.onerror = (e) => { console.log("[PLAN1][RECEPTION] AUDIO PLAY FAILED", e); onEngFinish(); };
 
+          console.log("[PLAN1][RECEPTION] AUDIO PLAY STARTED");
           window.speechSynthesis.speak(uEng);
         } else {
           await speakTamilPart();

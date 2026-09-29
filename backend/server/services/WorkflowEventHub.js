@@ -49,17 +49,26 @@ class WorkflowEventHubService extends EventEmitter {
       type: eventType,
       appointmentId: payload.appointmentId || payload._id || payload.id,
       tokenNumber: payload.tokenNumber || payload.token,
-      doctorId: payload.doctorId,
+      doctorId: typeof payload.doctorId === 'object' && payload.doctorId?._id ? String(payload.doctorId._id) : (payload.doctorId ? String(payload.doctorId) : undefined),
       doctorName: payload.doctorName || (typeof payload.doctorId === 'object' ? payload.doctorId?.name : ''),
       patientId: payload.patientId,
       patientName: payload.patientName || (typeof payload.patientId === 'object' ? payload.patientId?.name : ''),
       roomNo: payload.roomNo || (typeof payload.doctorId === 'object' ? (payload.doctorId?.roomNo || payload.doctorId?.doctorProfile?.roomNo || payload.doctorId?.doctorProfile?.roomNumber) : 'Room 1'),
       departmentId: payload.departmentId,
       queueState: payload.queueState || payload.queueStatus || payload.status,
+      isOnline: payload.isOnline !== undefined ? Boolean(payload.isOnline) : undefined,
       timestamp: new Date().toISOString(),
       performedBy: payload.performedBy || 'System',
-      metadata: payload.metadata || {}
+      metadata: payload.metadata || {},
+      ...payload
     };
+
+    if (eventObj.doctorId) {
+      eventObj.doctorId = String(eventObj.doctorId);
+    }
+    if (payload.isOnline !== undefined) {
+      eventObj.isOnline = Boolean(payload.isOnline);
+    }
 
     // Store in history
     this.history.unshift(eventObj);

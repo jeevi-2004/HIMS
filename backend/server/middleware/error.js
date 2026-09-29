@@ -5,6 +5,7 @@ const errorHandler = (err, req, res, next) => {
   // Log error to console for developers
   if (process.env.NODE_ENV !== 'production') {
     console.error(err);
+    require('fs').appendFileSync('error_log.txt', new Date().toISOString() + '\\n' + String(err.stack) + '\\n\\n');
   }
 
   // Mongoose bad ObjectId CastError

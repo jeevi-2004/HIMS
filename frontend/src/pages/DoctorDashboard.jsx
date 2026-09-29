@@ -12,10 +12,12 @@ import { initClinicalMasters } from '../utils/clinicalMasters';
 import { 
   Clock, ShieldCheck, Play, Eye, 
   History as HistoryIcon, RefreshCw, XCircle, Printer, Calendar,
-  AlertTriangle, UserX, FileText, CheckCircle2
+  AlertTriangle, UserX, FileText, CheckCircle2, Volume2
 } from 'lucide-react';
 import { useBillingSettings } from '../context/BillingSettingsContext';
+import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
 import { formatTimeTo12Hr, formatTimeTo24Hr } from '../utils/timeFormat';
+import { workflowRealtime } from '../services/workflowRealtimeService';
 import { 
   getVisitStatus, 
   getVisitStatusBadgeConfig, 
@@ -49,9 +51,13 @@ const getDoctorSettings = (doctorId) => {
 
 const DoctorDashboard = () => {
   const { user } = useAuth();
-  const { workflow, getAppointmentActions } = useBillingSettings();
+  const { workflow, getAppointmentActions, billingSettings } = useBillingSettings();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+
+  const isTokenOnlyPlan = user?.hospital?.opdOperationMode === 'TOKEN_ONLY' || 
+                          user?.opdOperationMode === 'TOKEN_ONLY' || 
+                          billingSettings?.opdOperationMode === 'TOKEN_ONLY';
 
   useEffect(() => { initClinicalMasters(); }, []);
 
@@ -74,29 +80,46 @@ const DoctorDashboard = () => {
 
   useEffect(() => {
     if (!user?._id) return;
+    const docId = String(user._id);
     api.get('/operations/doctors/presence')
       .then(res => {
         const map = res.data?.data || {};
-        if (map[user._id] !== undefined) {
-          setIsOnline(Boolean(map[user._id]));
+        if (map[docId] !== undefined) {
+          setIsOnline(Boolean(map[docId]));
         } else {
-          api.post('/operations/doctors/presence', { isOnline: true })
-            .then(() => setIsOnline(true))
+          api.post('/operations/doctors/presence', { doctorId: docId, isOnline: true })
+            .then(() => {
+              setIsOnline(true);
+              workflowRealtime.broadcastLocalEvent('DOCTOR_PRESENCE_UPDATED', { doctorId: docId, isOnline: true });
+            })
             .catch(() => {});
         }
       })
       .catch(() => {});
+
+    const unsubscribe = workflowRealtime.subscribe(evt => {
+      if (evt?.type === 'DOCTOR_PRESENCE_UPDATED' && String(evt.doctorId) === docId) {
+        setIsOnline(Boolean(evt.isOnline));
+      }
+    });
+
+    return () => unsubscribe();
   }, [user?._id]);
 
   const handleTogglePresence = async () => {
     if (!user?._id || isPresenceLoading) return;
+    const docId = String(user._id);
     const nextState = !isOnline;
     setIsPresenceLoading(true);
+    setIsOnline(nextState);
+    workflowRealtime.broadcastLocalEvent('DOCTOR_PRESENCE_UPDATED', { doctorId: docId, isOnline: nextState });
+
     try {
-      await api.post('/operations/doctors/presence', { isOnline: nextState });
-      setIsOnline(nextState);
+      await api.post('/operations/doctors/presence', { doctorId: docId, isOnline: nextState });
       toast.success(`Doctor status set to ${nextState ? 'ONLINE 🟢' : 'OFFLINE ⚪'}`);
     } catch {
+      setIsOnline(!nextState);
+      workflowRealtime.broadcastLocalEvent('DOCTOR_PRESENCE_UPDATED', { doctorId: docId, isOnline: !nextState });
       toast.error('Failed to update presence status');
     } finally {
       setIsPresenceLoading(false);
@@ -318,6 +341,60 @@ const DoctorDashboard = () => {
     startConsultationMutation.mutate(nextApp._id);
   };
 
+  const handleAcceptPatientPlan1 = (app) => {
+    const target = app || nextApp;
+    if (!target) {
+      toast.error('No waiting patients in the arrived queue.');
+      return;
+    }
+    const evalResult = getAppointmentActions(target, 'Doctor');
+    const isSubscriptionInactive = user?.hospitalStatus === 'inactive' || user?.hospital?.status === 'inactive';
+    const canStart = evalResult.actions.canStartConsultation && !isSubscriptionInactive;
+    if (!canStart) {
+      toast.error(evalResult.reasons.startConsultation || 'Payment required before consultation.');
+      return;
+    }
+    console.log("[PLAN1][DOCTOR] ACCEPT_PATIENT clicked");
+    console.log("[PLAN1][DOCTOR] RECEPTION_VOICE_CALL SENT");
+    const callPayload = {
+      tokenNumber: target.tokenNumber,
+      patientName: target.patientId?.name || 'Patient',
+      doctorName: target.doctorId?.name || target.doctorName || user?.name || 'Doctor',
+      roomNumber: target.doctorId?.roomNumber || target.roomNumber || '',
+      type: 'TriggerVoiceCall'
+    };
+    api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
+    
+    voiceAnnouncement.enqueueAnnouncement({
+      ...callPayload,
+      patientObj: target,
+      broadcastOnly: true
+    });
+    api.put(`/operations/appointments/${target._id}/queue`, { status: 'Completed', queueStatus: 'Completed' })
+      .then(() => {
+        toast.success(`✓ Token #${target.tokenNumber} Accepted & Completed! Voice call sent to Reception desk.`);
+        queryClient.invalidateQueries(['doctorQueue']);
+        queryClient.invalidateQueries(['appointments']);
+      })
+      .catch(err => toast.error('Failed to update queue status'));
+  };
+
+  const handleRecallVoicePlan1 = (app) => {
+    if (!app) return;
+    const callPayload = {
+      tokenNumber: app.tokenNumber,
+      patientName: app.patientId?.name || 'Patient',
+      doctorName: app.doctorId?.name || app.doctorName || user?.name || 'Doctor',
+      roomNumber: app.doctorId?.roomNumber || app.roomNumber || '',
+      patientObj: app,
+      isRepeat: true,
+      broadcastOnly: true
+    };
+    voiceAnnouncement.enqueueAnnouncement(callPayload);
+    api.post('/workflow/events/trigger-call', { ...callPayload, type: 'TriggerVoiceCall' }).catch(() => {});
+    toast.success(`📢 Re-calling Token #${app.tokenNumber} at Reception`);
+  };
+
   const handleNoShowConfirm = (app) => {
     setSelectedApp(app);
     setIsNoShowConfirmOpen(true);
@@ -485,20 +562,35 @@ const DoctorDashboard = () => {
           <div className="bg-white border border-[#E5E7EB] rounded-2xl p-5 shadow-sm space-y-4">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
               <div>
-                <h3 className="text-sm font-bold text-slate-800">📢 OPD Consultation Room Console</h3>
+                <h3 className="text-sm font-bold text-slate-800">
+                  {isTokenOnlyPlan ? '📢 OPD Token Queue Console' : '📢 OPD Consultation Room Console'}
+                </h3>
                 <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-                  Automated Queue Engine flow. Start consultation for the next ready patient.
+                  {isTokenOnlyPlan 
+                    ? 'Automated Queue Engine flow. Accept token and trigger voice call at Reception.' 
+                    : 'Automated Queue Engine flow. Start consultation for the next ready patient.'}
                 </p>
               </div>
               <div className="flex gap-2 flex-wrap">
-                <Button
-                  onClick={handleCallNextPatient}
-                  variant="primary"
-                  disabled={!nextApp || startConsultationMutation.isPending || !!currentApp || !getAppointmentActions(nextApp, 'Doctor').actions.canStartConsultation}
-                  className="text-xs font-bold uppercase tracking-wider py-2 bg-emerald-600 hover:bg-emerald-700"
-                >
-                  ▶ Start Consultation
-                </Button>
+                {isTokenOnlyPlan ? (
+                  <Button
+                    onClick={() => handleAcceptPatientPlan1(nextApp)}
+                    variant="primary"
+                    disabled={!nextApp || !getAppointmentActions(nextApp, 'Doctor').actions.canStartConsultation}
+                    className="text-xs font-bold uppercase tracking-wider py-2 bg-[#2F63F2] hover:bg-blue-700 text-white"
+                  >
+                    <Volume2 className="w-4 h-4 mr-1 inline" /> Accept Next Patient
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={handleCallNextPatient}
+                    variant="primary"
+                    disabled={!nextApp || startConsultationMutation.isPending || !!currentApp || !getAppointmentActions(nextApp, 'Doctor').actions.canStartConsultation}
+                    className="text-xs font-bold uppercase tracking-wider py-2 bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    ▶ Start Consultation
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -508,7 +600,7 @@ const DoctorDashboard = () => {
                 <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
                   <div className="space-y-1.5">
                     <span className="bg-indigo-600 text-white font-bold text-[9px] px-2.5 py-0.5 rounded-lg uppercase tracking-wider">
-                      🩺 In Consultation
+                      {isTokenOnlyPlan ? '🎟️ Active Patient' : '🩺 In Consultation'}
                     </span>
                     <h4 className="text-sm font-bold text-slate-800 mt-1">
                       {currentApp.patientId?.name}
@@ -520,7 +612,7 @@ const DoctorDashboard = () => {
                     <p className="text-[10px] text-indigo-700 font-mono font-bold">
                       Started: {currentApp.updatedAt ? new Date(currentApp.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
                     </p>
-                    {currentApp.patientId?.medicalAlerts && (
+                    {!isTokenOnlyPlan && currentApp.patientId?.medicalAlerts && (
                       <div className="flex items-center gap-1.5 text-rose-600 text-[10px] font-bold">
                         <AlertTriangle className="w-3 h-3" />
                         ALERT: {currentApp.patientId.medicalAlerts}
@@ -533,32 +625,65 @@ const DoctorDashboard = () => {
                     )}
                   </div>
                   <div className="flex flex-col gap-2 w-full sm:w-auto sm:items-end">
-                    <button
-                      onClick={() => navigate(`/doctor/consultation/${currentApp._id}`)}
-                      className="bg-[#2F63F2] text-white hover:bg-blue-700 font-bold px-4 py-2 rounded-xl text-xs transition-all"
-                    >
-                      🖊️ Continue Consultation
-                    </button>
-                    <button
-                      onClick={() => finishConsultationMutation.mutate(currentApp._id)}
-                      disabled={finishConsultationMutation.isPending}
-                      className="bg-emerald-600 text-white hover:bg-emerald-700 font-bold px-4 py-2 rounded-xl text-xs transition-all disabled:opacity-60"
-                    >
-                      ✓ Finish Consultation
-                    </button>
-                    <button
-                      onClick={() => skipPatientMutation.mutate(currentApp._id)}
-                      disabled={skipPatientMutation.isPending}
-                      className="bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 font-bold px-4 py-2 rounded-xl text-xs transition-all disabled:opacity-60"
-                    >
-                      ⏭️ Skip Patient
-                    </button>
+                    {isTokenOnlyPlan ? (
+                      <>
+                        <button
+                          onClick={() => finishConsultationMutation.mutate(currentApp._id)}
+                          disabled={finishConsultationMutation.isPending}
+                          className="bg-emerald-600 text-white hover:bg-emerald-700 font-bold px-4 py-2 rounded-xl text-xs transition-all disabled:opacity-60 flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Complete Token</span>
+                        </button>
+                        <button
+                          onClick={() => handleRecallVoicePlan1(currentApp)}
+                          className="bg-blue-50 text-[#2F63F2] hover:bg-blue-100 border border-blue-200 font-bold px-4 py-2 rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Volume2 className="w-3.5 h-3.5" />
+                          <span>Re-Call Voice</span>
+                        </button>
+                        <button
+                          onClick={() => skipPatientMutation.mutate(currentApp._id)}
+                          disabled={skipPatientMutation.isPending}
+                          className="bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 font-bold px-4 py-2 rounded-xl text-xs transition-all disabled:opacity-60 cursor-pointer"
+                        >
+                          ⏭️ Skip Patient
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => navigate(`/doctor/consultation/${currentApp._id}`)}
+                          className="bg-[#2F63F2] text-white hover:bg-blue-700 font-bold px-4 py-2 rounded-xl text-xs transition-all cursor-pointer"
+                        >
+                          🖊️ Continue Consultation
+                        </button>
+                        <button
+                          onClick={() => finishConsultationMutation.mutate(currentApp._id)}
+                          disabled={finishConsultationMutation.isPending}
+                          className="bg-emerald-600 text-white hover:bg-emerald-700 font-bold px-4 py-2 rounded-xl text-xs transition-all disabled:opacity-60 cursor-pointer"
+                        >
+                          ✓ Finish Consultation
+                        </button>
+                        <button
+                          onClick={() => skipPatientMutation.mutate(currentApp._id)}
+                          disabled={skipPatientMutation.isPending}
+                          className="bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 font-bold px-4 py-2 rounded-xl text-xs transition-all disabled:opacity-60 cursor-pointer"
+                        >
+                          ⏭️ Skip Patient
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
             ) : (
               <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl text-center text-slate-500 text-xs font-semibold space-y-2">
-                <p>💤 No active consultation. Click <strong>"Start Consultation"</strong> to begin.</p>
+                <p>
+                  {isTokenOnlyPlan 
+                    ? <span>💤 No active patient in room. Click <strong>"Accept Next Patient"</strong> to call next token from lobby.</span>
+                    : <span>💤 No active consultation. Click <strong>"Start Consultation"</strong> to begin.</span>}
+                </p>
                 {nextApp && (
                   <p className="text-[10px] text-[#2F63F2] font-bold">
                     Next up: {nextApp.patientId?.name} — Token #{nextApp.tokenNumber} ({nextApp.consultationType})
@@ -617,24 +742,39 @@ const DoctorDashboard = () => {
                 }
                 actions={[
                   // 1. Actions for WAITING TAB ONLY
-                  {
-                    label: (row) => {
-                      if (currentApp) return 'Consultation In Progress';
-                      if (row._id === nextApp?._id) return 'Start Consultation';
-                      return 'Waiting for Previous Patient';
-                    },
-                    icon: Play,
-                    isPrimary: true,
-                    disabled: (row) => !!currentApp || (row._id !== nextApp?._id),
-                    onClick: (row) => {
-                      if (currentApp) {
-                        toast.error('Please finish current consultation before starting another.');
-                        return;
-                      }
-                      startConsultationMutation.mutate(row._id);
-                    },
-                    show: (row) => activeQueueTab === 'waiting' && getVisitStatus(row) !== VISIT_STATUSES.SCHEDULED && !isCompletedVisit(getVisitStatus(row))
-                  },
+                  ...(isTokenOnlyPlan ? [
+                    {
+                      label: (row) => {
+                        const canStart = getAppointmentActions(row, 'Doctor').actions.canStartConsultation;
+                        if (!canStart) return 'Payment Pending';
+                        return 'Accept Patient';
+                      },
+                      icon: Volume2,
+                      isPrimary: true,
+                      disabled: (row) => !getAppointmentActions(row, 'Doctor').actions.canStartConsultation,
+                      onClick: (row) => handleAcceptPatientPlan1(row),
+                      show: (row) => activeQueueTab === 'waiting' && getVisitStatus(row) !== VISIT_STATUSES.SCHEDULED && !isCompletedVisit(getVisitStatus(row))
+                    }
+                  ] : [
+                    {
+                      label: (row) => {
+                        if (currentApp) return 'Consultation In Progress';
+                        if (row._id === nextApp?._id) return 'Start Consultation';
+                        return 'Waiting for Previous Patient';
+                      },
+                      icon: Play,
+                      isPrimary: true,
+                      disabled: (row) => !!currentApp || (row._id !== nextApp?._id),
+                      onClick: (row) => {
+                        if (currentApp) {
+                          toast.error('Please finish current consultation before starting another.');
+                          return;
+                        }
+                        startConsultationMutation.mutate(row._id);
+                      },
+                      show: (row) => activeQueueTab === 'waiting' && getVisitStatus(row) !== VISIT_STATUSES.SCHEDULED && !isCompletedVisit(getVisitStatus(row))
+                    }
+                  ]),
                   {
                     label: 'Skip Patient',
                     icon: XCircle,
@@ -672,34 +812,60 @@ const DoctorDashboard = () => {
                   },
 
                   // 2. Actions for IN CONSULTATION TAB ONLY
-                  {
-                    label: 'Continue Consultation',
-                    icon: Play,
-                    isPrimary: true,
-                    onClick: (row) => navigate(`/doctor/consultation/${row._id}`),
-                    show: () => activeQueueTab === 'in_consultation'
-                  },
-                  {
-                    label: 'Finish Consultation',
-                    icon: CheckCircle2,
-                    onClick: (row) => finishConsultationMutation.mutate(row._id),
-                    show: () => activeQueueTab === 'in_consultation'
-                  },
+                  ...(isTokenOnlyPlan ? [
+                    {
+                      label: 'Complete Token',
+                      icon: CheckCircle2,
+                      isPrimary: true,
+                      onClick: (row) => finishConsultationMutation.mutate(row._id),
+                      show: () => activeQueueTab === 'in_consultation'
+                    },
+                    {
+                      label: 'Re-Call Voice',
+                      icon: Volume2,
+                      onClick: (row) => handleRecallVoicePlan1(row),
+                      show: () => activeQueueTab === 'in_consultation'
+                    }
+                  ] : [
+                    {
+                      label: 'Continue Consultation',
+                      icon: Play,
+                      isPrimary: true,
+                      onClick: (row) => navigate(`/doctor/consultation/${row._id}`),
+                      show: () => activeQueueTab === 'in_consultation'
+                    },
+                    {
+                      label: 'Finish Consultation',
+                      icon: CheckCircle2,
+                      onClick: (row) => finishConsultationMutation.mutate(row._id),
+                      show: () => activeQueueTab === 'in_consultation'
+                    }
+                  ]),
 
-                  // 3. Actions for COMPLETED TODAY TAB ONLY (Strictly ZERO "Start Consultation")
-                  {
-                    label: 'View Consultation',
-                    icon: Eye,
-                    isPrimary: true,
-                    onClick: (row) => navigate(`/doctor/consultation/${row._id}`),
-                    show: () => activeQueueTab === 'completed'
-                  },
-                  {
-                    label: 'View Prescription',
-                    icon: FileText,
-                    onClick: (row) => navigate(`/doctor/consultation/${row._id}`),
-                    show: () => activeQueueTab === 'completed'
-                  },
+                  // 3. Actions for COMPLETED TODAY TAB ONLY
+                  ...(isTokenOnlyPlan ? [
+                    {
+                      label: 'Re-Call Voice',
+                      icon: Volume2,
+                      isPrimary: true,
+                      onClick: (row) => handleRecallVoicePlan1(row),
+                      show: () => activeQueueTab === 'completed'
+                    }
+                  ] : [
+                    {
+                      label: 'View Consultation',
+                      icon: Eye,
+                      isPrimary: true,
+                      onClick: (row) => navigate(`/doctor/consultation/${row._id}`),
+                      show: () => activeQueueTab === 'completed'
+                    },
+                    {
+                      label: 'View Prescription',
+                      icon: FileText,
+                      onClick: (row) => navigate(`/doctor/consultation/${row._id}`),
+                      show: () => activeQueueTab === 'completed'
+                    }
+                  ]),
 
                   // Shared info / history for all tabs
                   {
@@ -736,58 +902,82 @@ const DoctorDashboard = () => {
         {/* Right: Medical Alerts & Follow-ups */}
         <div className="lg:col-span-1 space-y-5">
 
-          {/* Medical Alerts */}
-          <div className="bg-white border border-[#E5E7EB] rounded-2xl p-5 shadow-sm space-y-3">
-            <div>
-              <h3 className="text-sm font-bold text-rose-600 flex items-center gap-1.5">
-                🚨 Medical Alerts
-              </h3>
-              <p className="text-[11px] text-slate-400 font-medium mt-0.5">Flagged allergy & condition warnings for today's patients.</p>
-            </div>
-            <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
-              {recentAlerts.length > 0 ? recentAlerts.map((item, idx) => (
-                <div key={idx} className="p-3 bg-rose-50 border border-rose-100 rounded-xl text-rose-700">
-                  <p className="font-bold flex justify-between items-center text-xs">
-                    <span>{item.patientName}</span>
-                    <span className="text-[10px] text-rose-400 font-mono">{item.uhid}</span>
-                  </p>
-                  <p className="text-[11px] mt-1 font-medium text-rose-800">⚠ {item.alert}</p>
+          {!isTokenOnlyPlan && (
+            <>
+              {/* Medical Alerts */}
+              <div className="bg-white border border-[#E5E7EB] rounded-2xl p-5 shadow-sm space-y-3">
+                <div>
+                  <h3 className="text-sm font-bold text-rose-600 flex items-center gap-1.5">
+                    🚨 Medical Alerts
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-medium mt-0.5">Flagged allergy & condition warnings for today's patients.</p>
                 </div>
-              )) : (
-                <p className="text-center text-slate-400 text-xs font-medium py-4">No alerts flagged today.</p>
-              )}
-            </div>
-          </div>
-
-          {/* Follow-ups */}
-          <div className="bg-white border border-[#E5E7EB] rounded-2xl p-5 shadow-sm space-y-3">
-            <div>
-              <h3 className="text-sm font-bold text-slate-800">📅 Follow-up Appointments</h3>
-              <p className="text-[11px] text-slate-400 font-medium mt-0.5">Patients scheduled for follow-up review today.</p>
-            </div>
-            <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
-              {todayQueue.filter(a => a.consultationType === 'Follow-Up').map((item, idx) => {
-                const visitSt = getVisitStatus(item);
-                const badge = getVisitStatusBadgeConfig(visitSt);
-                return (
-                  <div key={idx} className="p-3 bg-slate-50 border border-[#E5E7EB] rounded-xl flex justify-between items-center">
-                    <div>
-                      <h5 className="font-bold text-slate-800 text-xs">{item.patientId?.name}</h5>
-                      <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        {item.time} | Token #{item.tokenNumber}
+                <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+                  {recentAlerts.length > 0 ? recentAlerts.map((item, idx) => (
+                    <div key={idx} className="p-3 bg-rose-50 border border-rose-100 rounded-xl text-rose-700">
+                      <p className="font-bold flex justify-between items-center text-xs">
+                        <span>{item.patientName}</span>
+                        <span className="text-[10px] text-rose-400 font-mono">{item.uhid}</span>
                       </p>
+                      <p className="text-[11px] mt-1 font-medium text-rose-800">⚠ {item.alert}</p>
                     </div>
-                    <span className={`text-[9px] font-bold border px-2 py-0.5 rounded-lg uppercase tracking-wider ${badge.style}`}>
-                      {badge.label}
-                    </span>
-                  </div>
-                );
-              })}
-              {todayQueue.filter(a => a.consultationType === 'Follow-Up').length === 0 && (
-                <p className="text-center text-slate-400 text-xs font-medium py-4">No follow-ups booked today.</p>
-              )}
+                  )) : (
+                    <p className="text-center text-slate-400 text-xs font-medium py-4">No alerts flagged today.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Follow-ups */}
+              <div className="bg-white border border-[#E5E7EB] rounded-2xl p-5 shadow-sm space-y-3">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">📅 Follow-up Appointments</h3>
+                  <p className="text-[11px] text-slate-400 font-medium mt-0.5">Patients scheduled for follow-up review today.</p>
+                </div>
+                <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
+                  {todayQueue.filter(a => a.consultationType === 'Follow-Up').map((item, idx) => {
+                    const visitSt = getVisitStatus(item);
+                    const badge = getVisitStatusBadgeConfig(visitSt);
+                    return (
+                      <div key={idx} className="p-3 bg-slate-50 border border-[#E5E7EB] rounded-xl flex justify-between items-center">
+                        <div>
+                          <h5 className="font-bold text-slate-800 text-xs">{item.patientId?.name}</h5>
+                          <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                            {item.time} | Token #{item.tokenNumber}
+                          </p>
+                        </div>
+                        <span className={`text-[9px] font-bold border px-2 py-0.5 rounded-lg uppercase tracking-wider ${badge.style}`}>
+                          {badge.label}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {todayQueue.filter(a => a.consultationType === 'Follow-Up').length === 0 && (
+                    <p className="text-center text-slate-400 text-xs font-medium py-4">No follow-ups booked today.</p>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {isTokenOnlyPlan && (
+            <div className="bg-white border border-[#E5E7EB] rounded-2xl p-5 shadow-sm space-y-3">
+              <div>
+                <h3 className="text-sm font-bold text-[#2F63F2] flex items-center gap-1.5">
+                  📢 Token Queue Overview
+                </h3>
+                <p className="text-[11px] text-slate-400 font-medium mt-0.5">Physical Paper Prescription Mode (Plan 1)</p>
+              </div>
+              <div className="p-4 bg-blue-50/60 border border-blue-100 rounded-xl space-y-3">
+                <p className="text-xs font-medium text-slate-700 leading-relaxed">
+                  Prescriptions are written manually on physical paper letterheads. Accept patients to broadcast automated token voice announcements at Reception.
+                </p>
+                <div className="pt-2 border-t border-blue-200/60 flex items-center justify-between text-xs font-bold text-blue-950">
+                  <span>Total Patients in Queue:</span>
+                  <span className="font-mono text-sm">{waitingCount + inConsultationCount + completedCount}</span>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 

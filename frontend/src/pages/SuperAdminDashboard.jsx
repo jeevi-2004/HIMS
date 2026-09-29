@@ -12,12 +12,17 @@ import Modal from '../components/Modal';
 import Drawer from '../components/Drawer';
 import Table from '../components/Table';
 import PinInput from '../components/PinInput';
+import { useFormDraft } from '../hooks/useFormDraft';
 import { 
   Building2, Hospital, GitBranch, ClipboardList, Users, ShieldCheck, 
   Activity, Plus, Key, ToggleLeft, CreditCard, ShieldAlert, Award, FileBarChart2, Settings,
   Database, HardDrive, Cpu, Wifi, RefreshCw, Eye, Edit, Trash2, Power, CheckCircle, HelpCircle, MapPin
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+const capitalizeWords = (str) => {
+  if (typeof str !== 'string' || !str) return '';
+  return str.replace(/\b\w/g, char => char.toUpperCase());
+};
 
 const SuperAdminDashboard = () => {
   const { user } = useAuth();
@@ -174,43 +179,66 @@ const SuperAdminDashboard = () => {
   const [deptForm, setDeptForm] = useState({ name: '', code: '' });
   const [userForm, setUserForm] = useState({ name: '', countryCode: '+91', mobileNumber: '', pin: '', roleId: '', hospitalId: '', branchId: '', departmentId: '', hospitalCode: '' });
 
+  // Draft Auto-Save & Restoration Hooks
+  const hospitalDraft = useFormDraft('superadmin_hospital_create', hospitalForm, setHospitalForm, {
+    isEditMode: Boolean(selectedHospital),
+    onRestored: (d) => {
+      if (d && d.geoEnabled && d.geoLat) {
+        setGeoSuccess(true);
+        setGeoStatusMsg('✓ Location restored from draft');
+        setGeoStatusType('success');
+      }
+    }
+  });
+
+  const planDraft = useFormDraft('superadmin_plan_create', planForm, setPlanForm, {
+    isEditMode: Boolean(selectedPlan)
+  });
+
+  const userDraft = useFormDraft('superadmin_user_create', userForm, setUserForm);
+  const profileDraft = useFormDraft('superadmin_profile', profileForm, setProfileForm);
+
   const profileMobileVal = useMobileValidation('');
   const hospitalContactMobileVal = useMobileValidation('');
   const hospitalOwnerMobileVal = useMobileValidation('');
   const userMobileVal = useMobileValidation('');
 
   useEffect(() => {
-    profileMobileVal.setValue(profileForm.mobileNumber || '');
+    const raw = (profileForm.mobileNumber || '').trim();
+    profileMobileVal.setValue(raw);
     profileMobileVal.setError(
-      profileForm.mobileNumber && profileForm.mobileNumber.length < 10
-        ? 'Mobile number must contain exactly 10 digits.'
+      raw && (!/^[6-9]\d{9}$/.test(raw) || raw.length !== 10)
+        ? 'Mobile number must contain exactly 10 digits starting with 6-9.'
         : ''
     );
   }, [profileForm.mobileNumber]);
 
   useEffect(() => {
-    hospitalContactMobileVal.setValue(hospitalForm.contactNumber || '');
+    const raw = (hospitalForm.contactNumber || '').trim();
+    hospitalContactMobileVal.setValue(raw);
     hospitalContactMobileVal.setError(
-      hospitalForm.contactNumber && hospitalForm.contactNumber.length < 10
-        ? 'Mobile number must contain exactly 10 digits.'
+      raw && (!/^[6-9]\d{9}$/.test(raw) || raw.length !== 10)
+        ? 'Contact mobile must contain exactly 10 digits starting with 6-9.'
         : ''
     );
   }, [hospitalForm.contactNumber]);
 
   useEffect(() => {
-    hospitalOwnerMobileVal.setValue(hospitalForm.ownerMobile || '');
+    const raw = (hospitalForm.ownerMobile || '').trim();
+    hospitalOwnerMobileVal.setValue(raw);
     hospitalOwnerMobileVal.setError(
-      hospitalForm.ownerMobile && hospitalForm.ownerMobile.length < 10
-        ? 'Mobile number must contain exactly 10 digits.'
+      raw && (!/^[6-9]\d{9}$/.test(raw) || raw.length !== 10)
+        ? 'Owner mobile must contain exactly 10 digits starting with 6-9.'
         : ''
     );
   }, [hospitalForm.ownerMobile]);
 
   useEffect(() => {
-    userMobileVal.setValue(userForm.mobileNumber || '');
+    const raw = (userForm.mobileNumber || '').trim();
+    userMobileVal.setValue(raw);
     userMobileVal.setError(
-      userForm.mobileNumber && userForm.mobileNumber.length < 10
-        ? 'Mobile number must contain exactly 10 digits.'
+      raw && (!/^[6-9]\d{9}$/.test(raw) || raw.length !== 10)
+        ? 'Mobile number must contain exactly 10 digits starting with 6-9.'
         : ''
     );
   }, [userForm.mobileNumber]);
@@ -258,18 +286,20 @@ const SuperAdminDashboard = () => {
     setLoading(true);
     try {
       if (tab === 'summary') {
-        const [hosps, brs, depts, usrs, logs] = await Promise.all([
+        const [hosps, brs, depts, usrs, logs, rls] = await Promise.all([
           api.get('/admin/hospitals'),
           api.get('/admin/branches'),
           api.get('/admin/departments'),
           api.get('/admin/users'),
-          api.get('/admin/audit-logs')
+          api.get('/admin/audit-logs'),
+          api.get('/admin/roles')
         ]);
         setHospitals(hosps.data.data || []);
         setBranches(brs.data.data || []);
         setDepartments(depts.data.data || []);
         setUsers(usrs.data.data || []);
         setAuditLogs(logs.data.data || []);
+        setRoles(rls.data.data || []);
       } else if (tab === 'plans') {
         const res = await api.get('/admin/plans');
         setPlans(res.data.data || []);
@@ -318,6 +348,7 @@ const SuperAdminDashboard = () => {
          toast.success('Subscription plan updated successfully');
       } else {
          await api.post('/admin/plans', payload);
+         planDraft.clearDraft();
          toast.success('Subscription plan created successfully');
       }
       setPlanForm({ name: '', code: '', description: '', price: '', billingCycle: 'Monthly', features: '' });
@@ -382,12 +413,21 @@ const SuperAdminDashboard = () => {
     if (!hospitalForm.email || !hospitalForm.email.trim()) {
       errs.email = 'Contact Email is required.';
     }
-    if (!hospitalForm.contactNumber || !/^(?:\+91[\-\s]?|91[\-\s]?)?[6-9]\d{9}$/.test(hospitalForm.contactNumber)) {
-      errs.contactNumber = 'Please enter a valid 10-digit mobile number.';
+    const cleanContact = (hospitalForm.contactNumber || '').trim().replace(/^(\+91|91)/, '');
+    if (!cleanContact || !/^[6-9]\d{9}$/.test(cleanContact)) {
+      errs.contactNumber = 'Please enter a valid 10-digit mobile number starting with 6-9.';
+    }
+
+    if (hospitalForm.ownerMobile) {
+      const cleanOwner = (hospitalForm.ownerMobile || '').trim().replace(/^(\+91|91)/, '');
+      if (cleanOwner && !/^[6-9]\d{9}$/.test(cleanOwner)) {
+        errs.ownerMobile = 'Please enter a valid 10-digit owner mobile number starting with 6-9.';
+      }
     }
 
     if (Object.keys(errs).length > 0) {
       setHospitalErrors(errs);
+      toast.error(Object.values(errs)[0]);
       return;
     }
     setHospitalErrors({});
@@ -396,10 +436,10 @@ const SuperAdminDashboard = () => {
     if (hospitalForm.geoEnabled) {
       const latNum = parseFloat(hospitalForm.geoLat);
       const lngNum = parseFloat(hospitalForm.geoLng);
-      const radNum = parseInt(hospitalForm.geoRadius);
+      const radNum = parseInt(hospitalForm.geoRadius, 10);
 
       if (!hospitalForm.geoLat || isNaN(latNum) || latNum < -90 || latNum > 90 || !hospitalForm.geoLng || isNaN(lngNum) || lngNum < -180 || lngNum > 180) {
-        toast.error('Please capture or enter the hospital location before enabling geofence.');
+        toast.error('Please capture or enter valid hospital location coordinates before enabling geofence.');
         return;
       }
       if (isNaN(radNum) || radNum <= 0) {
@@ -408,14 +448,17 @@ const SuperAdminDashboard = () => {
       }
     }
 
+    if (loading) return;
     setLoading(true);
     try {
+      const sanitizedContact = (hospitalForm.contactNumber || '').trim().replace(/^(\+91|91)/, '');
+      const sanitizedOwner = (hospitalForm.ownerMobile || '').trim().replace(/^(\+91|91)/, '') || undefined;
       const payload = {
-        name: hospitalForm.name,
-        code: hospitalForm.code,
+        name: hospitalForm.name.trim(),
+        code: hospitalForm.code.trim().toUpperCase(),
         contactCountryCode: hospitalForm.contactCountryCode || '+91',
-        contactNumber: hospitalForm.contactNumber,
-        email: hospitalForm.email,
+        contactNumber: sanitizedContact,
+        email: hospitalForm.email.trim(),
         address: {
           street: hospitalForm.street,
           city: hospitalForm.city,
@@ -428,29 +471,41 @@ const SuperAdminDashboard = () => {
         gstNumber: hospitalForm.gstNumber,
         ownerName: hospitalForm.ownerName,
         ownerCountryCode: hospitalForm.ownerCountryCode || '+91',
-        ownerMobile: hospitalForm.ownerMobile,
+        ownerMobile: sanitizedOwner,
         logo: hospitalForm.logo,
         opdOperationMode: hospitalForm.opdOperationMode || 'FULL_DIGITAL',
         planName: hospitalForm.subscriptionPlan || ((hospitalForm.opdOperationMode === 'TOKEN_ONLY') ? 'Plan 1: OPD Token Generation & Queue Suite' : 'Plan 2: Complete Digital OPD Suite')
       };
 
       let res;
+      let hospId;
       if (selectedHospital) {
         res = await api.put(`/admin/hospitals/${selectedHospital._id}`, payload);
+        hospId = selectedHospital._id;
         toast.success('Hospital records updated successfully');
       } else {
         res = await api.post('/admin/hospitals', payload);
+        hospId = res?.data?.data?._id || res?.data?._id;
+        hospitalDraft.clearDraft();
         toast.success('Hospital registered successfully!');
       }
 
-      const hospId = selectedHospital ? selectedHospital._id : res?.data?.data?._id;
+      // Update Geofence settings independently so geofencing updates do not fail the overall hospital creation
       if (hospId) {
-        await api.put(`/admin/hospitals/${hospId}/geolocation`, {
-          enabled: hospitalForm.geoEnabled,
-          latitude: hospitalForm.geoLat ? parseFloat(hospitalForm.geoLat) : null,
-          longitude: hospitalForm.geoLng ? parseFloat(hospitalForm.geoLng) : null,
-          radiusMeters: parseInt(hospitalForm.geoRadius) || 300
-        });
+        try {
+          await api.put(`/admin/hospitals/${hospId}/geolocation`, {
+            enabled: Boolean(hospitalForm.geoEnabled),
+            latitude: hospitalForm.geoLat ? parseFloat(hospitalForm.geoLat) : null,
+            longitude: hospitalForm.geoLng ? parseFloat(hospitalForm.geoLng) : null,
+            radiusMeters: parseInt(hospitalForm.geoRadius, 10) || 300
+          });
+        } catch (geoErr) {
+          console.warn('Geolocation settings update notice:', geoErr);
+          const geoErrMsg = geoErr.response?.data?.message;
+          if (geoErrMsg) {
+            toast.error(`Hospital saved, but Geofence alert: ${geoErrMsg}`, { duration: 4000 });
+          }
+        }
       }
 
       setHospitalForm({ 
@@ -468,15 +523,15 @@ const SuperAdminDashboard = () => {
       setIsHospitalOpen(false);
       fetchData('hospitals');
     } catch (err) {
-      const msg = err.response?.data?.message || 'Failed to register/update hospital';
+      console.error('Hospital creation/update error:', err);
+      const msg = err.response?.data?.message || err.message || 'Failed to register/update hospital';
+      toast.error(`Error: ${msg}`, { duration: 6000 });
       if (msg.toLowerCase().includes('code')) {
-        setHospitalErrors({ code: msg });
+        setHospitalErrors(prev => ({ ...prev, code: msg }));
       } else if (msg.toLowerCase().includes('mobile') || msg.toLowerCase().includes('phone')) {
-        setHospitalErrors({ contactNumber: msg });
+        setHospitalErrors(prev => ({ ...prev, contactNumber: msg, ownerMobile: msg }));
       } else if (msg.toLowerCase().includes('email')) {
-        setHospitalErrors({ email: msg });
-      } else {
-        toast.error(msg);
+        setHospitalErrors(prev => ({ ...prev, email: msg }));
       }
     } finally {
       setLoading(false);
@@ -487,10 +542,10 @@ const SuperAdminDashboard = () => {
     const geo = hosp.geolocationSettings || {};
     setSelectedHospital(hosp);
     setGeoDetecting(false);
-    setGeoSuccess(false);
+    setGeoSuccess(geo.enabled === true && geo.latitude != null);
     setGeoAccuracy(null);
-    setGeoStatusMsg(null);
-    setGeoStatusType(null);
+    setGeoStatusMsg(geo.enabled === true && geo.latitude != null ? '✓ Existing hospital location configured' : null);
+    setGeoStatusType(geo.enabled === true && geo.latitude != null ? 'success' : null);
     setHospitalForm({
       name: hosp.name,
       code: hosp.code || '',
@@ -517,6 +572,43 @@ const SuperAdminDashboard = () => {
       geoRadius: geo.radiusMeters || 300
     });
     setIsHospitalOpen(true);
+  };
+
+  const handleOpenAddHospital = () => {
+    setSelectedHospital(null);
+    setHospitalErrors({});
+    const restored = hospitalDraft.restoreDraft();
+    if (!restored) {
+      setHospitalForm({ 
+        name: '', code: '', contactCountryCode: '+91', contactNumber: '', email: '', street: '', city: '', state: '', zip: '', country: 'India',
+        hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerCountryCode: '+91', ownerMobile: '', logo: '', subscriptionPlan: '', opdOperationMode: 'FULL_DIGITAL',
+        geoEnabled: false, geoLat: '', geoLng: '', geoRadius: 300
+      });
+      setGeoDetecting(false);
+      setGeoSuccess(false);
+      setGeoAccuracy(null);
+      setGeoStatusMsg(null);
+      setGeoStatusType(null);
+    }
+    setIsHospitalOpen(true);
+  };
+
+  const handleOpenAddPlan = () => {
+    setSelectedPlan(null);
+    const restored = planDraft.restoreDraft();
+    if (!restored) {
+      setPlanForm({ name: '', code: '', description: '', price: '', billingCycle: 'Monthly', features: '' });
+    }
+    setIsPlanOpen(true);
+  };
+
+  const handleOpenAddUser = () => {
+    setSelectedUser(null);
+    const restored = userDraft.restoreDraft();
+    if (!restored) {
+      setUserForm({ name: '', countryCode: '+91', mobileNumber: '', pin: '', roleId: '', hospitalId: '', branchId: '', departmentId: '', hospitalCode: '' });
+    }
+    setIsUserOpen(true);
   };
 
   const handleDeleteHospital = async (hosp) => {
@@ -656,6 +748,7 @@ const SuperAdminDashboard = () => {
         hospitalCode: hosp ? hosp.code : undefined
       };
       await api.post('/auth/create-user', payload);
+      userDraft.clearDraft();
       toast.success('Employee created successfully (Employee Code Generated)');
       setUserForm({ name: '', countryCode: '+91', mobileNumber: '', pin: '', roleId: '', hospitalId: '', branchId: '', departmentId: '', hospitalCode: '' });
       setIsUserOpen(false);
@@ -710,24 +803,14 @@ const SuperAdminDashboard = () => {
             <h2 className="text-lg font-bold text-slate-800 tracking-wide uppercase">Enterprise Suite Overview</h2>
             <div className="flex gap-2">
               <Button 
-                onClick={() => {
-                  setSelectedHospital(null);
-                  setHospitalForm({ 
-                    name: '', contactNumber: '', email: '', street: '', city: '', state: '', zip: '', country: 'India',
-                    hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerMobile: '', logo: '', subscriptionPlan: ''
-                  });
-                  setIsHospitalOpen(true);
-                }} 
+                onClick={handleOpenAddHospital} 
                 variant="secondary" 
                 icon={Plus}
               >
                 Add Hospital
               </Button>
               <Button 
-                onClick={() => {
-                  setUserForm({ name: '', mobileNumber: '', pin: '', roleId: '', hospitalId: '', branchId: '', departmentId: '', hospitalCode: '' });
-                  setIsUserOpen(true);
-                }} 
+                onClick={handleOpenAddUser} 
                 variant="primary" 
                 icon={Plus}
               >
@@ -829,14 +912,7 @@ const SuperAdminDashboard = () => {
             <div className="flex items-center gap-2.5">
               <Button onClick={handleExportHospitals} variant="secondary">Export CSV</Button>
               <Button 
-                onClick={() => {
-                  setSelectedHospital(null);
-                  setHospitalForm({ 
-                    name: '', contactNumber: '', email: '', street: '', city: '', state: '', zip: '', country: 'India',
-                    hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerMobile: '', logo: '', subscriptionPlan: ''
-                  });
-                  setIsHospitalOpen(true);
-                }} 
+                onClick={handleOpenAddHospital} 
                 variant="primary" 
                 icon={Plus}
                 className="bg-[#2F63F2] hover:bg-blue-700 font-bold"
@@ -952,11 +1028,7 @@ const SuperAdminDashboard = () => {
           subtitle="Manage SaaS subscription offers, pricing, and capabilities."
           footer={
             <Button 
-              onClick={() => {
-                setSelectedPlan(null);
-                setPlanForm({ name: '', code: '', description: '', price: '', billingCycle: 'Monthly', features: '' });
-                setIsPlanOpen(true);
-              }} 
+              onClick={handleOpenAddPlan} 
               variant="primary" 
               icon={Plus}
             >
@@ -1058,18 +1130,19 @@ const SuperAdminDashboard = () => {
                     {Object.entries(currentModules).map(([modName, enabled]) => (
                       <label 
                         key={modName} 
-                        className={`p-2.5 border rounded-xl flex items-center justify-between cursor-pointer select-none transition-all ${
+                        className={`p-2.5 border rounded-xl flex items-center justify-between gap-2 cursor-pointer select-none transition-all ${
                           enabled 
                             ? 'bg-blue-50/50 border-blue-200 text-blue-800' 
                             : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-100'
                         }`}
+                        title={modName}
                       >
-                        <span className="text-[11px] font-semibold tracking-wide uppercase">{modName === 'Branches' ? 'Multi-Branch' : modName}</span>
+                        <span className="text-[11px] font-semibold tracking-wide uppercase truncate block flex-1">{modName === 'Branches' ? 'Multi-Branch' : modName}</span>
                         <input 
                           type="checkbox" 
                           checked={enabled} 
                           onChange={() => handleToggleFeatureModule(hosp, modName, enabled)}
-                          className="w-3.5 h-3.5 accent-[#2F63F2] cursor-pointer"
+                          className="w-3.5 h-3.5 accent-[#2F63F2] cursor-pointer shrink-0"
                         />
                       </label>
                     ))}
@@ -1089,10 +1162,7 @@ const SuperAdminDashboard = () => {
           subtitle="Administrator personnel managing active tenant portals."
           footer={
             <Button 
-              onClick={() => {
-                setUserForm({ name: '', countryCode: '+91', mobileNumber: '', pin: '', roleId: '', hospitalId: '', branchId: '', departmentId: '', hospitalCode: '' });
-                setIsUserOpen(true);
-              }} 
+              onClick={handleOpenAddUser} 
               variant="primary" 
               icon={Plus}
             >
@@ -1261,7 +1331,7 @@ const SuperAdminDashboard = () => {
                 label="Hospital Name" 
                 value={hospitalForm.name} 
                 onChange={(e) => {
-                  setHospitalForm({ ...hospitalForm, name: e.target.value });
+                  setHospitalForm({ ...hospitalForm, name: capitalizeWords(e.target.value) });
                   if (hospitalErrors.name) setHospitalErrors(prev => ({ ...prev, name: undefined }));
                 }} 
                 required 
@@ -1272,7 +1342,7 @@ const SuperAdminDashboard = () => {
                 placeholder="VZH" 
                 value={hospitalForm.code} 
                 onChange={(e) => {
-                  setHospitalForm({ ...hospitalForm, code: e.target.value });
+                  setHospitalForm({ ...hospitalForm, code: e.target.value.toUpperCase() });
                   if (hospitalErrors.code) setHospitalErrors(prev => ({ ...prev, code: undefined }));
                 }} 
                 required 
@@ -1290,8 +1360,8 @@ const SuperAdminDashboard = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input label="GST Number" placeholder="e.g. 22AAAAA0000A1Z5" value={hospitalForm.gstNumber} onChange={(e) => setHospitalForm({ ...hospitalForm, gstNumber: e.target.value })} />
-              <Input label="Registration Number" placeholder="e.g. REG/1029/HOSP" value={hospitalForm.registrationNumber} onChange={(e) => setHospitalForm({ ...hospitalForm, registrationNumber: e.target.value })} />
+              <Input label="GST Number" placeholder="e.g. 22AAAAA0000A1Z5" value={hospitalForm.gstNumber} onChange={(e) => setHospitalForm({ ...hospitalForm, gstNumber: e.target.value.toUpperCase() })} />
+              <Input label="Registration Number" placeholder="e.g. REG/1029/HOSP" value={hospitalForm.registrationNumber} onChange={(e) => setHospitalForm({ ...hospitalForm, registrationNumber: e.target.value.toUpperCase() })} />
             </div>
 
             <Input label="Hospital Logo URL / Brand Asset" placeholder="https://example.com/logo.png" value={hospitalForm.logo} onChange={(e) => setHospitalForm({ ...hospitalForm, logo: e.target.value })} />
@@ -1321,7 +1391,8 @@ const SuperAdminDashboard = () => {
                 onCountryChange={(cc) => setHospitalForm({ ...hospitalForm, contactCountryCode: cc })}
                 numberValue={hospitalForm.contactNumber}
                 onNumberChange={(val) => {
-                  setHospitalForm({ ...hospitalForm, contactNumber: val });
+                  const clean = val.replace(/\D/g, '').slice(0, 10);
+                  setHospitalForm(prev => ({ ...prev, contactNumber: clean }));
                   if (hospitalErrors.contactNumber) setHospitalErrors(prev => ({ ...prev, contactNumber: undefined }));
                 }}
                 required 
@@ -1341,7 +1412,7 @@ const SuperAdminDashboard = () => {
                 label="Doctor Admin / Owner Full Name" 
                 placeholder="e.g. Dr. Rajesh Kumar" 
                 value={hospitalForm.ownerName} 
-                onChange={(e) => setHospitalForm({ ...hospitalForm, ownerName: e.target.value })} 
+                onChange={(e) => setHospitalForm({ ...hospitalForm, ownerName: capitalizeWords(e.target.value) })} 
                 helperText="This name will be assigned as the display name for the Doctor Admin account upon activation."
               />
               <MobileNumber 
@@ -1350,8 +1421,12 @@ const SuperAdminDashboard = () => {
                 countryValue={hospitalForm.ownerCountryCode || '+91'}
                 onCountryChange={(cc) => setHospitalForm({ ...hospitalForm, ownerCountryCode: cc })}
                 numberValue={hospitalForm.ownerMobile}
-                onNumberChange={(val) => setHospitalForm({ ...hospitalForm, ownerMobile: val })}
-                error={hospitalOwnerMobileVal.error}
+                onNumberChange={(val) => {
+                  const clean = val.replace(/\D/g, '').slice(0, 10);
+                  setHospitalForm(prev => ({ ...prev, ownerMobile: clean }));
+                  if (hospitalErrors.ownerMobile) setHospitalErrors(prev => ({ ...prev, ownerMobile: undefined }));
+                }}
+                error={hospitalErrors.ownerMobile || hospitalOwnerMobileVal.error}
               />
             </div>
           </div>
@@ -1362,11 +1437,20 @@ const SuperAdminDashboard = () => {
               <GitBranch className="w-4 h-4" />
               Hospital Address
             </h4>
-            <Input label="Street Name" value={hospitalForm.street} onChange={(e) => setHospitalForm({ ...hospitalForm, street: e.target.value })} />
+            <Input label="Street Name" value={hospitalForm.street} onChange={(e) => setHospitalForm({ ...hospitalForm, street: capitalizeWords(e.target.value) })} />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Input label="City" value={hospitalForm.city} onChange={(e) => setHospitalForm({ ...hospitalForm, city: e.target.value })} />
-              <Input label="State" value={hospitalForm.state} onChange={(e) => setHospitalForm({ ...hospitalForm, state: e.target.value })} />
-              <Input label="Zip Pincode" value={hospitalForm.zip} onChange={(e) => setHospitalForm({ ...hospitalForm, zip: e.target.value })} />
+              <Input label="City" value={hospitalForm.city} onChange={(e) => setHospitalForm({ ...hospitalForm, city: capitalizeWords(e.target.value) })} />
+              <Input label="State" value={hospitalForm.state} onChange={(e) => setHospitalForm({ ...hospitalForm, state: capitalizeWords(e.target.value) })} />
+              <Input 
+                label="Zip Pincode" 
+                value={hospitalForm.zip} 
+                onChange={(e) => {
+                  const val = e.target.value.replace(/\D/g, '');
+                  if (val.length <= 6) {
+                    setHospitalForm({ ...hospitalForm, zip: val });
+                  }
+                }} 
+              />
             </div>
           </div>
 
@@ -1571,8 +1655,8 @@ const SuperAdminDashboard = () => {
         title={selectedPlan ? `Edit Plan: ${selectedPlan.name}` : "Create Subscription Plan"}
       >
         <form onSubmit={handleCreateOrUpdatePlan} className="space-y-4 text-left">
-          <Input label="Plan Name" placeholder="e.g. Premium Plan" value={planForm.name} onChange={(e) => setPlanForm({ ...planForm, name: e.target.value })} required />
-          <Input label="Plan Code" placeholder="e.g. PREMIUM" value={planForm.code} onChange={(e) => setPlanForm({ ...planForm, code: e.target.value })} required disabled={!!selectedPlan} />
+          <Input label="Plan Name" placeholder="e.g. Premium Plan" value={planForm.name} onChange={(e) => setPlanForm({ ...planForm, name: capitalizeWords(e.target.value.replace(/[^a-zA-Z\s]/g, '')) })} required />
+          <Input label="Plan Code" placeholder="e.g. PREMIUM" value={planForm.code} onChange={(e) => setPlanForm({ ...planForm, code: e.target.value })} required />
           <Input label="Plan Price (₹)" type="number" placeholder="e.g. 5000" value={planForm.price} onChange={(e) => setPlanForm({ ...planForm, price: e.target.value })} required />
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Billing Cycle</label>
@@ -1581,8 +1665,8 @@ const SuperAdminDashboard = () => {
               <option value="Yearly">Yearly</option>
             </select>
           </div>
-          <Input label="Plan Description" placeholder="Describe plan benefits..." value={planForm.description} onChange={(e) => setPlanForm({ ...planForm, description: e.target.value })} />
-          <Input label="Plan Features (comma-separated)" placeholder="OPD Management, Billing, Ward Tracking" value={planForm.features} onChange={(e) => setPlanForm({ ...planForm, features: e.target.value })} />
+          <Input label="Plan Description" placeholder="Describe plan benefits..." value={planForm.description} onChange={(e) => setPlanForm({ ...planForm, description: capitalizeWords(e.target.value.replace(/[^a-zA-Z\s,.-]/g, '')) })} />
+          <Input label="Plan Features (comma-separated)" placeholder="OPD Management, Billing, Ward Tracking" value={planForm.features} onChange={(e) => setPlanForm({ ...planForm, features: capitalizeWords(e.target.value.replace(/[^a-zA-Z\s,]/g, '')) })} />
           <Button type="submit" variant="primary" className="w-full" loading={loading}>
             {selectedPlan ? 'Update Plan' : 'Create Plan'}
           </Button>
@@ -1596,7 +1680,7 @@ const SuperAdminDashboard = () => {
         title="Register Hospital Administrator"
       >
         <form onSubmit={handleCreateUser} className="space-y-4 text-left">
-          <Input label="Admin Full Name" placeholder="e.g. Sumanth Patel" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} required />
+          <Input label="Admin Full Name" placeholder="e.g. Sumanth Patel" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: capitalizeWords(e.target.value.replace(/[^a-zA-Z\s]/g, '')) })} required />
           <div className="grid grid-cols-2 gap-4">
             <MobileNumber 
               label="Login Username / Mobile" 
@@ -1618,7 +1702,7 @@ const SuperAdminDashboard = () => {
 
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Tenant Hospital Allocation</label>
-            <select className="enterprise-input" value={userForm.hospitalId} onChange={(e) => setUserForm({ ...userForm, hospitalId: e.target.value, roleId: roles.find(r => r.name === 'HOSPITAL_ADMIN')?._id || '' })} required>
+            <select className="enterprise-input" value={userForm.hospitalId} onChange={(e) => setUserForm({ ...userForm, hospitalId: e.target.value, roleId: roles.find(r => r.name === 'DOCTOR_ADMIN')?._id || '' })} required>
               <option value="">Select Hospital</option>
               {hospitals.map(h => <option key={h._id} value={h._id}>{h.name} ({h.code})</option>)}
             </select>

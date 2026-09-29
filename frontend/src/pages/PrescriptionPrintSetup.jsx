@@ -9,6 +9,7 @@ import {
   Move, ZoomIn, ZoomOut, Maximize2, Settings, History, Check, Layers, ChevronDown
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import useFormDraft from '../hooks/useFormDraft';
 
 const AVAILABLE_FIELDS = [
   { section: 'HOSPITAL', fieldKey: 'hospitalName', fieldName: 'Hospital Name', defaultWidth: 80, defaultHeight: 10 },
@@ -145,6 +146,12 @@ const PrescriptionPrintSetup = () => {
     isDefault: true
   });
 
+  const { clearDraft: clearTemplateDraft } = useFormDraft(
+    `settings_print_template_${selectedTemplateId || 'default'}`,
+    activeTemplate,
+    setActiveTemplate
+  );
+
   const [selectedFieldKey, setSelectedFieldKey] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -250,6 +257,7 @@ const PrescriptionPrintSetup = () => {
         setActiveTemplate(savedData);
       }
       setSaveStatus('Saved ✓');
+      clearTemplateDraft();
       toast.success('Prescription Print Setup Configuration Saved Successfully!');
     } catch (err) {
       setSaveStatus('Error');
@@ -536,7 +544,7 @@ const PrescriptionPrintSetup = () => {
 
         <div className="flex items-center gap-3">
           {/* Save Status Indicator */}
-          <span className={`text-xs font-bold px-3 py-1 rounded-full border transition-all ${
+          <span className={`inline-flex items-center justify-center text-center whitespace-nowrap text-xs font-bold px-4 py-1.5 rounded-full border transition-all ${
             saveStatus === 'Saved ✓' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
             saveStatus === 'Saving...' ? 'bg-blue-50 text-blue-700 border-blue-200 animate-pulse' :
             saveStatus === 'Unsaved Changes' ? 'bg-amber-50 text-amber-800 border-amber-300' :

@@ -46,4 +46,14 @@ router.put('/announcement-settings', (req, res) => {
   });
 });
 
+// 5. Trigger Remote Voice Call
+router.post('/events/trigger-call', (req, res) => {
+  const payload = req.body;
+  WorkflowEventHub.publish('TriggerVoiceCall', payload);
+  res.json({
+    success: true,
+    message: 'Voice call triggered successfully'
+  });
+});
+
 module.exports = router;

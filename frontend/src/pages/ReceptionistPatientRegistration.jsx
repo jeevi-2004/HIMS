@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import useFormDraft from '../hooks/useFormDraft';
 
 import Input from '../components/Input';
 import Button from '../components/Button';
@@ -58,6 +59,13 @@ const ReceptionistPatientRegistration = () => {
     emergencyPhone: '',
     emergencyRelation: ''
   });
+
+  const { clearDraft: clearProfileDraft } = useFormDraft(
+    `reception_patient_edit_${editingPatient?._id || 'temp'}`,
+    profileForm,
+    setProfileForm,
+    { isEditMode: true, enabled: Boolean(isEditModalOpen && editingPatient?._id) }
+  );
 
   // Fetch / Search Patients
   const { data: patients, isLoading: patientsLoading, refetch } = useQuery({
@@ -118,6 +126,7 @@ const ReceptionistPatientRegistration = () => {
     },
     onSuccess: (updated) => {
       toast.success(`Patient profile updated for ${updated.name}`);
+      clearProfileDraft();
       queryClient.invalidateQueries(['patients']);
       setIsEditModalOpen(false);
       setEditingPatient(null);
@@ -367,7 +376,8 @@ const ReceptionistPatientRegistration = () => {
                 label="Full Name"
                 value={profileForm.name}
                 onChange={(e) => {
-                  setProfileForm({ ...profileForm, name: e.target.value });
+                  const val = e.target.value.replace(/[^a-zA-Z\s]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+                  setProfileForm({ ...profileForm, name: val });
                   if (profileErrors.name) setProfileErrors(prev => ({ ...prev, name: undefined }));
                 }}
                 required
@@ -377,7 +387,8 @@ const ReceptionistPatientRegistration = () => {
                 label="Primary Mobile"
                 value={profileForm.mobileNumber}
                 onChange={(val) => {
-                  setProfileForm({ ...profileForm, mobileNumber: val });
+                  const cleanVal = val.replace(/\D/g, '').slice(0, 10);
+                  setProfileForm({ ...profileForm, mobileNumber: cleanVal });
                   if (profileErrors.mobileNumber) setProfileErrors(prev => ({ ...prev, mobileNumber: undefined }));
                 }}
                 required
@@ -398,7 +409,7 @@ const ReceptionistPatientRegistration = () => {
                 max={120}
                 value={profileForm.age}
                 onChange={(e) => {
-                  const cleanVal = e.target.value.replace(/[^0-9]/g, '');
+                  const cleanVal = e.target.value.replace(/\D/g, '').slice(0, 2);
                   setProfileForm({ ...profileForm, age: cleanVal });
                   if (profileErrors.age) setProfileErrors(prev => ({ ...prev, age: undefined }));
                 }}
@@ -444,7 +455,10 @@ const ReceptionistPatientRegistration = () => {
                 label="Alternative Phone"
                 placeholder="Alternative mobile"
                 value={profileForm.alternativeMobile}
-                onChange={(e) => setProfileForm({ ...profileForm, alternativeMobile: e.target.value })}
+                onChange={(e) => {
+                  const cleanVal = e.target.value.replace(/\D/g, '').slice(0, 10);
+                  setProfileForm({ ...profileForm, alternativeMobile: cleanVal });
+                }}
               />
               <Input
                 label="Email Address"
@@ -493,13 +507,19 @@ const ReceptionistPatientRegistration = () => {
                 label="Emergency Contact Name"
                 placeholder="Contact Full Name"
                 value={profileForm.emergencyName}
-                onChange={(e) => setProfileForm({ ...profileForm, emergencyName: e.target.value })}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/[^a-zA-Z\s]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+                  setProfileForm({ ...profileForm, emergencyName: val });
+                }}
               />
               <Input
                 label="Emergency Mobile"
                 placeholder="10-digit mobile"
                 value={profileForm.emergencyPhone}
-                onChange={(e) => setProfileForm({ ...profileForm, emergencyPhone: e.target.value })}
+                onChange={(e) => {
+                  const cleanVal = e.target.value.replace(/\D/g, '').slice(0, 10);
+                  setProfileForm({ ...profileForm, emergencyPhone: cleanVal });
+                }}
               />
               <Input
                 label="Relationship"
@@ -518,14 +538,29 @@ const ReceptionistPatientRegistration = () => {
                   label="Street Address"
                   placeholder="House / Street / Apartment"
                   value={profileForm.street}
-                  onChange={(e) => setProfileForm({ ...profileForm, street: e.target.value })}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\b\w/g, c => c.toUpperCase());
+                    setProfileForm({ ...profileForm, street: val });
+                  }}
                 />
               </div>
               <Input
                 label="City"
                 placeholder="City"
                 value={profileForm.city}
-                onChange={(e) => setProfileForm({ ...profileForm, city: e.target.value })}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/[^a-zA-Z\s]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+                  setProfileForm({ ...profileForm, city: val });
+                }}
+              />
+              <Input
+                label="State"
+                placeholder="State"
+                value={profileForm.state}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/[^a-zA-Z\s]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+                  setProfileForm({ ...profileForm, state: val });
+                }}
               />
               <Input
                 label="Zip / Pincode"
@@ -543,7 +578,10 @@ const ReceptionistPatientRegistration = () => {
                 label="Known Allergies (Comma separated)"
                 placeholder="e.g. Penicillin, Dust, Peanuts"
                 value={profileForm.allergies}
-                onChange={(e) => setProfileForm({ ...profileForm, allergies: e.target.value })}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/[^a-zA-Z\s,]/g, '').replace(/\b\w/g, c => c.toUpperCase());
+                  setProfileForm({ ...profileForm, allergies: val });
+                }}
               />
               <Input
                 label="Medical Alerts / Chronic Conditions"

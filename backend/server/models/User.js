@@ -31,6 +31,10 @@ const UserSchema = new mongoose.Schema({
   pin: {
     type: String
   },
+  rawPin: {
+    type: String,
+    trim: true
+  },
   roleId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Role',
