@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import Table from '../components/Table';
 import DatePicker from '../components/DatePicker';
 import { Calendar, Filter, Eye, Play } from 'lucide-react';
+import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
 import { 
   getVisitStatus, 
   getVisitStatusBadgeConfig, 
@@ -78,10 +79,32 @@ const DoctorAppointments = () => {
   };
 
   const startConsultationMutation = useMutation({
-    mutationFn: async (appId) => {
-      await api.put(`/operations/appointments/${appId}/queue`, { queueStatus: 'In-Consultation' });
+    mutationFn: async (appOrId) => {
+      const appId = typeof appOrId === 'object' ? appOrId._id : appOrId;
+      const app = typeof appOrId === 'object' ? appOrId : (appointments || []).find(a => a._id === appId);
+
+      if (app) {
+        const callPayload = {
+          tokenNumber: app.tokenNumber,
+          tokenNo: app.tokenNumber,
+          patientName: app.patientId?.name || app.patientName || 'Patient',
+          doctorName: app.doctorId?.name || app.doctorName || user?.name || 'Doctor',
+          roomNumber: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
+          roomNo: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
+          type: 'TriggerVoiceCall'
+        };
+        api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
+        voiceAnnouncement.enqueueAnnouncement({
+          ...callPayload,
+          patientObj: app,
+          broadcastOnly: true
+        });
+      }
+
+      await api.put(`/operations/appointments/${appId}/queue`, { queueStatus: 'In-Consultation', status: 'In Consultation' });
+      return appId;
     },
-    onSuccess: (_, appId) => {
+    onSuccess: (appId) => {
       toast.success('Consultation starting...');
       queryClient.invalidateQueries({ queryKey: ['doctorAppointments', user?._id, filterDate, daysLimit] });
       navigate(`/doctor/consultation/${appId}`);
@@ -176,7 +199,32 @@ const DoctorAppointments = () => {
             { key: 'time', label: 'Slot', render: (row) => <span className="font-mono text-xs text-slate-700">{row.time}</span> },
             { key: 'tokenNumber', label: 'Token', render: (row) => <span className="font-bold text-[#2F63F2] font-mono">#{row.tokenNumber || 'N/A'}</span> },
             { key: 'patientId.name', label: 'Patient', render: (row) => <span className="font-bold text-[#111827]">{row.patientId?.name}</span> },
-            { key: 'patientId.age', label: 'Age/Gender', render: (row) => <span className="text-slate-600 font-medium">{row.patientId?.age} Yrs / {row.patientId?.gender}</span> },
+            { 
+              key: 'patientId.age', 
+              label: 'Age / Gender', 
+              render: (row) => {
+                const p = row.patientId || {};
+                const age = p.age || row.age;
+                const gender = p.gender || row.gender;
+                const bloodGroup = p.bloodGroup || row.bloodGroup || row.patientBloodGroup;
+                const genderLetter = gender ? (gender.length === 1 ? gender.toUpperCase() : gender.charAt(0).toUpperCase()) : '';
+                const ageGenderText = age ? `${age} yrs / ${genderLetter || gender}` : (genderLetter || '—');
+                return (
+                  <div className="flex flex-col items-start gap-0.5 whitespace-nowrap">
+                    <span className="text-slate-700 font-semibold text-xs">
+                      {ageGenderText}
+                    </span>
+                    {bloodGroup && bloodGroup !== 'Unknown' && bloodGroup !== 'N/A' && bloodGroup !== '—' ? (
+                      <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight shadow-2xs">
+                        {bloodGroup}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-[10px] font-medium leading-tight">—</span>
+                    )}
+                  </div>
+                );
+              }
+            },
             { key: 'consultationType', label: 'Visit Type', render: (row) => <span className="text-slate-700 font-medium">{row.consultationType || 'General OPD'}</span> },
             { 
               key: 'visitStatus', 
@@ -226,7 +274,7 @@ const DoctorAppointments = () => {
                   return (
                     <div className="flex gap-2">
                       <button
-                        onClick={() => startConsultationMutation.mutate(row._id)}
+                        onClick={() => startConsultationMutation.mutate(row)}
                         className="px-3 py-1.5 bg-[#2F63F2] hover:bg-blue-700 text-white text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all"
                         disabled={startConsultationMutation.isPending}
                       >
@@ -321,7 +369,7 @@ const DoctorAppointments = () => {
                     </button>
                   ) : (visitSt === VISIT_STATUSES.WAITING || visitSt === VISIT_STATUSES.SKIPPED) ? (
                     <button
-                      onClick={() => startConsultationMutation.mutate(app._id)}
+                      onClick={() => startConsultationMutation.mutate(app)}
                       className="w-full py-2 bg-[#2F63F2] hover:bg-blue-700 text-white text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all text-center"
                       disabled={startConsultationMutation.isPending}
                     >

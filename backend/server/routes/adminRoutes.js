@@ -115,11 +115,11 @@ router.delete('/users/:id', authorize(...ROLE_GROUPS.ADMIN), deleteUser);
 router.put('/users/:id/status', authorize(...ROLE_GROUPS.ADMIN), updateUserStatus);
 router.put('/users/:id/doctor-profile', authorize(USER_ROLES.DOCTOR_ADMIN), updateDoctorProfile);
 
-// Healthcare Services (Doctor Admin only)
-router.get('/services', authorize(USER_ROLES.DOCTOR_ADMIN), getServices);
-router.post('/services', authorize(USER_ROLES.DOCTOR_ADMIN), createService);
-router.put('/services/:id', authorize(USER_ROLES.DOCTOR_ADMIN), updateService);
-router.delete('/services/:id', authorize(USER_ROLES.DOCTOR_ADMIN), deleteService);
+// Healthcare Services (Doctor Admin, Doctors, and Receptionist read-access; Admins manage)
+router.get('/services', authorize(USER_ROLES.DOCTOR_ADMIN, USER_ROLES.DOCTOR, USER_ROLES.RECEPTIONIST, ...ROLE_GROUPS.ADMIN), getServices);
+router.post('/services', authorize(...ROLE_GROUPS.ADMIN), createService);
+router.put('/services/:id', authorize(...ROLE_GROUPS.ADMIN), updateService);
+router.delete('/services/:id', authorize(...ROLE_GROUPS.ADMIN), deleteService);
 
 // Role & Permission Metadata
 router.get('/roles', authorize(USER_ROLES.SUPER_ADMIN, ...ROLE_GROUPS.ALL_STAFF), getRoles);

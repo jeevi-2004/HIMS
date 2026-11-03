@@ -59,11 +59,11 @@ const DoctorConsultationSidebar = ({ currentAppId, doctorId, onSelectPatient, on
 
     // Sort waiting: Emergency first, then token order
     waiting.sort((a, b) => {
-      const aIsEmg = a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || (a.consultationType || '').toLowerCase() === 'emergency' || (a.tokenNumber || '').startsWith('EMG');
-      const bIsEmg = b.isEmergency || b.priorityLevel === 'EMERGENCY' || b.priority === 'EMERGENCY' || (b.consultationType || '').toLowerCase() === 'emergency' || (b.tokenNumber || '').startsWith('EMG');
+      const aIsEmg = a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || (a.consultationType || '').toLowerCase() === 'emergency' || String(a.tokenNumber || '').startsWith('EMG');
+      const bIsEmg = b.isEmergency || b.priorityLevel === 'EMERGENCY' || b.priority === 'EMERGENCY' || (b.consultationType || '').toLowerCase() === 'emergency' || String(b.tokenNumber || '').startsWith('EMG');
       if (aIsEmg && !bIsEmg) return -1;
       if (!aIsEmg && bIsEmg) return 1;
-      return (a.tokenNumber || '').localeCompare(b.tokenNumber || '', undefined, { numeric: true });
+      return String(a.tokenNumber || '').localeCompare(String(b.tokenNumber || ''), undefined, { numeric: true });
     });
 
     return { waitingQueue: waiting, consultingQueue: consulting, completedQueue: completed };
@@ -167,9 +167,16 @@ const DoctorConsultationSidebar = ({ currentAppId, doctorId, onSelectPatient, on
                 <h4 className="text-xs font-black text-slate-900 truncate">
                   {app.patientId?.name || 'Unknown Patient'}
                 </h4>
-                <span className="text-[11px] font-semibold text-slate-500 block">
-                  {app.patientId?.age ? `${app.patientId.age} Years` : 'N/A'} • {app.patientId?.gender || 'N/A'}
-                </span>
+                <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                  <span className="text-[11px] font-semibold text-slate-600">
+                    {app.patientId?.age ? `${app.patientId.age} yrs` : '—'} / {app.patientId?.gender ? (app.patientId.gender.length === 1 ? app.patientId.gender.toUpperCase() : app.patientId.gender.charAt(0).toUpperCase()) : '—'}
+                  </span>
+                  {app.patientId?.bloodGroup && app.patientId.bloodGroup !== 'Unknown' && app.patientId.bloodGroup !== 'N/A' && (
+                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[9px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight shadow-2xs">
+                      {app.patientId.bloodGroup}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-purple-100/80">
@@ -204,7 +211,7 @@ const DoctorConsultationSidebar = ({ currentAppId, doctorId, onSelectPatient, on
       ) : (
         filteredWaiting.map((app) => {
           const isCurrent = app._id === currentAppId;
-          const isEmg = app.isEmergency || app.priorityLevel === 'EMERGENCY' || app.priority === 'EMERGENCY' || (app.consultationType || '').toLowerCase() === 'emergency' || (app.tokenNumber || '').startsWith('EMG');
+          const isEmg = app.isEmergency || app.priorityLevel === 'EMERGENCY' || app.priority === 'EMERGENCY' || (app.consultationType || '').toLowerCase() === 'emergency' || String(app.tokenNumber || '').startsWith('EMG');
           const initials = getInitials(app.patientId?.name);
 
           return (
@@ -245,9 +252,16 @@ const DoctorConsultationSidebar = ({ currentAppId, doctorId, onSelectPatient, on
                 <h4 className="text-xs font-bold text-slate-900 truncate">
                   {app.patientId?.name || 'Unknown Patient'}
                 </h4>
-                <span className="text-[11px] font-medium text-slate-500 block">
-                  {app.patientId?.age ? `${app.patientId.age}Y` : 'N/A'} • {app.patientId?.gender || 'N/A'}
-                </span>
+                <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                  <span className="text-[11px] font-semibold text-slate-600">
+                    {app.patientId?.age ? `${app.patientId.age} yrs` : '—'} / {app.patientId?.gender ? (app.patientId.gender.length === 1 ? app.patientId.gender.toUpperCase() : app.patientId.gender.charAt(0).toUpperCase()) : '—'}
+                  </span>
+                  {app.patientId?.bloodGroup && app.patientId.bloodGroup !== 'Unknown' && app.patientId.bloodGroup !== 'N/A' && (
+                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[9px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight shadow-2xs">
+                      {app.patientId.bloodGroup}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-slate-100">
@@ -322,9 +336,16 @@ const DoctorConsultationSidebar = ({ currentAppId, doctorId, onSelectPatient, on
                   <h4 className="text-xs font-bold text-slate-900 truncate">
                     {app.patientId?.name || 'Unknown Patient'}
                   </h4>
-                  <span className="text-[11px] text-slate-500 font-medium block">
-                    {app.patientId?.age ? `${app.patientId.age}Y` : 'N/A'} • {app.patientId?.gender || 'N/A'}
-                  </span>
+                  <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                    <span className="text-[11px] font-semibold text-slate-600">
+                      {app.patientId?.age ? `${app.patientId.age} yrs` : '—'} / {app.patientId?.gender ? (app.patientId.gender.length === 1 ? app.patientId.gender.toUpperCase() : app.patientId.gender.charAt(0).toUpperCase()) : '—'}
+                    </span>
+                    {app.patientId?.bloodGroup && app.patientId.bloodGroup !== 'Unknown' && app.patientId.bloodGroup !== 'N/A' && (
+                      <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[9px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight shadow-2xs">
+                        {app.patientId.bloodGroup}
+                      </span>
+                    )}
+                  </div>
                   {(app.primaryDiagnosis || app.diagnosis) && (
                     <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50/80 px-2 py-0.5 rounded-md inline-block mt-1 truncate max-w-full">
                       🩺 {app.primaryDiagnosis || (Array.isArray(app.diagnosis) ? app.diagnosis.join(', ') : app.diagnosis)}

@@ -13,6 +13,16 @@ const ServiceSchema = new mongoose.Schema({
     trim: true,
     uppercase: true
   },
+  serviceType: {
+    type: String,
+    trim: true,
+    default: 'General'
+  },
+  category: {
+    type: String,
+    trim: true,
+    default: 'General'
+  },
   price: { 
     type: Number, 
     required: [true, 'Service price is required'],

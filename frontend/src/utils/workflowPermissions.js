@@ -84,7 +84,7 @@ export const createWorkflowEngine = (billingSettings = {}, currentUserRole = '')
      */
     canStartConsultation(patient) {
       if (!patient) return false;
-      const isEmg = patient.isEmergency || patient.priorityLevel === 'EMERGENCY' || patient.priority === 'EMERGENCY' || (patient.consultationType || '').toLowerCase() === 'emergency' || (patient.tokenNumber || '').startsWith('EMG');
+      const isEmg = patient.isEmergency || patient.priorityLevel === 'EMERGENCY' || patient.priority === 'EMERGENCY' || (patient.consultationType || '').toLowerCase() === 'emergency' || String(patient.tokenNumber || '').startsWith('EMG');
       if (isEmg) return true;
 
       const pol = getPolicy(patient);
@@ -99,7 +99,7 @@ export const createWorkflowEngine = (billingSettings = {}, currentUserRole = '')
 
     getStartConsultationLockReason(patient) {
       if (!patient) return null;
-      const isEmg = patient.isEmergency || patient.priorityLevel === 'EMERGENCY' || patient.priority === 'EMERGENCY' || (patient.consultationType || '').toLowerCase() === 'emergency' || (patient.tokenNumber || '').startsWith('EMG');
+      const isEmg = patient.isEmergency || patient.priorityLevel === 'EMERGENCY' || patient.priority === 'EMERGENCY' || (patient.consultationType || '').toLowerCase() === 'emergency' || String(patient.tokenNumber || '').startsWith('EMG');
       if (isEmg) return null;
       if (isPaidOrExempt(patient)) return null;
 

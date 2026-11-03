@@ -38,6 +38,8 @@ export const WorkspaceProvider = ({ children }) => {
         } else {
           setWorkspaceModeState('hospital_management');
         }
+      } else if (user.role === 'ADMIN') {
+        setWorkspaceModeState('hospital_management');
       }
     }
   }, [user]);
@@ -45,6 +47,9 @@ export const WorkspaceProvider = ({ children }) => {
   const setWorkspaceMode = (mode) => {
     if (user?.role === 'DOCTOR' && mode !== 'clinical_consultation') {
       return; // Restrict standard doctors to clinical mode only
+    }
+    if (user?.role === 'ADMIN' && mode !== 'hospital_management') {
+      return; // Restrict standard admins to hospital management mode only
     }
     setWorkspaceModeState(mode);
     localStorage.setItem('workspaceMode', mode);

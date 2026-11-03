@@ -53,10 +53,25 @@ const AppointmentSchema = new mongoose.Schema({
     type: Number,
     default: 500
   },
+  additionalCharges: {
+    type: Number,
+    default: 0
+  },
+  additionalChargeItems: [{
+    name: String,
+    amount: Number
+  }],
   paymentMethod: {
     type: String,
     enum: ['Cash', 'UPI', 'Card', 'Credit'],
     default: 'Cash'
+  },
+  transactionId: {
+    type: String,
+    trim: true
+  },
+  paymentDetails: {
+    type: mongoose.Schema.Types.Mixed
   },
   appointmentSlot: {
     startTime: String,
@@ -75,6 +90,24 @@ const AppointmentSchema = new mongoose.Schema({
   chiefComplaint: {
     type: String
   },
+  diagnosis: {
+    type: String,
+    trim: true
+  },
+  diagnoses: [{
+    type: String,
+    trim: true
+  }],
+  consultationDate: {
+    type: Date
+  },
+  scheduledDate: {
+    type: Date
+  },
+  allergies: [{
+    type: String,
+    trim: true
+  }],
   isEmergency: {
     type: Boolean,
     default: false
@@ -108,6 +141,29 @@ const AppointmentSchema = new mongoose.Schema({
     bmi: Number,
     remarks: String
   },
+
+  // Investigations snapshot ordered by doctor during consultation
+  investigations: [{
+    serviceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Service'
+    },
+    name: {
+      type: String,
+      required: true
+    },
+    code: String,
+    serviceType: {
+      type: String,
+      default: 'Laboratory'
+    },
+    category: String,
+    price: {
+      type: Number,
+      default: 0
+    },
+    notes: String
+  }],
 
   // Centralized Workflow State Engine (Phase 1)
   workflow: {

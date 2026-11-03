@@ -9,17 +9,23 @@ import Table from '../components/Table';
 import Button from '../components/Button';
 import Modal from '../components/Modal';
 import OpdTokenPrintModal from '../components/OpdTokenPrintModal';
+import ConsultationRecordModal from '../components/ConsultationRecordModal';
+import PatientHistoryDrawer from '../components/PatientHistoryDrawer';
 import { initClinicalMasters } from '../utils/clinicalMasters';
 import { 
   Clock, Play, Eye, 
   History as HistoryIcon, RefreshCw, XCircle, Printer, Volume2,
   UserX, FileText, CheckCircle2, Users, Stethoscope,
-  Search, Calendar, Filter, RotateCw
+  Search, Calendar, Filter, RotateCw, Lock, Bed
 } from 'lucide-react';
+import { ipdService } from '../services/ipd/ipdService';
+import { ROUTES } from '../constants/routes';
+import TransferToIPDModal from '../components/ipd/TransferToIPDModal';
+import { isIpdAvailable } from '../utils/featureUtils';
 import { useBillingSettings } from '../context/BillingSettingsContext';
 import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
 import { workflowRealtime } from '../services/workflowRealtimeService';
-import { formatTimeTo12Hr } from '../utils/timeFormat';
+import { formatTimeTo12Hr, formatTimeTo24Hr } from '../utils/timeFormat';
 import { 
   getVisitStatus, 
   getVisitStatusBadgeConfig, 
@@ -55,18 +61,18 @@ const CustomFormattedDateInput = ({ label, value, onChange }) => {
   };
 
   return (
-    <div className="w-full sm:w-auto flex-1 text-left">
-      <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
-        <Calendar className="w-3.5 h-3.5 text-[#2F63F2]" />
-        <span>{label}</span>
-        <span className="text-[10px] text-slate-400 font-medium">(DD/MM/YYYY)</span>
+    <div className="w-full sm:w-auto flex-1 text-left min-w-0">
+      <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1 sm:gap-1.5 whitespace-nowrap truncate">
+        <Calendar className="w-3.5 h-3.5 text-[#2F63F2] shrink-0" />
+        <span className="shrink-0">{label}</span>
+        <span className="text-[9px] sm:text-[10px] text-slate-400 font-medium shrink-0">(DD/MM/YYYY)</span>
       </label>
       
       <div 
         onClick={triggerPicker}
-        className="relative w-full h-[40px] px-3.5 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-xl flex items-center justify-between cursor-pointer focus-within:ring-2 focus-within:ring-[#2F63F2] focus-within:bg-white transition-all shadow-2xs"
+        className="relative w-full h-[40px] px-2.5 sm:px-3.5 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-xl flex items-center justify-between cursor-pointer focus-within:ring-2 focus-within:ring-[#2F63F2] focus-within:bg-white transition-all shadow-2xs"
       >
-        <span className="text-xs font-semibold text-slate-800 font-mono tracking-wide">
+        <span className="text-xs font-semibold text-slate-800 font-mono tracking-tight sm:tracking-wide truncate">
           {displayValue || 'DD/MM/YYYY'}
         </span>
 
@@ -79,7 +85,7 @@ const CustomFormattedDateInput = ({ label, value, onChange }) => {
           className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
         />
 
-        <Calendar className="w-4 h-4 text-slate-500 shrink-0 pointer-events-none" />
+        <Calendar className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-slate-500 shrink-0 pointer-events-none ml-1" />
       </div>
     </div>
   );
@@ -107,7 +113,26 @@ const DoctorTodayQueue = () => {
   const [toDate, setToDate] = useState(todayStr);
   const [appliedFromDate, setAppliedFromDate] = useState(todayStr);
   const [appliedToDate, setAppliedToDate] = useState(todayStr);
-  const [selectedDoctorFilter, setSelectedDoctorFilter] = useState('');
+
+  const isDoctor = useMemo(() => {
+    const roleName = user?.roleId?.name || user?.role || '';
+    return ['DOCTOR', 'DOCTOR_ADMIN'].includes(roleName);
+  }, [user]);
+
+  const [selectedDoctorFilter, setSelectedDoctorFilter] = useState(() => (user?._id ? String(user._id) : ''));
+
+  // Ensure selectedDoctorFilter is synced to current doctor user ID
+  useEffect(() => {
+    if (isDoctor && user?._id) {
+      setSelectedDoctorFilter(String(user._id));
+    }
+  }, [isDoctor, user?._id]);
+
+  // Effective Doctor ID: If doctor is logged in, strictly lock to user._id
+  const effectiveDoctorId = useMemo(() => {
+    if (isDoctor && user?._id) return String(user._id);
+    return selectedDoctorFilter || '';
+  }, [isDoctor, user?._id, selectedDoctorFilter]);
 
   const [activeTab, setActiveTab] = useState('waiting');
   const [selectedApp, setSelectedApp] = useState(null);
@@ -115,6 +140,10 @@ const DoctorTodayQueue = () => {
   const [isTransferOpen, setIsTransferOpen] = useState(false);
   const [isRescheduleOpen, setIsRescheduleOpen] = useState(false);
   const [isPrintTokenOpen, setIsPrintTokenOpen] = useState(false);
+  const [transferToIpdApp, setTransferToIpdApp] = useState(null);
+  const [selectedConsultationRecordApp, setSelectedConsultationRecordApp] = useState(null);
+  const [isConsultationRecordOpen, setIsConsultationRecordOpen] = useState(false);
+  const [historyPatient, setHistoryPatient] = useState(null);
 
   const [transferDoctorId, setTransferDoctorId] = useState('');
   const [rescheduleForm, setRescheduleForm] = useState({ date: '', time: '' });
@@ -158,6 +187,11 @@ const DoctorTodayQueue = () => {
     setToDate(todayStr);
     setAppliedFromDate(todayStr);
     setAppliedToDate(todayStr);
+    if (isDoctor && user?._id) {
+      setSelectedDoctorFilter(String(user._id));
+    } else {
+      setSelectedDoctorFilter('');
+    }
     toast.success("Filters reset to today");
   };
 
@@ -189,13 +223,16 @@ const DoctorTodayQueue = () => {
     return map;
   }, [doctors]);
 
-  // Fetch appointments for date range
+  // Fetch appointments for date range scoped to effective doctor (Strictly pure OPD queue)
   const { data: queue, isLoading: queueLoading, refetch } = useQuery({
-    queryKey: ['doctorQueue', user?._id, appliedFromDate, appliedToDate, selectedDoctorFilter],
+    queryKey: ['doctorQueue', effectiveDoctorId, appliedFromDate, appliedToDate],
     queryFn: async () => {
-      const docParam = selectedDoctorFilter ? `&doctorId=${selectedDoctorFilter}` : '';
-      const res = await api.get(`/operations/appointments?fromDate=${appliedFromDate}&toDate=${appliedToDate}&date=${appliedFromDate}${docParam}`);
-      return res.data.data;
+      const docParam = effectiveDoctorId ? `&doctorId=${effectiveDoctorId}` : '';
+      const scopeParam = isDoctor ? '&scope=my_desk' : '';
+      const appRes = await api.get(`/operations/appointments?fromDate=${appliedFromDate}&toDate=${appliedToDate}&date=${appliedFromDate}${docParam}${scopeParam}`).catch(() => ({ data: { data: [] } }));
+      const appList = appRes.data?.data || [];
+      // Strictly pure OPD appointments: exclude any IPD admissions or IPD-related patients
+      return appList.filter(app => !app.isIpd && !app.isIPDAdmission && !app.ipdAdmissionId && (app.consultationType || '').toUpperCase() !== 'IPD');
     },
     refetchInterval: 15000,
     refetchIntervalInBackground: true
@@ -209,10 +246,18 @@ const DoctorTodayQueue = () => {
     return () => unsubscribe();
   }, [refetch]);
 
-  // Filter Queue based on Date Range
+  // Filter Queue based on Date Range and Strict Doctor Scoping Guard
   const dateFilteredQueue = useMemo(() => {
     const raw = queue || [];
     return raw.filter(a => {
+      // Strict Doctor Scoping Guard: Ensure doctor only sees their own patients
+      if (effectiveDoctorId) {
+        const aDocId = a.doctorId?._id || a.doctorId;
+        if (aDocId && String(aDocId) !== String(effectiveDoctorId)) {
+          return false;
+        }
+      }
+
       let appDate = '';
       const rawDate = a.date || a.createdAt;
       if (typeof rawDate === 'string') {
@@ -228,7 +273,7 @@ const DoctorTodayQueue = () => {
       if (!appDate) return true;
       return appDate >= appliedFromDate && appDate <= appliedToDate;
     });
-  }, [queue, appliedFromDate, appliedToDate]);
+  }, [queue, effectiveDoctorId, appliedFromDate, appliedToDate]);
 
   const currentApp = useMemo(() => {
     return dateFilteredQueue.find(a => getVisitStatus(a) === VISIT_STATUSES.IN_CONSULTATION);
@@ -237,16 +282,15 @@ const DoctorTodayQueue = () => {
   const activeWaitingQueue = useMemo(() => {
     return dateFilteredQueue.filter(a => {
       const st = getVisitStatus(a);
-      const qState = (a.workflow?.queueState || '').toUpperCase();
-      if (a.status === 'Scheduled' || qState === 'SCHEDULED') return false;
+      if (st === VISIT_STATUSES.SCHEDULED) return false;
       return st === VISIT_STATUSES.WAITING || st === VISIT_STATUSES.SKIPPED;
     });
   }, [dateFilteredQueue]);
 
   const scheduledTodayQueue = useMemo(() => {
     return dateFilteredQueue.filter(a => {
-      const qState = (a.workflow?.queueState || '').toUpperCase();
-      return a.status === 'Scheduled' || qState === 'SCHEDULED';
+      const st = getVisitStatus(a);
+      return st === VISIT_STATUSES.SCHEDULED;
     });
   }, [dateFilteredQueue]);
 
@@ -257,9 +301,15 @@ const DoctorTodayQueue = () => {
     const priorityMode = billingSettings?.emergencyQueuePriority || 'OVERRIDE';
 
     return [...arrivedOnly].sort((a, b) => {
+      // 0. Skipped patients ALWAYS move to the LAST position of the waiting queue (same as doctor desk dashboard)
+      const isSkippedA = getVisitStatus(a) === VISIT_STATUSES.SKIPPED || (a.status || a.queueStatus || '').toLowerCase() === 'skipped';
+      const isSkippedB = getVisitStatus(b) === VISIT_STATUSES.SKIPPED || (b.status || b.queueStatus || '').toLowerCase() === 'skipped';
+      if (isSkippedA && !isSkippedB) return 1;
+      if (!isSkippedA && isSkippedB) return -1;
+
       // 1. If FIFO mode selected, sort strictly by token sequence
       if (priorityMode === 'FIFO') {
-        return (a.tokenNumber || '').localeCompare(b.tokenNumber || '', undefined, { numeric: true });
+        return String(a.tokenNumber || '').localeCompare(String(b.tokenNumber || ''), undefined, { numeric: true });
       }
 
       // 2. If APPOINTMENT_TIME mode selected, sort by appointment scheduled time
@@ -271,12 +321,12 @@ const DoctorTodayQueue = () => {
 
       // 3. For OVERRIDE & AFTER_CURRENT modes, prioritize Emergency Patients to Position #1
       if (enableEmergency) {
-        const aIsEmg = a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || (a.consultationType || '').toLowerCase() === 'emergency' || (a.tokenNumber || '').startsWith('EMG');
-        const bIsEmg = b.isEmergency || b.priorityLevel === 'EMERGENCY' || b.priority === 'EMERGENCY' || (b.consultationType || '').toLowerCase() === 'emergency' || (b.tokenNumber || '').startsWith('EMG');
+        const aIsEmg = a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || (a.consultationType || '').toLowerCase() === 'emergency' || String(a.tokenNumber || '').startsWith('EMG');
+        const bIsEmg = b.isEmergency || b.priorityLevel === 'EMERGENCY' || b.priority === 'EMERGENCY' || (b.consultationType || '').toLowerCase() === 'emergency' || String(b.tokenNumber || '').startsWith('EMG');
         if (aIsEmg && !bIsEmg) return -1;
         if (!aIsEmg && bIsEmg) return 1;
       }
-      return (a.tokenNumber || '').localeCompare(b.tokenNumber || '', undefined, { numeric: true });
+      return String(a.tokenNumber || '').localeCompare(String(b.tokenNumber || ''), undefined, { numeric: true });
     });
   }, [activeWaitingQueue, enableEmergency, billingSettings?.emergencyQueuePriority]);
 
@@ -287,6 +337,7 @@ const DoctorTodayQueue = () => {
   const completedTodayQueue = useMemo(() => {
     return dateFilteredQueue.filter(a => {
       const st = getVisitStatus(a);
+      if (st === VISIT_STATUSES.SCHEDULED) return false;
       const appSt = a.status || a.queueStatus || '';
       return isCompletedVisit(st) || 
              ['Completed', 'Sent to Pharmacy', 'Sent To Pharmacy'].includes(appSt) || 
@@ -357,7 +408,7 @@ const DoctorTodayQueue = () => {
       key: 'tokenNumber', 
       label: 'Token', 
       render: (row) => {
-        const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.tokenNumber || '').startsWith('EMG');
+        const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || String(row.tokenNumber || '').startsWith('EMG');
         return (
           <span className={`font-bold font-mono px-2.5 py-1 rounded-lg border text-xs inline-block ${
             isEmg ? 'text-rose-700 bg-rose-100/80 border-rose-300 ring-2 ring-rose-500/20 font-extrabold' : 'text-[#2F63F2] bg-blue-50 border-blue-200'
@@ -372,7 +423,7 @@ const DoctorTodayQueue = () => {
       label: 'Patient', 
       render: (row) => {
         const patientName = row.patientId?.name || 'Walk-in Patient';
-        const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.tokenNumber || '').startsWith('EMG');
+        const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || String(row.tokenNumber || '').startsWith('EMG');
         return (
           <div className="flex items-center gap-2">
             <button
@@ -395,12 +446,37 @@ const DoctorTodayQueue = () => {
     { 
       key: 'patientId.age', 
       label: 'Age / Gender', 
-      render: (row) => <span className="text-slate-600 font-medium text-xs">{row.patientId?.age || '-'}Y / {row.patientId?.gender || '-'}</span> 
+      render: (row) => {
+        const p = row.patientId || {};
+        const age = p.age || row.age;
+        const gender = p.gender || row.gender;
+        const bloodGroup = p.bloodGroup || row.bloodGroup || row.patientBloodGroup;
+        const genderLetter = gender ? (gender.length === 1 ? gender.toUpperCase() : gender.charAt(0).toUpperCase()) : '';
+        const ageGenderText = age ? `${age} yrs / ${genderLetter || gender}` : (genderLetter || '—');
+        return (
+          <div className="flex flex-col items-start gap-0.5 whitespace-nowrap">
+            <span className="text-slate-700 font-semibold text-xs">
+              {ageGenderText}
+            </span>
+            {bloodGroup && bloodGroup !== 'Unknown' && bloodGroup !== 'N/A' && bloodGroup !== '—' ? (
+              <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight shadow-2xs">
+                {bloodGroup}
+              </span>
+            ) : (
+              <span className="text-slate-400 text-[10px] font-medium leading-tight">—</span>
+            )}
+          </div>
+        );
+      }
     },
     { 
       key: 'doctor', 
       label: 'Doctor', 
-      render: (row) => <span className="text-xs font-semibold text-slate-800">{row.doctorId?.name || row.doctorName || `Dr. ${user?.name || ''}`}</span> 
+      render: (row) => {
+        const raw = row.doctorId?.name || row.doctorName || user?.name || '';
+        const clean = String(raw).replace(/^(Dr\.?\s*)+/i, '').trim();
+        return <span className="text-xs font-semibold text-slate-800">{clean ? `Dr. ${clean}` : 'Dr. On Duty'}</span>;
+      } 
     },
     { 
       key: 'time', 
@@ -421,7 +497,14 @@ const DoctorTodayQueue = () => {
             </span>
           );
         }
-        if (isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy') {
+        if (visitSt === VISIT_STATUSES.SENT_TO_PHARMACY || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy' || row.pharmacyStatus === 'SENT') {
+          return (
+            <span className="text-[10px] font-bold border border-[#F59E0B] bg-[#FFF3CD] text-[#B45309] px-2.5 py-1 rounded-lg uppercase tracking-wider inline-block">
+              Sent to Pharmacy
+            </span>
+          );
+        }
+        if (isCompletedVisit(visitSt) || appSt === 'completed') {
           return (
             <span className="text-[10px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-lg uppercase tracking-wider inline-block">
               Completed
@@ -435,7 +518,14 @@ const DoctorTodayQueue = () => {
             </span>
           );
         }
-        if (visitSt === VISIT_STATUSES.NO_SHOW || appSt === 'skipped' || appSt === 'no show') {
+        if (visitSt === VISIT_STATUSES.SKIPPED || appSt === 'skipped') {
+          return (
+            <span className="text-[10px] font-bold border border-amber-200 bg-amber-50 text-amber-700 px-2.5 py-1 rounded-lg uppercase tracking-wider inline-block">
+              Skipped
+            </span>
+          );
+        }
+        if (visitSt === VISIT_STATUSES.NO_SHOW || appSt === 'no show') {
           return (
             <span className="text-[10px] font-extrabold border border-rose-200 bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg uppercase tracking-wider inline-block">
               No Show
@@ -449,205 +539,41 @@ const DoctorTodayQueue = () => {
           </span>
         );
       }
-    },
-    {
-      key: 'quickActions',
-      label: 'Action',
-      render: (row) => {
-        const visitSt = getVisitStatus(row);
-        const appSt = (row.status || row.queueStatus || '').toLowerCase();
-        const evalResult = getAppointmentActions(row, 'Doctor');
-        const isSubscriptionInactive = user?.hospitalStatus === 'inactive' || user?.hospital?.status === 'inactive';
-        const canStart = evalResult.actions.canStartConsultation && !isSubscriptionInactive;
-
-        const isTokenOnlyPlan = user?.hospital?.opdOperationMode === 'TOKEN_ONLY' || 
-                                user?.opdOperationMode === 'TOKEN_ONLY' || 
-                                billingSettings?.opdOperationMode === 'TOKEN_ONLY';
-
-        // 1. IN CONSULTATION -> Show "Complete Token" + "Re-Call Voice" (Plan 1) or "Resume Consultation" (Plan 2)
-        if (visitSt === VISIT_STATUSES.IN_CONSULTATION || appSt === 'in consultation' || appSt === 'in-consultation') {
-          if (isTokenOnlyPlan) {
-            return (
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => finishConsultationMutation.mutate(row._id)}
-                  className="h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
-                  title="Complete Patient Visit"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Complete Token</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    voiceAnnouncement.enqueueAnnouncement({
-                      tokenNumber: row.tokenNumber,
-                      patientName: row.patientId?.name || 'Patient',
-                      doctorName: row.doctorId?.name || row.doctorName || user?.name || 'Doctor',
-                      roomNumber: row.doctorId?.roomNumber || row.roomNumber || '',
-                      patientObj: row,
-                      isRepeat: true,
-                      broadcastOnly: true
-                    });
-                    toast.success(`📢 Re-calling Token #${row.tokenNumber} at Reception`);
-                  }}
-                  className="h-8 px-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-[#2F63F2] border border-blue-200 text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
-                  title="Re-call patient voice announcement at Reception"
-                >
-                  <Volume2 className="w-3.5 h-3.5" />
-                  <span>Re-Call Voice</span>
-                </button>
-              </div>
-            );
-          }
-          return (
-            <button
-              type="button"
-              onClick={() => navigate(`/doctor/consultation/${row._id}`)}
-              className="h-8 px-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Resume Consultation</span>
-            </button>
-          );
-        }
-
-        // 2. COMPLETED -> Show "Completed Visit" + "Re-Call Voice" for Plan 1
-        if (isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy') {
-          if (isTokenOnlyPlan) {
-            return (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 inline-flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Completed
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    voiceAnnouncement.enqueueAnnouncement({
-                      tokenNumber: row.tokenNumber,
-                      patientName: row.patientId?.name || 'Patient',
-                      doctorName: row.doctorId?.name || row.doctorName || user?.name || 'Doctor',
-                      roomNumber: row.doctorId?.roomNumber || row.roomNumber || '',
-                      patientObj: row,
-                      isRepeat: true,
-                      broadcastOnly: true
-                    });
-                    toast.success(`📢 Re-calling Token #${row.tokenNumber} at Reception`);
-                  }}
-                  className="h-8 px-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-[#2F63F2] border border-blue-200 text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
-                  title="Re-call patient voice announcement at Reception"
-                >
-                  <Volume2 className="w-3.5 h-3.5" />
-                  <span>Re-Call Voice</span>
-                </button>
-              </div>
-            );
-          }
-          return (
-            <button
-              type="button"
-              onClick={() => navigate(`/doctor/consultation/${row._id}`)}
-              className="h-8 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-extrabold flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <FileText className="w-3.5 h-3.5 text-emerald-600" />
-              <span>View Prescription</span>
-            </button>
-          );
-        }
-
-        // 3. CANCELLED / NO SHOW -> No action button
-        if (appSt === 'cancelled' || visitSt === VISIT_STATUSES.NO_SHOW || appSt === 'no show') {
-          return null;
-        }
-
-        // 4. WAITING / SCHEDULED -> Show "Accept Patient" for Plan 1 (Direct to Completed)
-        if (isTokenOnlyPlan) {
-          return (
-            <button
-              type="button"
-              disabled={!canStart}
-              onClick={() => {
-                if (!canStart) {
-                  toast.error(evalResult.reasons.startConsultation || 'Payment required before consultation.');
-                  return;
-                }
-                console.log("[PLAN1][DOCTOR] ACCEPT_PATIENT clicked");
-                console.log("[PLAN1][DOCTOR] RECEPTION_VOICE_CALL SENT");
-                const callPayload = {
-                  tokenNumber: row.tokenNumber,
-                  patientName: row.patientId?.name || 'Patient',
-                  doctorName: row.doctorId?.name || row.doctorName || user?.name || 'Doctor',
-                  roomNumber: row.doctorId?.roomNumber || row.roomNumber || '',
-                  type: 'TriggerVoiceCall'
-                };
-                api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
-                
-                voiceAnnouncement.enqueueAnnouncement({
-                  ...callPayload,
-                  patientObj: row,
-                  broadcastOnly: true
-                });
-                api.put(`/operations/appointments/${row._id}/queue`, { status: 'Completed', queueStatus: 'Completed' })
-                  .then(() => {
-                    toast.success(`✓ Token #${row.tokenNumber} Accepted & Completed! Voice call sent to Reception desk.`);
-                    queryClient.invalidateQueries(['doctorQueue']);
-                    queryClient.invalidateQueries(['appointments']);
-                  })
-                  .catch(err => toast.error('Failed to update queue status'));
-              }}
-              className={`h-8 px-3.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all ${
-                canStart 
-                  ? 'bg-[#2F63F2] text-white hover:bg-blue-700 shadow-2xs cursor-pointer' 
-                  : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
-              }`}
-              title={canStart ? "Accept Patient & Call Token at Reception Desk" : "Payment Pending"}
-            >
-              <Volume2 className="w-3.5 h-3.5" />
-              <span>{canStart ? 'Accept Patient' : 'Pending Payment'}</span>
-            </button>
-          );
-        }
-
-        // Default Plan 2: Start Consultation
-        return (
-          <button
-            type="button"
-            disabled={!canStart}
-            onClick={() => {
-              if (!canStart) {
-                toast.error(evalResult.reasons.startConsultation || 'Payment required before consultation.');
-                return;
-              }
-              startConsultationMutation.mutate(row._id);
-            }}
-            className={`h-8 px-3 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all ${
-              canStart 
-                ? 'bg-[#2F63F2] text-white hover:bg-blue-700 shadow-2xs cursor-pointer' 
-                : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
-            }`}
-            title={canStart ? "Start Consultation" : "Payment Pending"}
-          >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            <span>{canStart ? 'Start Consultation' : 'Pending Payment'}</span>
-          </button>
-        );
-      }
     }
-  ], [getAppointmentActions, navigate]);
-
-  // Secondary Table Actions (Removed - passing empty array)
-  const tableActions = useMemo(() => [], []);
+  ], []);
 
   // Mutations
   const startConsultationMutation = useMutation({
-    mutationFn: async (appId) => {
+    mutationFn: async (appOrId) => {
+      const appId = typeof appOrId === 'object' ? appOrId._id : appOrId;
+      const app = typeof appOrId === 'object' ? appOrId : (dateFilteredQueue || []).find(a => a._id === appId);
+
       if (currentApp) {
         if (currentApp._id === appId) {
           return appId;
         }
         throw new Error(`Active consultation in progress for ${currentApp.patientId?.name || 'current patient'}. Please finish it first.`);
       }
+
+      // Trigger Voice Call announcement on Reception desk (Doctor speakers stay muted)
+      if (app) {
+        const callPayload = {
+          tokenNumber: app.tokenNumber,
+          tokenNo: app.tokenNumber,
+          patientName: app.patientId?.name || app.patientName || 'Patient',
+          doctorName: app.doctorId?.name || app.doctorName || user?.name || 'Doctor',
+          roomNumber: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
+          roomNo: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
+          type: 'TriggerVoiceCall'
+        };
+        api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
+        voiceAnnouncement.enqueueAnnouncement({
+          ...callPayload,
+          patientObj: app,
+          broadcastOnly: true
+        });
+      }
+
       await api.put(`/operations/appointments/${appId}/queue`, { status: 'In Consultation', queueStatus: 'In-Consultation' });
       return appId;
     },
@@ -673,6 +599,19 @@ const DoctorTodayQueue = () => {
       queryClient.invalidateQueries(['appointments']);
     },
     onError: (err) => toast.error(err.response?.data?.message || 'Failed to finish consultation')
+  });
+
+  const skipPatientMutation = useMutation({
+    mutationFn: async (appId) => {
+      await api.put(`/operations/appointments/${appId}/queue`, { queueStatus: 'Skipped' });
+    },
+    onSuccess: () => {
+      toast('Patient moved to skipped queue.', { icon: '⏭️' });
+      queryClient.invalidateQueries(['doctorQueue']);
+      queryClient.invalidateQueries(['appointments']);
+      refetch();
+    },
+    onError: (err) => toast.error(err.response?.data?.message || 'Failed to skip patient')
   });
 
   const recallPatientMutation = useMutation({
@@ -737,6 +676,297 @@ const DoctorTodayQueue = () => {
     });
   };
 
+  const isTokenOnlyPlan = user?.hospital?.opdOperationMode === 'TOKEN_ONLY' || 
+                          user?.opdOperationMode === 'TOKEN_ONLY' || 
+                          billingSettings?.opdOperationMode === 'TOKEN_ONLY';
+
+  const isIpdEnabled = Boolean(isIpdAvailable(user?.hospital || user));
+
+  const handleRecallVoice = (row) => {
+    voiceAnnouncement.enqueueAnnouncement({
+      tokenNumber: row.tokenNumber,
+      patientName: row.patientId?.name || 'Patient',
+      doctorName: row.doctorId?.name || row.doctorName || user?.name || 'Doctor',
+      roomNumber: row.doctorId?.roomNumber || row.roomNumber || '',
+      patientObj: row,
+      isRepeat: true,
+      broadcastOnly: true
+    });
+    toast.success(`📢 Re-calling Token #${row.tokenNumber} at Reception`);
+  };
+
+  // Full table actions: Primary status actions + 3-dot dropdown with 6 actions
+  const tableActions = useMemo(() => [
+    // ---------------- PRIMARY STATUS-DRIVEN INLINE BUTTONS ----------------
+    // Plan 1: Accept Patient
+    {
+      label: 'Accept Patient',
+      icon: Volume2,
+      isPrimary: true,
+      disabled: (row) => {
+        const isSubscriptionInactive = user?.hospitalStatus === 'inactive' || user?.hospital?.status === 'inactive';
+        return isSubscriptionInactive;
+      },
+      onClick: (row) => {
+        const callPayload = {
+          tokenNumber: row.tokenNumber,
+          patientName: row.patientId?.name || 'Patient',
+          doctorName: row.doctorId?.name || row.doctorName || user?.name || 'Doctor',
+          roomNumber: row.doctorId?.roomNumber || row.roomNumber || '',
+          type: 'TriggerVoiceCall'
+        };
+        api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
+        voiceAnnouncement.enqueueAnnouncement({
+          ...callPayload,
+          patientObj: row,
+          broadcastOnly: true
+        });
+        api.put(`/operations/appointments/${row._id}/queue`, { status: 'Completed', queueStatus: 'Completed' })
+          .then(() => {
+            toast.success(`✓ Token #${row.tokenNumber} Accepted & Completed! Voice call sent to Reception desk.`);
+            queryClient.invalidateQueries(['doctorQueue']);
+            queryClient.invalidateQueries(['appointments']);
+            refetch();
+          })
+          .catch(() => toast.error('Failed to update queue status'));
+      },
+      show: (row) => {
+        if (!isTokenOnlyPlan) return false;
+        const visitSt = getVisitStatus(row);
+        const appSt = (row.status || row.queueStatus || '').toLowerCase();
+        const isCompleted = isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy';
+        if (isCompleted) return false;
+        return visitSt !== VISIT_STATUSES.IN_CONSULTATION && visitSt !== VISIT_STATUSES.SKIPPED && appSt !== 'cancelled' && visitSt !== VISIT_STATUSES.NO_SHOW;
+      }
+    },
+    // Plan 2: Start Consultation
+    {
+      label: 'Start Consultation',
+      icon: <Play className="w-3.5 h-3.5 fill-current" />,
+      isPrimary: true,
+      disabled: (row) => {
+        const isSubscriptionInactive = user?.hospitalStatus === 'inactive' || user?.hospital?.status === 'inactive';
+        return isSubscriptionInactive || startConsultationMutation.isPending;
+      },
+      onClick: (row) => {
+        startConsultationMutation.mutate(row);
+      },
+      show: (row) => {
+        if (isTokenOnlyPlan) return false;
+        const visitSt = getVisitStatus(row);
+        const appSt = (row.status || row.queueStatus || '').toLowerCase();
+        const isCompleted = isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy';
+        if (isCompleted) return false;
+        return visitSt !== VISIT_STATUSES.IN_CONSULTATION && visitSt !== VISIT_STATUSES.SKIPPED && appSt !== 'cancelled' && visitSt !== VISIT_STATUSES.NO_SHOW;
+      }
+    },
+    // Recall Patient (for Skipped patients)
+    {
+      label: 'Recall Patient',
+      icon: RefreshCw,
+      isPrimary: true,
+      onClick: (row) => recallPatientMutation.mutate(row._id),
+      show: (row) => {
+        const visitSt = getVisitStatus(row);
+        const appSt = (row.status || row.queueStatus || '').toLowerCase();
+        return visitSt === VISIT_STATUSES.SKIPPED || appSt === 'skipped';
+      }
+    },
+    // Resume Consultation (for In-Consultation, Plan 2)
+    {
+      label: 'Resume Consultation',
+      icon: <Play className="w-3.5 h-3.5 fill-current" />,
+      isPrimary: true,
+      variant: 'purple',
+      onClick: (row) => navigate(`/doctor/consultation/${row._id}`),
+      show: (row) => {
+        if (isTokenOnlyPlan) return false;
+        const visitSt = getVisitStatus(row);
+        const appSt = (row.status || row.queueStatus || '').toLowerCase();
+        const isCompleted = isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy';
+        if (isCompleted) return false;
+        return visitSt === VISIT_STATUSES.IN_CONSULTATION || appSt === 'in consultation' || appSt === 'in-consultation';
+      }
+    },
+    // Complete Token (for In-Consultation, Plan 1)
+    {
+      label: 'Complete Token',
+      icon: CheckCircle2,
+      isPrimary: true,
+      onClick: (row) => finishConsultationMutation.mutate(row._id),
+      show: (row) => {
+        if (!isTokenOnlyPlan) return false;
+        const visitSt = getVisitStatus(row);
+        const appSt = (row.status || row.queueStatus || '').toLowerCase();
+        const isCompleted = isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy';
+        if (isCompleted) return false;
+        return visitSt === VISIT_STATUSES.IN_CONSULTATION || appSt === 'in consultation' || appSt === 'in-consultation';
+      }
+    },
+    // Consultation History (Primary for Completed patients - both Plan 1 and Plan 2)
+    {
+      label: 'Consultation History',
+      icon: HistoryIcon,
+      isPrimary: true,
+      variant: 'view',
+      onClick: (row) => {
+        setSelectedConsultationRecordApp(row);
+        setIsConsultationRecordOpen(true);
+      },
+      show: (row) => {
+        const visitSt = getVisitStatus(row);
+        const appSt = (row.status || row.queueStatus || '').toLowerCase();
+        return isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy';
+      }
+    },
+    // Re-Call Voice (for In-Consultation only, Plan 1 - NEVER for Completed)
+    {
+      label: 'Re-Call Voice',
+      icon: Volume2,
+      isPrimary: true,
+      variant: 'view',
+      onClick: (row) => handleRecallVoice(row),
+      show: (row) => {
+        if (!isTokenOnlyPlan) return false;
+        const visitSt = getVisitStatus(row);
+        const appSt = (row.status || row.queueStatus || '').toLowerCase();
+        if (isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy') {
+          return false;
+        }
+        return visitSt === VISIT_STATUSES.IN_CONSULTATION || appSt === 'in consultation' || appSt === 'in-consultation';
+      }
+    },
+
+    // ---------------- 6 DEDICATED 3-DOT DROPDOWN ACTIONS ----------------
+    // 1. Skip Patient
+    {
+      label: 'Skip Patient',
+      icon: XCircle,
+      onClick: (row) => skipPatientMutation.mutate(row._id),
+      show: (row) => {
+        const visitSt = getVisitStatus(row);
+        const appSt = (row.status || row.queueStatus || '').toLowerCase();
+        return visitSt === VISIT_STATUSES.WAITING && appSt !== 'skipped' && visitSt !== VISIT_STATUSES.SKIPPED;
+      }
+    },
+    // 3. Reschedule
+    {
+      label: 'Reschedule',
+      icon: Calendar,
+      onClick: (row) => {
+        setSelectedApp(row);
+        const rawDate = row.date || row.createdAt;
+        let dateStr = '';
+        if (typeof rawDate === 'string') {
+          dateStr = rawDate.split('T')[0];
+        } else if (rawDate) {
+          try {
+            dateStr = new Date(rawDate).toISOString().split('T')[0];
+          } catch (e) {
+            dateStr = '';
+          }
+        }
+        setRescheduleForm({
+          date: dateStr,
+          time: formatTimeTo24Hr(row.time)
+        });
+        setIsRescheduleOpen(true);
+      },
+      show: (row) => {
+        const visitSt = getVisitStatus(row);
+        return !isCompletedVisit(visitSt) && visitSt !== VISIT_STATUSES.IN_CONSULTATION;
+      }
+    },
+    // 4. Transfer Room
+    {
+      label: 'Transfer Room',
+      icon: RefreshCw,
+      onClick: (row) => {
+        setSelectedApp(row);
+        setTransferDoctorId('');
+        setIsTransferOpen(true);
+      },
+      show: (row) => {
+        const visitSt = getVisitStatus(row);
+        return !isCompletedVisit(visitSt) && visitSt !== VISIT_STATUSES.IN_CONSULTATION;
+      }
+    },
+    // Transfer to IPD (Only available when IPD module is enabled for this hospital)
+    {
+      label: 'Transfer to IPD',
+      icon: Bed,
+      onClick: (row) => setTransferToIpdApp(row),
+      show: (row) => {
+        if (!isIpdEnabled) return false;
+        const visitSt = getVisitStatus(row);
+        const appSt = (row.status || row.queueStatus || '').toLowerCase();
+        return appSt !== 'admitted' && visitSt !== 'Admitted';
+      }
+    },
+    // 5. Patient Info
+    {
+      label: 'Patient Info',
+      icon: Eye,
+      onClick: (row) => {
+        setSelectedApp(row);
+        setIsPatientDetailOpen(true);
+      }
+    },
+    // Visit History (form drawer for completed & all patient records)
+    {
+      label: 'Visit History',
+      icon: HistoryIcon,
+      onClick: (row) => {
+        const pat = (row.patientId && typeof row.patientId === 'object')
+          ? row.patientId
+          : (row.patient && typeof row.patient === 'object')
+            ? row.patient
+            : { _id: row.patientId?._id || row.patientId || row.patient, name: row.patientId?.name || row.patientName };
+        setHistoryPatient(pat);
+      }
+    },
+    // 7. View Prescription Pad (for completed Plan 2 consultations)
+    {
+      label: 'View Prescription Pad',
+      icon: FileText,
+      onClick: (row) => navigate(`/doctor/consultation/${row._id}`),
+      show: (row) => {
+        if (isTokenOnlyPlan) return false;
+        const visitSt = getVisitStatus(row);
+        const appSt = (row.status || row.queueStatus || '').toLowerCase();
+        return isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy';
+      }
+    },
+    // 8. Consultation History (in 3-dot dropdown for active / non-completed patients)
+    {
+      label: 'Consultation History',
+      icon: HistoryIcon,
+      onClick: (row) => {
+        setSelectedConsultationRecordApp(row);
+        setIsConsultationRecordOpen(true);
+      },
+      show: (row) => {
+        const visitSt = getVisitStatus(row);
+        const appSt = (row.status || row.queueStatus || '').toLowerCase();
+        return !(isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy');
+      }
+    }
+  ], [
+    isTokenOnlyPlan,
+    isIpdEnabled,
+    user,
+    billingSettings,
+    getAppointmentActions,
+    navigate,
+    startConsultationMutation,
+    finishConsultationMutation,
+    skipPatientMutation,
+    recallPatientMutation,
+    markNoShowMutation,
+    queryClient,
+    refetch
+  ]);
+
   return (
     <div className="space-y-6 text-left px-4 sm:px-6 py-5 bg-[#F8FAFC] min-h-screen">
       {/* 1. PAGE HEADER */}
@@ -770,20 +1000,42 @@ const DoctorTodayQueue = () => {
         className="bg-white border border-[#E5E7EB] rounded-[20px] p-4 sm:p-5 shadow-xs"
       >
         <form onSubmit={handleSearchFilter} className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <div className="flex flex-col sm:flex-row items-center gap-3.5 flex-1">
-            <CustomFormattedDateInput
-              label="From Date"
-              value={fromDate}
-              onChange={setFromDate}
-            />
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3.5 flex-1 w-full">
+            {/* From Date & To Date: 1 Row & 2 Columns in Mobile View (grid-cols-2), flex on desktop */}
+            <div className="grid grid-cols-2 gap-2 sm:gap-3.5 w-full sm:w-auto sm:flex sm:items-center sm:flex-1">
+              <CustomFormattedDateInput
+                label="From Date"
+                value={fromDate}
+                onChange={setFromDate}
+              />
 
-            <CustomFormattedDateInput
-              label="To Date"
-              value={toDate}
-              onChange={setToDate}
-            />
+              <CustomFormattedDateInput
+                label="To Date"
+                value={toDate}
+                onChange={setToDate}
+              />
+            </div>
 
-            {(user?.role === 'SUPER_ADMIN' || user?.role === 'DOCTOR_ADMIN' || user?.role === 'DOCTOR' || user?.role === 'RECEPTIONIST' || user?.roleId?.name === 'DOCTOR_ADMIN' || user?.roleId?.name === 'SUPER_ADMIN' || user?.roleId?.name === 'DOCTOR') && (
+            {isDoctor ? (
+              <div className="w-full sm:w-auto flex-1 text-left">
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                  <Stethoscope className="w-3.5 h-3.5 text-[#2F63F2]" />
+                  <span>Consulting Doctor</span>
+                </label>
+                <div className="w-full h-[40px] px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 flex items-center justify-between shadow-2xs">
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
+                    <span className="truncate">
+                      {user?.name ? (user.name.startsWith('Dr.') ? user.name : `Dr. ${user.name}`) : 'Doctor'}
+                    </span>
+                    <span className="text-[10px] text-blue-600 font-bold px-1.5 py-0.5 bg-blue-50 border border-blue-200/60 rounded shrink-0">
+                      My Desk
+                    </span>
+                  </div>
+                  <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" title="Desk locked to your assigned patients only" />
+                </div>
+              </div>
+            ) : (
               <div className="w-full sm:w-auto flex-1 text-left">
                 <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
                   <Stethoscope className="w-3.5 h-3.5 text-[#2F63F2]" />
@@ -842,6 +1094,13 @@ const DoctorTodayQueue = () => {
           iconBackground="bg-blue-50/80 border-blue-200/80"
         />
         <MetricSummaryCard
+          title="Scheduled"
+          value={scheduledTodayQueue.length}
+          icon={Calendar}
+          iconColor="text-sky-600"
+          iconBackground="bg-sky-50/80 border-sky-200/80"
+        />
+        <MetricSummaryCard
           title="Waiting"
           value={activeWaitingQueue.length}
           icon={Clock}
@@ -862,13 +1121,6 @@ const DoctorTodayQueue = () => {
           iconColor="text-emerald-600"
           iconBackground="bg-emerald-50/80 border-emerald-200/80"
         />
-        <MetricSummaryCard
-          title="No Show"
-          value={noShowQueue.length}
-          icon={UserX}
-          iconColor="text-rose-600"
-          iconBackground="bg-rose-50/80 border-rose-200/80"
-        />
       </div>
 
       {/* 4. PATIENT TABLE WORKSPACE (ADAPTIVE SINGLE-DAY VS MULTI-DAY TIMELINE) */}
@@ -878,10 +1130,10 @@ const DoctorTodayQueue = () => {
           <div className="flex bg-slate-100 p-1 rounded-xl gap-1 overflow-x-auto max-w-full">
             {[
               { key: 'all', label: `All (${dateFilteredQueue.length})` },
+              { key: 'scheduled', label: `Scheduled / Follow-Up (${scheduledTodayQueue.length})` },
               { key: 'waiting', label: `Waiting (${activeWaitingQueue.length})` },
               { key: 'in_consultation', label: `In Consultation (${inConsultationQueue.length})` },
-              { key: 'completed', label: `Completed Today (${completedTodayQueue.length})` },
-              { key: 'noshow', label: `No Show (${noShowQueue.length})` }
+              { key: 'completed', label: `Completed Today (${completedTodayQueue.length})` }
             ].map(t => (
               <button
                 key={t.key}
@@ -900,9 +1152,6 @@ const DoctorTodayQueue = () => {
             <span className="text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
               <span className={`w-2 h-2 rounded-full ${isMultiDayView ? 'bg-indigo-500' : 'bg-emerald-500'}`} />
               {isMultiDayView ? 'Grouped Timeline View' : 'Single-Day Queue View'}
-            </span>
-            <span className="text-xs text-slate-500 font-medium hidden md:inline">
-              Showing <strong className="text-slate-800 font-bold">{currentDisplayList.length}</strong> record(s)
             </span>
           </div>
         </div>
@@ -1002,7 +1251,11 @@ const DoctorTodayQueue = () => {
               <p><strong>Gender / Age:</strong> {selectedApp.patientId?.gender || '-'} / {selectedApp.patientId?.age || '-'} Yrs</p>
               <p><strong>Token Number:</strong> <span className="font-mono font-bold text-[#2F63F2]">#{selectedApp.tokenNumber || '-'}</span></p>
               <p><strong>Appointment Time:</strong> {selectedApp.time || '-'}</p>
-              <p><strong>Assigned Doctor:</strong> {selectedApp.doctorId?.name || selectedApp.doctorName || `Dr. ${user?.name || ''}`}</p>
+              <p><strong>Assigned Doctor:</strong> {(() => {
+                const raw = selectedApp.doctorId?.name || selectedApp.doctorName || user?.name || '';
+                const clean = String(raw).replace(/^(Dr\.?\s*)+/i, '').trim();
+                return clean ? `Dr. ${clean}` : 'Dr. On Duty';
+              })()}</p>
               <p><strong>Visit Status:</strong> <span className="font-bold text-slate-800">{getVisitStatus(selectedApp)}</span></p>
             </div>
 
@@ -1069,6 +1322,34 @@ const DoctorTodayQueue = () => {
         isOpen={isPrintTokenOpen}
         onClose={() => { setIsPrintTokenOpen(false); setSelectedApp(null); }}
         appointment={selectedApp}
+      />
+
+      {/* 5. Transfer to IPD Modal (Strictly gated by isIpdEnabled) */}
+      {isIpdEnabled && (
+        <TransferToIPDModal
+          isOpen={Boolean(transferToIpdApp)}
+          onClose={() => setTransferToIpdApp(null)}
+          appointment={transferToIpdApp}
+        />
+      )}
+
+      {/* 6. Consultation Record History Modal */}
+      <ConsultationRecordModal
+        isOpen={isConsultationRecordOpen}
+        onClose={() => {
+          setIsConsultationRecordOpen(false);
+          setSelectedConsultationRecordApp(null);
+        }}
+        appointment={selectedConsultationRecordApp}
+        consultationId={selectedConsultationRecordApp?._id}
+      />
+
+      {/* 7. Patient Visit History Drawer */}
+      <PatientHistoryDrawer
+        isOpen={!!historyPatient}
+        onClose={() => setHistoryPatient(null)}
+        patient={historyPatient}
+        title={historyPatient?.name ? `VISIT HISTORY - ${historyPatient.name.toUpperCase()}` : 'VISIT HISTORY'}
       />
 
     </div>

@@ -74,6 +74,10 @@ const protect = async (req, res, next) => {
       // Attach user and role to request
       req.user = user;
       req.token = token;
+      req.branchId = user.branchId;
+      if (!req.hospitalId) {
+        req.hospitalId = user.hospitalId || (decoded.hospitalCode ? undefined : null);
+      }
       next();
     };
 
@@ -89,6 +93,8 @@ const protect = async (req, res, next) => {
       }
 
       req.hospitalStatus = hospObj.status;
+      req.hospital = hospObj;
+      if (!req.hospitalId) req.hospitalId = hospObj._id;
       const conn = await getTenantConnection(decoded.hospitalCode);
       await tenantLocalStorage.run({ connection: conn }, executeInContext);
     } else {

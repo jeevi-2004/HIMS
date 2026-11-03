@@ -219,8 +219,8 @@ const BillingTransactions = () => {
         </div>
       </div>
 
-      {/* Authoritative Ledger Table */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-2xs overflow-hidden">
+      {/* Authoritative Ledger Table Card */}
+      <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-4 sm:p-5 shadow-card-soft space-y-4">
         <Table
           headers={[
             { key: 'invoiceNo', label: 'Invoice No', render: (row) => <span className="font-extrabold font-mono text-[#2F63F2] text-xs">{row.invoiceNo}</span> },
@@ -245,27 +245,28 @@ const BillingTransactions = () => {
           ]}
           data={invoices}
           isLoading={isLoading}
+          paginate={false}
         />
 
         {/* Server-Side Pagination Bar */}
-        <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-600 font-sans">
-          <span>
-            Showing page <strong>{pagination.currentPage}</strong> of <strong>{pagination.totalPages}</strong> ({pagination.totalRecords} total records)
+        <div className="flex justify-between items-center px-1 pt-1">
+          <span className="text-xs font-semibold text-[#6B7280]">
+            Page {page} of {pagination.totalPages || 1}
           </span>
 
-          <div className="flex items-center gap-2">
+          <div className="flex gap-2">
             <button
               disabled={page <= 1}
               onClick={() => setPage(prev => Math.max(prev - 1, 1))}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold disabled:opacity-50 cursor-pointer"
+              className="px-3 py-1.5 rounded-lg border border-[#E5E7EB] text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:ring-2 focus:ring-[#2F63F2]/10"
             >
               Previous
             </button>
 
             <button
-              disabled={page >= pagination.totalPages}
-              onClick={() => setPage(prev => Math.min(prev + 1, pagination.totalPages))}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold disabled:opacity-50 cursor-pointer"
+              disabled={page >= (pagination.totalPages || 1)}
+              onClick={() => setPage(prev => Math.min(prev + 1, pagination.totalPages || 1))}
+              className="px-3 py-1.5 rounded-lg border border-[#E5E7EB] text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:ring-2 focus:ring-[#2F63F2]/10"
             >
               Next
             </button>

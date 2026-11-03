@@ -160,7 +160,7 @@ const ConvertUnknownPatientModal = ({ isOpen, onClose, patient, onSuccess }) => 
               onClick={onClose}
               className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl"
             >
-              Cancel
+              Close
             </button>
 
             <button

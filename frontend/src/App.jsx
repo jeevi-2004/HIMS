@@ -20,7 +20,7 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans relative overflow-x-hidden">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans relative">
       <AnimatePresence mode="wait">
         {showSplash && (
           <SplashScreen key="villzone-splash" onFinish={handleFinishSplash} />
@@ -28,9 +28,9 @@ function App() {
       </AnimatePresence>
 
       <motion.div
-        initial={{ opacity: 0, y: 15 }}
-        animate={{ opacity: showSplash ? 0 : 1, y: showSplash ? 15 : 0 }}
-        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: showSplash ? 0 : 1 }}
+        transition={{ duration: 0.4, ease: "easeOut" }}
       >
         <AppRoutes />
       </motion.div>

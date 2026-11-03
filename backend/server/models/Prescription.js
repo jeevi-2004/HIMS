@@ -38,6 +38,21 @@ const PrescriptionItemSchema = new mongoose.Schema({
 });
 
 const PrescriptionSchema = new mongoose.Schema({
+  appointmentId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Appointment',
+    required: false
+  },
+  admissionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'IPDAdmission',
+    required: false
+  },
+  isIpd: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
   consultationId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Consultation',
@@ -52,6 +67,11 @@ const PrescriptionSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: [true, 'Doctor reference is required']
+  },
+  tokenNumber: {
+    type: String,
+    trim: true,
+    default: ''
   },
   items: [PrescriptionItemSchema],
   status: {

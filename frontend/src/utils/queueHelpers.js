@@ -17,11 +17,11 @@ export const filterQueueByDate = (queue = [], fromDate, toDate) => {
 export const sortEmergencyPriorityFirst = (queue = [], enableEmergency = true) => {
   if (!enableEmergency) return queue;
   return [...queue].sort((a, b) => {
-    const aIsEmg = a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || (a.tokenNumber || '').startsWith('EMG');
-    const bIsEmg = b.isEmergency || b.priorityLevel === 'EMERGENCY' || b.priority === 'EMERGENCY' || (b.tokenNumber || '').startsWith('EMG');
+    const aIsEmg = a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || String(a.tokenNumber || '').startsWith('EMG');
+    const bIsEmg = b.isEmergency || b.priorityLevel === 'EMERGENCY' || b.priority === 'EMERGENCY' || String(b.tokenNumber || '').startsWith('EMG');
     if (aIsEmg && !bIsEmg) return -1;
     if (!aIsEmg && bIsEmg) return 1;
-    return (a.tokenNumber || '').localeCompare(b.tokenNumber || '', undefined, { numeric: true });
+    return String(a.tokenNumber || '').localeCompare(String(b.tokenNumber || ''), undefined, { numeric: true });
   });
 };
 

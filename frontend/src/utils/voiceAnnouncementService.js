@@ -246,12 +246,13 @@ class VoiceAnnouncementService {
             }
 
             // Synthesize audio ONLY on Receptionist screens
-            const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
-            const isReceptionistPage = pathname.includes('/reception');
+            const pathname = typeof window !== 'undefined' ? (window.location.pathname || '').toLowerCase() : '';
+            const href = typeof window !== 'undefined' ? (window.location.href || '').toLowerCase() : '';
+            const isReceptionistPage = pathname.includes('reception') || pathname.includes('display') || href.includes('reception') || href.includes('display');
             if (isReceptionistPage && event.data.announcementData) {
               console.log("[PLAN1][RECEPTION] VOICE PLAY FUNCTION CALLED");
-              // Automatically show the same toast that clicking manually would show!
-              toast.success(`Voice Calling Token #${event.data.token}...`, { duration: 4000 });
+              const tDisp = event.data.token ? `Token #${event.data.token}` : (event.data.announcementData?.patientName || 'Patient');
+              toast.success(`Voice Calling ${tDisp}...`, { duration: 4000 });
               this.enqueueAnnouncement({
                 ...event.data.announcementData,
                 broadcastOnly: false
@@ -265,6 +266,24 @@ class VoiceAnnouncementService {
         console.warn('[VOICE ANNOUNCEMENT] BroadcastChannel not supported:', err);
       }
     }
+    // Global user-gesture audio unblocker for Chromium autoplay policy
+    if (typeof window !== 'undefined') {
+      const unlockAudio = () => {
+        try {
+          if ('speechSynthesis' in window && window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) {
+            const ctx = new AudioCtx();
+            ctx.resume().then(() => ctx.close()).catch(() => {});
+          }
+        } catch (_) {}
+      };
+      window.addEventListener('click', unlockAudio, { once: true });
+      window.addEventListener('keydown', unlockAudio, { once: true });
+    }
+
     // Pre-trigger voice loading for Chrome / Edge
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
@@ -409,8 +428,8 @@ class VoiceAnnouncementService {
    */
   buildEnglishPhrase(patient) {
     if (!patient) return null;
-    let rawToken = patient.tokenNumber || patient.token || patient.tokenNo || patient.tokenNumber === 0 ? (patient.tokenNumber || patient.token || patient.tokenNo) : '1';
-    let numericToken = extractNumericToken(rawToken);
+    let rawToken = patient.tokenNumber || patient.token || patient.tokenNo || patient.tokenNumber === 0 ? (patient.tokenNumber || patient.token || patient.tokenNo) : '';
+    let numericToken = rawToken ? extractNumericToken(rawToken) : '';
 
     const pName = patient.patientName || (typeof patient.patientId === 'object' && patient.patientId?.name ? patient.patientId.name : (patient.name || ''));
     const dName = patient.doctorName || (typeof patient.doctorId === 'object' && patient.doctorId?.name ? patient.doctorId.name : (patient.doctor || ''));
@@ -419,7 +438,12 @@ class VoiceAnnouncementService {
     const patientPart = pName && pName.trim() ? `${pName.trim()}, ` : '';
     const doctorPart = docClean ? `Doctor ${docClean} ` : 'Doctor ';
 
-    return `Token ${numericToken}, ${patientPart}please proceed to ${doctorPart}Consultation Room.`;
+    if (numericToken) {
+      return `Token ${numericToken}, ${patientPart}please proceed to ${doctorPart}Consultation Room.`;
+    } else if (patientPart) {
+      return `Patient ${patientPart}please proceed to ${doctorPart}Consultation Room.`;
+    }
+    return `Patient, please proceed to ${doctorPart}Consultation Room.`;
   }
 
   /**
@@ -430,8 +454,8 @@ class VoiceAnnouncementService {
    */
   buildTamilPhrase(patient, isRepeat = false) {
     if (!patient) return null;
-    let rawToken = patient.tokenNumber || patient.token || patient.tokenNo || patient.tokenNumber === 0 ? (patient.tokenNumber || patient.token || patient.tokenNo) : '1';
-    let numericToken = extractNumericToken(rawToken);
+    let rawToken = patient.tokenNumber || patient.token || patient.tokenNo || patient.tokenNumber === 0 ? (patient.tokenNumber || patient.token || patient.tokenNo) : '';
+    let numericToken = rawToken ? extractNumericToken(rawToken) : '';
 
     const pName = patient.patientName || (typeof patient.patientId === 'object' && patient.patientId?.name ? patient.patientId.name : (patient.name || ''));
     const dName = patient.doctorName || (typeof patient.doctorId === 'object' && patient.doctorId?.name ? patient.doctorId.name : (patient.doctor || ''));
@@ -446,10 +470,18 @@ class VoiceAnnouncementService {
 
     if (isRepeat) {
       const patientRepeat = tamilPatientName && tamilPatientName.trim() ? `${tamilPatientName.trim()}. ` : '';
-      return `டோக்கன் எண் ${numericToken}, ${patientRepeat}இது இரண்டாவது அழைப்பு. தயவுசெய்து ${doctorPart}ஆலோசனை அறைக்கு செல்லவும்.`;
+      if (numericToken) {
+        return `டோக்கன் எண் ${numericToken}, ${patientRepeat}இது இரண்டாவது அழைப்பு. தயவுசெய்து ${doctorPart}ஆலோசனை அறைக்கு செல்லவும்.`;
+      }
+      return `நோயாளி ${patientRepeat}இது இரண்டாவது அழைப்பு. தயவுசெய்து ${doctorPart}ஆலோசனை அறைக்கு செல்லவும்.`;
     }
 
-    return `டோக்கன் எண் ${numericToken}, ${patientPart}${doctorPart}ஆலோசனை அறைக்கு செல்லவும்.`;
+    if (numericToken) {
+      return `டோக்கன் எண் ${numericToken}, ${patientPart}${doctorPart}ஆலோசனை அறைக்கு செல்லவும்.`;
+    } else if (patientPart) {
+      return `நோயாளி ${patientPart}${doctorPart}ஆலோசனை அறைக்கு செல்லவும்.`;
+    }
+    return `நோயாளி ${doctorPart}ஆலோசனை அறைக்கு செல்லவும்.`;
   }
 
   /**
@@ -496,90 +528,6 @@ class VoiceAnnouncementService {
       isRepeat: isRepeat,
       patientObj: patient,
       timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Public Queue Entry API
-   */
-  enqueueAnnouncement(announcementData) {
-    if (!announcementData) return false;
-
-    const tokenNumber = announcementData.tokenNumber || announcementData.token || '';
-    const patientName = announcementData.patientName || '';
-    const doctorName = announcementData.doctorName || '';
-    const mode = announcementData.mode || this.settings.languageMode || 'BOTH';
-    const isRepeat = !!announcementData.isRepeat;
-    const now = Date.now();
-
-    // Lightweight Duplicate Protection: Prevent rapid duplicate events (< 4.5 seconds)
-    const dupKey = `${tokenNumber}_${patientName}_${doctorName}_${isRepeat ? 'repeat' : 'first'}`;
-    if (this.lastAnnouncedKey === dupKey && (now - this.lastAnnouncedTimestamp) < 4500) {
-      console.log(`[VOICE ANNOUNCEMENT] Rapid duplicate announcement for Token #${tokenNumber} suppressed.`);
-      return false;
-    }
-
-    this.lastAnnouncedKey = dupKey;
-    this.lastAnnouncedToken = tokenNumber;
-    this.lastAnnouncedTimestamp = now;
-
-    // Build Item Structure
-    const queueItem = {
-      tokenNumber,
-      patientName,
-      doctorName,
-      mode,
-      isRepeat,
-      engText: this.buildEnglishPhrase(announcementData.patientObj || announcementData),
-      tamText: this.buildTamilPhrase(announcementData.patientObj || announcementData, isRepeat),
-      timestamp: now
-    };
-
-    // Store snapshot for replay capabilities
-    this.lastVoiceAnnouncement = {
-      token: tokenNumber,
-      patientName,
-      doctorName,
-      engText: queueItem.engText,
-      tamText: queueItem.tamText,
-      languageMode: mode,
-      timestamp: now
-    };
-
-    // Multi-tab Broadcast Notification
-    if (this.channel) {
-      this.channel.postMessage({
-        type: 'ANNOUNCEMENT_PLAYED',
-        token: tokenNumber,
-        timestamp: now,
-        announcement: this.lastVoiceAnnouncement
-      });
-    }
-
-    this.queue.push(queueItem);
-
-    if (!this.isSpeaking) {
-      this.processNextAnnouncement();
-    }
-    return true;
-  }
-
-  /**
-   * Replays the most recent consultation announcement stored in lastVoiceAnnouncement.
-   */
-  repeatLastAnnouncement() {
-    if (!this.lastVoiceAnnouncement) {
-      toast.error('No announcement available to replay.');
-      return false;
-    }
-
-    const ann = { ...this.lastVoiceAnnouncement };
-    return this.enqueueAnnouncement({
-      tokenNumber: ann.token,
-      patientName: ann.patientName,
-      doctorName: ann.doctorName,
-      mode: this.settings.languageMode || ann.languageMode || 'BOTH',
-      isRepeat: true
     });
   }
 
@@ -980,7 +928,7 @@ class VoiceAnnouncementService {
 
     // Deduplication Protection: Prevent rapid duplicate events (< 8.0 seconds) for the same token number
     const normToken = String(tokenNumber || announcementData.token || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    if (normToken && this.lastAnnouncedToken === normToken && !isRepeat && (now - this.lastAnnouncedTimestamp) < 8000) {
+    if (normToken && this.lastAnnouncedToken === normToken && !isRepeat && (now - this.lastAnnouncedTimestamp) < 2000) {
       console.log(`[VOICE ANNOUNCEMENT] Rapid duplicate announcement for Token #${tokenNumber} suppressed.`);
       return false;
     }
@@ -1081,6 +1029,47 @@ class VoiceAnnouncementService {
   /**
    * Internal FIFO Queue Processor — Supports Browser, Sarvam AI, Azure, and Google Cloud Speech
    */
+  // Play an authentic two-tone hospital announcement chime (Ding-Dong) via Web Audio API
+  playHospitalChime() {
+    try {
+      if (typeof window === 'undefined') return;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+      
+      const ctx = new AudioContextClass();
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      const t = ctx.currentTime;
+
+      // Tone 1: High crisp ding (659.25 Hz - E5)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(659.25, t);
+      gain1.gain.setValueAtTime(0.28, t);
+      gain1.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(t);
+      osc1.stop(t + 0.35);
+
+      // Tone 2: Warm melodious dong (523.25 Hz - C5)
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(523.25, t + 0.22);
+      gain2.gain.setValueAtTime(0.32, t + 0.22);
+      gain2.gain.exponentialRampToValueAtTime(0.0001, t + 0.65);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(t + 0.22);
+      osc2.stop(t + 0.65);
+    } catch (e) {
+      console.warn('[VOICE ANNOUNCEMENT] Chime warning:', e);
+    }
+  }
+
   async processNextAnnouncement() {
     if (this.queue.length === 0) {
       this.isSpeaking = false;
@@ -1091,102 +1080,119 @@ class VoiceAnnouncementService {
     const currentItem = this.queue.shift();
 
     try {
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        if (window.speechSynthesis.paused) {
-          window.speechSynthesis.resume();
-        }
-        window.speechSynthesis.cancel();
+      // 1. Play hospital announcement chime first so hardware speakers activate
+      this.playHospitalChime();
+
+      // Brief 450ms pause so the chime resonates clearly before speech begins
+      await new Promise(r => setTimeout(r, 450));
+
+      if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+        this.isSpeaking = false;
+        setTimeout(() => this.processNextAnnouncement(), 100);
+        return;
+      }
+
+      // Resume speech synthesis engine if paused
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
       }
 
       const mode = currentItem.mode || this.settings.languageMode || 'BOTH';
-      const provider = this.settings.provider || 'browser';
       const englishVoice = this.getBestEnglishVoice();
       const tamilVoice = this.getBestTamilVoice();
+      const hasTamil = Boolean(tamilVoice);
 
+      let isFinished = false;
       const finishCurrent = () => {
+        if (isFinished) return;
+        isFinished = true;
+        this.activeUtterance = null;
+        if (typeof window !== 'undefined') {
+          window._himsActiveUtterance = null;
+        }
         this.isSpeaking = false;
         setTimeout(() => {
           this.processNextAnnouncement();
-        }, 100);
+        }, 150);
       };
 
-      // Helper to speak Tamil utterance via Cloud API with automatic Browser fallback
-      const speakTamilPart = async () => {
-        if (provider === 'sarvam' || provider === 'azure' || provider === 'google') {
-          const vId = provider === 'sarvam' ? (this.settings.sarvamVoiceId || 'ananya') : provider === 'azure' ? (this.settings.azureVoiceId || 'ta-IN-PallaviNeural') : (this.settings.googleVoiceId || 'ta-IN-Chirp3-HD-Aoede');
-          const cloudOk = await this.playCloudAudio(currentItem.tamText, provider, vId);
-          if (cloudOk) {
-            finishCurrent();
-            return;
+      // Helper to speak utterance safely with GC guard & safety timeout
+      const speakUtterance = (text, voice, lang, rate = 0.88) => {
+        return new Promise((resolve) => {
+          try {
+            if (!text) {
+              resolve();
+              return;
+            }
+            const u = new SpeechSynthesisUtterance(text);
+            u.rate = rate;
+            u.pitch = 1.0;
+            u.volume = 1.0;
+            if (voice) {
+              u.voice = voice;
+              u.lang = voice.lang || lang;
+            } else {
+              u.lang = lang || 'en-US';
+            }
+
+            // Retain reference on window and instance to prevent Chrome GC bug
+            this.activeUtterance = u;
+            if (typeof window !== 'undefined') {
+              window._himsActiveUtterance = u;
+            }
+
+            let done = false;
+            const complete = () => {
+              if (done) return;
+              done = true;
+              resolve();
+            };
+
+            u.onend = () => {
+              console.log('[VOICE ANNOUNCEMENT] Utterance finished successfully:', text);
+              complete();
+            };
+            u.onerror = (err) => {
+              console.warn('[VOICE ANNOUNCEMENT] Utterance error:', err?.error || err);
+              complete();
+            };
+
+            // Safety timeout: max 12 seconds per phrase
+            setTimeout(complete, 12000);
+
+            if (window.speechSynthesis.paused) {
+              window.speechSynthesis.resume();
+            }
+            window.speechSynthesis.speak(u);
+          } catch (err) {
+            console.error('[VOICE ANNOUNCEMENT] speakUtterance error:', err);
+            resolve();
           }
-          console.warn(`[VOICE QUEUE] Cloud ${provider} synthesis failed/offline. Falling back to local browser TTS.`);
-        }
-
-        // Local Browser Tamil TTS Fallback / Default
-        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-          const uTamil = new SpeechSynthesisUtterance(currentItem.tamText);
-          uTamil.lang = 'ta-IN';
-          uTamil.rate = 0.88;
-          uTamil.pitch = 1.0;
-          uTamil.volume = 1.0;
-          if (tamilVoice) uTamil.voice = tamilVoice;
-
-          uTamil.onend = () => finishCurrent();
-          uTamil.onerror = (err) => {
-            console.warn('[VOICE QUEUE] Tamil browser utterance error:', err);
-            finishCurrent();
-          };
-
-          window.speechSynthesis.speak(uTamil);
-        } else {
-          finishCurrent();
-        }
+        });
       };
 
+      // Execute based on mode:
       if (mode === 'TA_ONLY') {
-        await speakTamilPart();
+        if (hasTamil) {
+          await speakUtterance(currentItem.tamText, tamilVoice, 'ta-IN', 0.86);
+        } else {
+          // Fallback when computer has no Tamil voice pack: speak English clearly so user HEARS the call!
+          console.warn('[VOICE ANNOUNCEMENT] No native Tamil voice found on this device; speaking English announcement.');
+          await speakUtterance(currentItem.engText, englishVoice, 'en-US', 0.88);
+        }
+        finishCurrent();
       } else if (mode === 'EN_ONLY') {
-        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-          const uEng = new SpeechSynthesisUtterance(currentItem.engText);
-          uEng.lang = 'en-IN';
-          uEng.rate = 0.88;
-          uEng.pitch = 1.0;
-          uEng.volume = 1.0;
-          if (englishVoice) uEng.voice = englishVoice;
-
-          uEng.onend = () => { console.log("[PLAN1][RECEPTION] AUDIO PLAY SUCCESS"); finishCurrent(); };
-          uEng.onerror = (e) => { console.log("[PLAN1][RECEPTION] AUDIO PLAY FAILED", e); finishCurrent(); };
-          console.log("[PLAN1][RECEPTION] AUDIO PLAY STARTED");
-          window.speechSynthesis.speak(uEng);
-        } else {
-          finishCurrent();
-        }
+        await speakUtterance(currentItem.engText, englishVoice, 'en-US', 0.88);
+        finishCurrent();
       } else {
-        // BOTH Mode (Default): English female voice first, then 400ms pause, then Tamil Cloud/Local voice
-        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-          const uEng = new SpeechSynthesisUtterance(currentItem.engText);
-          uEng.lang = 'en-IN';
-          uEng.rate = 0.88;
-          uEng.pitch = 1.0;
-          uEng.volume = 1.0;
-          if (englishVoice) uEng.voice = englishVoice;
+        // BOTH mode: Speak English first, then Tamil if voice exists
+        await speakUtterance(currentItem.engText, englishVoice, 'en-US', 0.88);
 
-          let isEngFinished = false;
-          const onEngFinish = async () => {
-            if (isEngFinished) return;
-            isEngFinished = true;
-            await new Promise(r => setTimeout(r, 400));
-            await speakTamilPart();
-          };
-
-          uEng.onend = onEngFinish;
-          uEng.onerror = (e) => { console.log("[PLAN1][RECEPTION] AUDIO PLAY FAILED", e); onEngFinish(); };
-
-          console.log("[PLAN1][RECEPTION] AUDIO PLAY STARTED");
-          window.speechSynthesis.speak(uEng);
-        } else {
-          await speakTamilPart();
+        if (hasTamil) {
+          await new Promise(r => setTimeout(r, 400));
+          await speakUtterance(currentItem.tamText, tamilVoice, 'ta-IN', 0.86);
         }
+        finishCurrent();
       }
     } catch (err) {
       console.error('[VOICE QUEUE] Exception in processNextAnnouncement:', err);
@@ -1194,7 +1200,6 @@ class VoiceAnnouncementService {
       setTimeout(() => this.processNextAnnouncement(), 200);
     }
   }
-
   speakAnnouncement(announcementObj) {
     if (!announcementObj) return;
     this.enqueueAnnouncement(announcementObj);

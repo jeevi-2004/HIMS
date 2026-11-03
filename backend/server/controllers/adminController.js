@@ -92,6 +92,18 @@ const seedTenantAdminUser = async (hospital) => {
 
     const defaultRoles = [
       {
+        name: 'ADMIN',
+        description: 'Hospital Administrator / Owner managing hospital operations and workforce.',
+        permissions: [
+          'user:create', 'user:read', 'user:write', 'pin:reset',
+          'branch:create', 'branch:read', 'branch:write',
+          'department:create', 'department:read', 'department:write',
+          'patient:create', 'patient:read', 'appointment:create', 'appointment:read',
+          'pharmacy:view', 'billing:view', 'billing:manage',
+          'opd:view', 'ipd:view'
+        ]
+      },
+      {
         name: 'DOCTOR',
         description: 'Medical Practitioner. OPD, consultations, diagnoses and prescribing.',
         permissions: ['opd:view', 'opd:write', 'prescription:write', 'patient:read']
@@ -148,7 +160,6 @@ const seedTenantAdminUser = async (hospital) => {
     const Branch = require('../models/Branch');
     const cityName = (hospital.address?.city || '').toString().trim();
     const defaultFacilityName = cityName || 'Main Facility';
-
     let mainBranch = await Branch.findOne({ isDefault: true });
     if (!mainBranch) {
       mainBranch = await Branch.findOne({ name: defaultFacilityName }) ||
@@ -214,7 +225,7 @@ const seedTenantAdminUser = async (hospital) => {
         roleId: adminRole._id,
         name: adminDisplayName,
         employeeCode: { $regex: /^VZE-.*-ADMIN-/i }
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     hospital.adminMobile = primaryMobile;
@@ -227,7 +238,7 @@ const seedTenantAdminUser = async (hospital) => {
 };
 
 const createHospital = async (req, res, next) => {
-  const { name, code: customCode, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo, opdOperationMode, planName } = req.body;
+  const { name, code: customCode, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo, opdOperationMode, planName, ipd_requested } = req.body;
   try {
     let code = customCode ? customCode.trim().toUpperCase() : await generateHospitalCode();
 
@@ -241,6 +252,7 @@ const createHospital = async (req, res, next) => {
 
     const featureModules = {
       OPD: true,
+      Appointments: true,
       IPD: true,
       Billing: true,
       Pharmacy: true,
@@ -277,7 +289,8 @@ const createHospital = async (req, res, next) => {
       adminMobile: contactNumber,
       adminPin: '1234',
       databaseName,
-      logo
+      logo,
+      ipd_requested: Boolean(ipd_requested)
     });
 
     // Auto-seed tenant DB permissions, roles, and DOCTOR_ADMIN user on creation
@@ -298,7 +311,7 @@ const createHospital = async (req, res, next) => {
 const getHospitals = async (req, res, next) => {
   try {
     let query = {};
-    const tenantScopedRoles = ['DOCTOR_ADMIN', 'RECEPTIONIST', 'DOCTOR', 'PHARMACIST', 'NURSE', 'LABORATORY', 'BILLING'];
+    const tenantScopedRoles = ['DOCTOR_ADMIN', 'ADMIN', 'RECEPTIONIST', 'DOCTOR', 'PHARMACIST', 'NURSE', 'LABORATORY', 'BILLING'];
     if (tenantScopedRoles.includes(req.user.roleId.name)) {
       query._id = req.user.hospitalId;
     } else if (req.user.roleId.name !== 'SUPER_ADMIN') {
@@ -325,8 +338,8 @@ const createBranch = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Hospital context not found' });
     }
 
-    // Auth check: Doctor Admin can only create branches for their own hospital
-    if (req.user?.roleId?.name === 'DOCTOR_ADMIN' && (!req.user.hospitalId || req.user.hospitalId.toString() !== targetHospitalId?.toString())) {
+    // Auth check: Doctor Admin & Admin can only create branches for their own hospital
+    if (['DOCTOR_ADMIN', 'ADMIN'].includes(req.user?.roleId?.name) && (!req.user.hospitalId || req.user.hospitalId.toString() !== targetHospitalId?.toString())) {
       return res.status(403).json({ success: false, message: 'Unauthorized hospital context' });
     }
 
@@ -364,7 +377,7 @@ const getBranches = async (req, res, next) => {
     let query = {};
 
     // Filter by user role permissions
-    if (req.user.roleId.name !== 'SUPER_ADMIN' && req.user.roleId.name !== 'DOCTOR_ADMIN') {
+    if (req.user.roleId.name !== 'SUPER_ADMIN' && req.user.roleId.name !== 'DOCTOR_ADMIN' && req.user.roleId.name !== 'ADMIN') {
       // Staff roles see their own branch
       query._id = req.user.branchId;
     }
@@ -502,7 +515,7 @@ const getUsers = async (req, res, next) => {
     let query = {};
 
     // Filter by role context
-    const tenantScopedRoles = ['DOCTOR_ADMIN', 'RECEPTIONIST', 'DOCTOR', 'PHARMACIST', 'NURSE', 'LABORATORY', 'BILLING'];
+    const tenantScopedRoles = ['DOCTOR_ADMIN', 'ADMIN', 'RECEPTIONIST', 'DOCTOR', 'PHARMACIST', 'NURSE', 'LABORATORY', 'BILLING'];
     if (tenantScopedRoles.includes(req.user.roleId.name)) {
       query.hospitalId = req.user.hospitalId;
     } else if (req.user.roleId.name !== 'SUPER_ADMIN') {
@@ -511,7 +524,10 @@ const getUsers = async (req, res, next) => {
 
     // Additional query filters (supports comma-separated list e.g. role=DOCTOR,DOCTOR_ADMIN)
     if (role) {
-      const roleNames = role.split(',').map(r => r.trim().toUpperCase()).filter(Boolean);
+      let roleNames = role.split(',').map(r => r.trim().toUpperCase()).filter(Boolean);
+      if (roleNames.includes('DOCTOR') && !roleNames.includes('DOCTOR_ADMIN')) {
+        roleNames.push('DOCTOR_ADMIN');
+      }
       const dbRoles = await Role.find({ name: { $in: roleNames } });
       if (dbRoles && dbRoles.length > 0) {
         query.roleId = { $in: dbRoles.map(r => r._id) };
@@ -546,7 +562,7 @@ const getUsers = async (req, res, next) => {
               if (autoSeeded.length > 1) {
                 const [keep, ...duplicates] = autoSeeded;
                 for (const dup of duplicates) {
-                  await User.findByIdAndDelete(dup._id).catch(() => {});
+                  await User.findByIdAndDelete(dup._id).catch(() => { });
                 }
               }
             }
@@ -564,24 +580,10 @@ const getUsers = async (req, res, next) => {
       .populate('departmentId', 'name code')
       .select('-password');
 
-    const processedUsers = await Promise.all(users.map(async (u) => {
+    const processedUsers = users.map((u) => {
       const userObj = u.toObject ? u.toObject() : { ...u };
-      const isSuperAdmin = userObj.roleId?.name === 'SUPER_ADMIN';
-
-      if (!isSuperAdmin) {
-        // If rawPin is the old default '123456' or missing or invalid length, replace with the employee's unique PIN
-        if (!userObj.rawPin || userObj.rawPin === '123456' || userObj.rawPin.length !== 6) {
-          if (userObj.mobileNumber && userObj.mobileNumber.length >= 6) {
-            const uniquePin = userObj.mobileNumber.slice(-6);
-            userObj.rawPin = uniquePin;
-            u.rawPin = uniquePin;
-            u.pin = uniquePin;
-            await u.save().catch(() => {});
-          }
-        }
-      }
       return userObj;
-    }));
+    });
 
     res.status(200).json({ success: true, data: processedUsers });
   } catch (error) {
@@ -600,7 +602,7 @@ const updateUserStatus = async (req, res, next) => {
     }
 
     // Role checks
-    if (req.user.roleId.name === 'DOCTOR_ADMIN' && user.hospitalId.toString() !== req.user.hospitalId.toString()) {
+    if (['DOCTOR_ADMIN', 'ADMIN'].includes(req.user.roleId.name) && user.hospitalId.toString() !== req.user.hospitalId.toString()) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
@@ -622,12 +624,29 @@ const updateUserStatus = async (req, res, next) => {
 
 const getRoles = async (req, res, next) => {
   try {
+    // Ensure default ADMIN role exists in tenant database if missing
+    let adminRole = await Role.findOne({ name: 'ADMIN' });
+    if (!adminRole) {
+      adminRole = await Role.create({
+        name: 'ADMIN',
+        description: 'Hospital Administrator / Owner managing hospital operations and workforce.',
+        permissions: [
+          'user:create', 'user:read', 'user:write', 'pin:reset',
+          'branch:create', 'branch:read', 'branch:write',
+          'department:create', 'department:read', 'department:write',
+          'patient:create', 'patient:read', 'appointment:create', 'appointment:read',
+          'pharmacy:view', 'billing:view', 'billing:manage',
+          'opd:view', 'ipd:view'
+        ]
+      });
+    }
+
     let query = {};
     // Hospital and Branch admins cannot assign SUPER_ADMIN role
     if (req.user.roleId.name !== 'SUPER_ADMIN') {
       query.name = { $ne: 'SUPER_ADMIN' };
     }
-    const roles = await Role.find(query);
+    const roles = await Role.find(query).sort({ name: 1 });
     res.status(200).json({ success: true, data: roles });
   } catch (error) {
     console.error('ERROR:', error);
@@ -654,7 +673,7 @@ const getAuditLogs = async (req, res, next) => {
     let query = {};
 
     // Multi-tenant logging boundaries
-    if (req.user.roleId.name === 'DOCTOR_ADMIN') {
+    if (['DOCTOR_ADMIN', 'ADMIN'].includes(req.user.roleId.name)) {
       const userIds = await User.find({ hospitalId: req.user.hospitalId }).select('_id');
       query.userId = { $in: userIds.map(u => u._id) };
     } else if (req.user.roleId.name !== 'SUPER_ADMIN') {
@@ -676,7 +695,7 @@ const getAuditLogs = async (req, res, next) => {
 const getLoginHistory = async (req, res, next) => {
   try {
     let query = {};
-    if (req.user?.roleId?.name === 'DOCTOR_ADMIN') {
+    if (['DOCTOR_ADMIN', 'ADMIN'].includes(req.user?.roleId?.name)) {
       const userIds = await User.find({ hospitalId: req.user.hospitalId }).select('_id');
       query.userId = { $in: userIds.map(u => u._id) };
     }
@@ -842,9 +861,10 @@ const deletePlan = async (req, res, next) => {
 // UPDATE /api/admin/hospitals/:id
 const updateHospital = async (req, res, next) => {
   const { id } = req.params;
-  const { name, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo, opdOperationMode, planName } = req.body;
+  const { name, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo, opdOperationMode, planName, ipd_requested } = req.body;
   try {
     const updateData = { name, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo };
+    if (ipd_requested !== undefined) updateData.ipd_requested = Boolean(ipd_requested);
     if (opdOperationMode) {
       const mode = opdOperationMode === 'TOKEN_ONLY' ? 'TOKEN_ONLY' : 'FULL_DIGITAL';
       updateData.opdOperationMode = mode;
@@ -1062,6 +1082,24 @@ const saveSettings = async (req, res, next) => {
 
 // SERVICE CRUD (Tenant database)
 const Service = require('../models/Service');
+const { isFeatureModuleEnabled } = require('../utils/featureUtils');
+
+const validateServiceFeature = async (hospitalId, serviceType) => {
+  if (!serviceType) return null;
+  const sType = serviceType.toString().trim();
+  if (sType === 'Laboratory') {
+    const hospital = await Hospital.findById(hospitalId);
+    if (!isFeatureModuleEnabled(hospital, 'Laboratory')) {
+      return 'Laboratory module is not enabled for this hospital by Super Admin';
+    }
+  } else if (sType === 'Radiology') {
+    const hospital = await Hospital.findById(hospitalId);
+    if (!isFeatureModuleEnabled(hospital, 'Radiology')) {
+      return 'Radiology module is not enabled for this hospital by Super Admin';
+    }
+  }
+  return null;
+};
 
 const getServices = async (req, res, next) => {
   try {
@@ -1074,10 +1112,22 @@ const getServices = async (req, res, next) => {
 };
 
 const createService = async (req, res, next) => {
-  const { name, code, price, description, status } = req.body;
+  const { name, code, serviceType, category, price, description, status } = req.body;
   try {
-    const service = await Service.create({ name, code, price, description, status });
-    await logAudit(req.user._id, 'CREATE_SERVICE', 'SERVICE', { serviceId: service._id, name }, req);
+    const featureErr = await validateServiceFeature(req.user?.hospitalId, serviceType);
+    if (featureErr) {
+      return res.status(403).json({ success: false, message: featureErr });
+    }
+    const service = await Service.create({
+      name,
+      code,
+      serviceType: serviceType || 'General',
+      category: category || 'General',
+      price,
+      description,
+      status: status || 'active'
+    });
+    await logAudit(req.user._id, 'CREATE_SERVICE', 'SERVICE', { serviceId: service._id, name, serviceType, category }, req);
     res.status(201).json({ success: true, data: service });
   } catch (error) {
     console.error('ERROR:', error);
@@ -1087,17 +1137,31 @@ const createService = async (req, res, next) => {
 
 const updateService = async (req, res, next) => {
   const { id } = req.params;
-  const { name, code, price, description, status } = req.body;
+  const { name, code, serviceType, category, price, description, status } = req.body;
   try {
+    if (serviceType) {
+      const featureErr = await validateServiceFeature(req.user?.hospitalId, serviceType);
+      if (featureErr) {
+        return res.status(403).json({ success: false, message: featureErr });
+      }
+    }
     const service = await Service.findByIdAndUpdate(
       id,
-      { name, code, price, description, status },
+      {
+        name,
+        code,
+        serviceType: serviceType || 'General',
+        category: category || 'General',
+        price,
+        description,
+        status: status || 'active'
+      },
       { new: true, runValidators: true }
     );
     if (!service) {
       return res.status(404).json({ success: false, message: 'Service not found' });
     }
-    await logAudit(req.user._id, 'UPDATE_SERVICE', 'SERVICE', { serviceId: service._id }, req);
+    await logAudit(req.user._id, 'UPDATE_SERVICE', 'SERVICE', { serviceId: service._id, serviceType, category }, req);
     res.status(200).json({ success: true, data: service });
   } catch (error) {
     console.error('ERROR:', error);
@@ -1185,13 +1249,13 @@ const updateHospitalProfile = async (req, res, next) => {
 // UPDATE USER DETAILS
 const updateUser = async (req, res, next) => {
   const { id } = req.params;
-  const { 
-    name, 
-    countryCode, 
-    mobileNumber, 
-    pin, 
-    roleId, 
-    branchId, 
+  const {
+    name,
+    countryCode,
+    mobileNumber,
+    pin,
+    roleId,
+    branchId,
     departmentId,
     doctorProfile,
     nurseProfile,
@@ -1415,7 +1479,7 @@ const getActivePrintTemplate = async (req, res, next) => {
       // Log soft warning and resolve active template for targeted hospitalId
       console.warn(`[getActivePrintTemplate] User hospitalId ${userHospitalId} requested template for hospitalId ${hospitalId}`);
     }
-    
+
     // Query authoritative source: PrescriptionPrintTemplate { hospitalId, isDefault: true, status: 'ACTIVE' }
     let template = await PrescriptionPrintTemplate.findOne({ hospitalId, status: 'ACTIVE', isDefault: true }).sort({ updatedAt: -1 });
     if (!template) {
@@ -1424,13 +1488,13 @@ const getActivePrintTemplate = async (req, res, next) => {
     if (!template) {
       template = await PrescriptionPrintTemplate.findOne({ hospitalId }).sort({ updatedAt: -1 });
     }
-    
+
     // Migration: If no active template exists, check Hospital profile printMode or create STANDARD default
     if (!template) {
       const Hospital = require('../models/Hospital');
       const hProfile = await Hospital.findById(hospitalId);
       const initialMode = hProfile?.printConfiguration?.printMode || 'STANDARD';
-      
+
       template = await PrescriptionPrintTemplate.create({
         hospitalId,
         name: 'General OPD Prescription',

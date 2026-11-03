@@ -26,7 +26,7 @@ const StandardPrescriptionTemplate = ({ data, config }) => {
       </div>
 
       {/* 2. Patient & Visit Demographics Banner */}
-      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 grid grid-cols-3 gap-3 text-xs">
+      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
         <div>
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Patient Name</span>
           <span className="font-extrabold text-slate-900">{patient.name}</span>
@@ -37,7 +37,13 @@ const StandardPrescriptionTemplate = ({ data, config }) => {
           <span className="font-bold text-[#2F63F2] font-mono">{patient.uhid}</span>
           <span className="text-slate-500 text-[11px] block">Ph: {patient.mobile}</span>
         </div>
-        <div className="text-right">
+        <div>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Known Allergies</span>
+          <span className={`font-bold text-[11px] block ${patient.allergies && patient.allergies !== 'None' && patient.allergies !== 'No known drug allergies' ? 'text-amber-800 font-extrabold' : 'text-slate-700'}`}>
+            {Array.isArray(patient.allergies) ? (patient.allergies.length ? patient.allergies.join(', ') : 'None') : (patient.allergies || 'None')}
+          </span>
+        </div>
+        <div className="text-right sm:text-right">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Date & Token</span>
           <span className="font-bold text-slate-800">{visit.date}</span>
           <span className="text-slate-500 font-mono text-[11px] block">Token: #{visit.tokenNumber}</span>

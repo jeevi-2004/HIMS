@@ -12,6 +12,13 @@ const ReceptionistLiveQueue = lazy(() => import('../../pages/ReceptionistLiveQue
 const ReceptionistPrintQueue = lazy(() => import('../../pages/ReceptionistPrintQueue'));
 const ReceptionistReports = lazy(() => import('../../pages/ReceptionistReports'));
 
+// Reused IPD Pages — same components as Admin IPD, no new pages needed
+const IPDDepartmentPage = lazy(() => import('../../pages/ipd/IPDDepartmentPage'));
+const Inpatients = lazy(() => import('../../pages/ipd/Inpatients'));
+const WardsBeds = lazy(() => import('../../pages/ipd/WardsBeds'));
+const Discharge = lazy(() => import('../../pages/ipd/Discharge'));
+const IPDReports = lazy(() => import('../../pages/ipd/IPDReports'));
+
 const RECEPTION_ROLES = ROLE_GROUPS.RECEPTION;
 
 export const receptionRoutes = (
@@ -76,6 +83,56 @@ export const receptionRoutes = (
       element={
         <WorkspaceRoute allowedRoles={RECEPTION_ROLES}>
           <ReceptionistReports />
+        </WorkspaceRoute>
+      } 
+    />
+
+    {/* IPD Department Routes — gated by featureFlag="IPD" */}
+    <Route 
+      path="/reception/ipd" 
+      element={
+        <WorkspaceRoute allowedRoles={RECEPTION_ROLES} featureFlag="IPD">
+          <IPDDepartmentPage />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path={ROUTES.RECEPTION.IPD_DEPARTMENT} 
+      element={
+        <WorkspaceRoute allowedRoles={RECEPTION_ROLES} featureFlag="IPD">
+          <IPDDepartmentPage />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path={ROUTES.RECEPTION.IPD_INPATIENTS} 
+      element={
+        <WorkspaceRoute allowedRoles={RECEPTION_ROLES} featureFlag="IPD">
+          <Inpatients />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path={ROUTES.RECEPTION.IPD_WARDS} 
+      element={
+        <WorkspaceRoute allowedRoles={RECEPTION_ROLES} featureFlag="IPD">
+          <WardsBeds />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path={ROUTES.RECEPTION.IPD_DISCHARGE} 
+      element={
+        <WorkspaceRoute allowedRoles={RECEPTION_ROLES} featureFlag="IPD">
+          <Discharge />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path={ROUTES.RECEPTION.IPD_REPORTS} 
+      element={
+        <WorkspaceRoute allowedRoles={RECEPTION_ROLES} featureFlag="IPD">
+          <IPDReports />
         </WorkspaceRoute>
       } 
     />

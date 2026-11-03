@@ -1,5 +1,5 @@
 import { 
-  LayoutDashboard, Calendar, Users, Printer, FileBarChart2 
+  LayoutDashboard, Calendar, Users, Printer, FileBarChart2, Bed
 } from 'lucide-react';
 import { ROUTES } from '../../constants/routes';
 import { PERMISSIONS } from '../../constants/permissions';
@@ -40,7 +40,7 @@ export const receptionNavigation = [
   },
   {
     id: 'reception.queue',
-    title: 'Token & Live Queue',
+    title: 'Live Doctor Queue',
     icon: Users,
     route: ROUTES.RECEPTION.QUEUE,
     matchPaths: [ROUTES.RECEPTION.QUEUE, '/reception/token-queue'],
@@ -70,6 +70,39 @@ export const receptionNavigation = [
     workspace: 'reception',
     group: 'reports',
     order: 5
+  },
+  // IPD Department — automatically hidden by navigationHelpers when IPD is not enabled for this hospital
+  {
+    id: 'reception.ipd',
+    title: 'IPD Department',
+    icon: Bed,
+    route: ROUTES.RECEPTION.IPD_DEPARTMENT || '/reception/ipd',
+    matchPaths: ['/reception/ipd'],
+    permission: PERMISSIONS.PATIENT_CREATE,
+    featureFlag: 'IPD',
+    workspace: 'reception',
+    group: 'ipd',
+    order: 6,
+    submenu: [
+      {
+        id: 'reception.ipd.inpatients',
+        title: 'Inpatients',
+        route: ROUTES.RECEPTION.IPD_INPATIENTS,
+        matchPaths: [ROUTES.RECEPTION.IPD_INPATIENTS, ROUTES.RECEPTION.IPD_DISCHARGE]
+      },
+      {
+        id: 'reception.ipd.wards',
+        title: 'Wards & Beds',
+        route: ROUTES.RECEPTION.IPD_WARDS,
+        matchPaths: [ROUTES.RECEPTION.IPD_WARDS]
+      },
+      {
+        id: 'reception.ipd.reports',
+        title: 'IPD Reports',
+        route: ROUTES.RECEPTION.IPD_REPORTS,
+        matchPaths: [ROUTES.RECEPTION.IPD_REPORTS]
+      }
+    ]
   }
 ];
 

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../../services/api';
+import { useAuth } from '../../../context/AuthContext';
 import OpdTokenPrintModal from '../../../components/OpdTokenPrintModal';
 
 // Convert 24-hr HH:mm string to 12-hr hh:mm AM/PM format for UI display
@@ -136,6 +137,7 @@ const PAYMENT_METHODS = ['Cash', 'UPI', 'Card', 'Credit'];
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
 
 export default function AppointmentBookingModule() {
+  const { user } = useAuth();
   const [doctors, setDoctors] = useState([]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -261,7 +263,21 @@ export default function AppointmentBookingModule() {
 
     const doc = doctors.find(d => d._id === selectedDoctor);
     const allSlots = generateSlotsForDoctor(doc);
-    const bookedSet = new Set(bookedAppointments.map(a => normalizeTimeTo24Hr(a.time)));
+
+    // Filter active bookings and map both 12hr and 24hr slot representations
+    const activeBookings = (bookedAppointments || []).filter(a => {
+      const isCancelled = a.status === 'Cancelled' || a.workflow?.queueState === 'CANCELLED';
+      return !isCancelled;
+    });
+
+    const bookedTimes = [];
+    activeBookings.forEach(a => {
+      if (a.time) bookedTimes.push(normalizeTimeTo24Hr(a.time));
+      if (a.appointmentSlot?.startTime) bookedTimes.push(normalizeTimeTo24Hr(a.appointmentSlot.startTime));
+      if (a.appointmentSlot?.slotId) bookedTimes.push(normalizeTimeTo24Hr(a.appointmentSlot.slotId));
+      if (typeof a.appointmentSlot === 'string') bookedTimes.push(normalizeTimeTo24Hr(a.appointmentSlot));
+    });
+    const bookedSet = new Set(bookedTimes.filter(Boolean));
 
     const now = new Date();
     const todayStr = getLocalDateStr(now);
@@ -403,7 +419,7 @@ export default function AppointmentBookingModule() {
       }
       try {
         setSubmitting(true);
-        const pRes = await api.post('/operations/patients/register', {
+        const pRes = await api.post('/operations/patients', {
           name: patientForm.name,
           mobileNumber: patientForm.mobileNumber,
           age: patientForm.age,
@@ -415,12 +431,13 @@ export default function AppointmentBookingModule() {
           patientIdToUse = pRes.data.data._id;
           setSelectedPatient(pRes.data.data);
         } else {
-          toast.error('Could not register patient profile');
+          toast.error(pRes.data?.message || 'Could not register patient profile');
           setSubmitting(false);
           return;
         }
       } catch (err) {
-        toast.error(err.response?.data?.message || 'Patient registration failed');
+        console.error('Patient registration error:', err);
+        toast.error(err.response?.data?.message || err.message || 'Patient registration failed');
         setSubmitting(false);
         return;
       }
@@ -461,7 +478,12 @@ export default function AppointmentBookingModule() {
         chiefComplaint: 'General Consultation',
         consultationFee: Number(consultationFee) || 500,
         billingStatus: paymentStatus === 'Paid' ? 'Paid' : 'Unpaid',
-        appointmentSlot: selectedSlot,
+        paymentMethod: paymentMethod || 'Cash',
+        appointmentSlot: {
+          startTime: selectedSlot,
+          endTime: selectedSlot,
+          slotId: selectedSlot
+        },
         bookingSource: 'RECEPTION'
       };
 
@@ -506,7 +528,8 @@ export default function AppointmentBookingModule() {
         toast.error(res.data?.message || 'Failed to book appointment');
       }
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Error booking appointment slot');
+      console.error('Error booking appointment slot:', err);
+      toast.error(err.response?.data?.message || err.message || 'Error booking appointment slot');
     } finally {
       setSubmitting(false);
     }
@@ -524,23 +547,24 @@ export default function AppointmentBookingModule() {
   return (
     <div className="space-y-4 max-w-7xl mx-auto pb-8">
       {/* HEADER TITLE */}
-      <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
-        <div>
-          <h1 className="text-lg font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-            <CalendarIcon className="w-5 h-5 text-[#3563F6]" />
-            <span>Book Doctor Appointment</span>
+      <div className="flex items-center justify-between gap-3 bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[15px] sm:text-lg font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+            <CalendarIcon className="w-5 h-5 text-[#3563F6] shrink-0" />
+            <span className="leading-tight sm:leading-normal">Book Doctor Appointment</span>
           </h1>
-          <p className="text-xs text-slate-500 font-medium">
+          <p className="text-[11px] sm:text-xs text-slate-500 font-medium mt-0.5 sm:mt-1">
             Single-page appointment booking form
           </p>
         </div>
         <button
           type="button"
           onClick={fetchBookedAppointments}
-          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+          className="p-2 sm:px-3 sm:py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+          title="Refresh"
         >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Refresh</span>
+          <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+          <span className="hidden sm:inline">Refresh</span>
         </button>
       </div>
 
@@ -656,9 +680,11 @@ export default function AppointmentBookingModule() {
                   )}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-1">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 sm:gap-2.5 pt-1">
                   <div>
-                    <label className="text-[11px] font-bold text-slate-700 block mb-0.5">Patient Name *</label>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-0.5 truncate" title="Patient Name">
+                      Patient Name *
+                    </label>
                     <input
                       type="text"
                       placeholder="Full Name"
@@ -668,7 +694,9 @@ export default function AppointmentBookingModule() {
                     />
                   </div>
                   <div>
-                    <label className="text-[11px] font-bold text-slate-700 block mb-0.5">Mobile Number *</label>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-0.5 truncate" title="Mobile Number">
+                      Mobile Number *
+                    </label>
                     <input
                       type="text"
                       placeholder="10-digit Mobile"
@@ -678,7 +706,9 @@ export default function AppointmentBookingModule() {
                     />
                   </div>
                   <div>
-                    <label className="text-[11px] font-bold text-slate-700 block mb-0.5">Age *</label>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-0.5 truncate" title="Age">
+                      Age *
+                    </label>
                     <input
                       type="number"
                       placeholder="Years"
@@ -688,11 +718,13 @@ export default function AppointmentBookingModule() {
                     />
                   </div>
                   <div>
-                    <label className="text-[11px] font-bold text-slate-700 block mb-0.5">Gender *</label>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-0.5 truncate" title="Gender">
+                      Gender *
+                    </label>
                     <select
                       value={patientForm.gender}
                       onChange={(e) => setPatientForm({ ...patientForm, gender: e.target.value })}
-                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white"
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white cursor-pointer"
                     >
                       <option value="Male">Male</option>
                       <option value="Female">Female</option>
@@ -706,7 +738,7 @@ export default function AppointmentBookingModule() {
                     <select
                       value={patientForm.bloodGroup}
                       onChange={(e) => setPatientForm({ ...patientForm, bloodGroup: e.target.value })}
-                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white"
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white cursor-pointer"
                     >
                       <option value="">Select Blood Group</option>
                       {BLOOD_GROUPS.map(bg => <option key={bg} value={bg}>{bg}</option>)}
@@ -729,13 +761,15 @@ export default function AppointmentBookingModule() {
 
               {/* DIVIDER & DOCTOR/DATE SETUP */}
               <div className="pt-2 border-t border-slate-100">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
                   <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1">Consulting Doctor *</label>
+                    <label className="text-xs font-bold text-slate-700 block mb-1 truncate" title="Consulting Doctor">
+                      Consulting Doctor *
+                    </label>
                     <select
                       value={selectedDoctor}
                       onChange={(e) => setSelectedDoctor(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-extrabold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white"
+                      className="w-full px-2.5 sm:px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-extrabold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white cursor-pointer truncate"
                     >
                       {doctors.map((doc) => (
                         <option key={doc._id} value={doc._id}>
@@ -746,13 +780,15 @@ export default function AppointmentBookingModule() {
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1">Appointment Date *</label>
+                    <label className="text-xs font-bold text-slate-700 block mb-1 truncate" title="Appointment Date">
+                      Appointment Date *
+                    </label>
                     <input
                       type="date"
                       value={bookingDate}
                       onChange={(e) => setBookingDate(e.target.value)}
                       min={getLocalDateStr(new Date())}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-extrabold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white"
+                      className="w-full px-2.5 sm:px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-extrabold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white cursor-pointer"
                     />
                   </div>
                 </div>
@@ -964,7 +1000,7 @@ export default function AppointmentBookingModule() {
                           onClick={() => setIsTimeDropdownOpen(false)}
                           className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 transition-all cursor-pointer"
                         >
-                          CANCEL
+                          CLOSE
                         </button>
                         <button
                           type="button"

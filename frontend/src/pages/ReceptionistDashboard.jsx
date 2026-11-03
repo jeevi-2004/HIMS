@@ -1,10 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import AppointmentBookingModal from '../components/AppointmentBookingModal';
+import { workflowRealtime } from '../services/workflowRealtimeService';
+import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
 import { 
   Calendar, Clock, HeartPulse, ShieldCheck, Plus, Users, Pill, AlertTriangle,
   CheckCircle2, ChevronRight, Activity, Search
@@ -25,11 +27,37 @@ const ReceptionistDashboard = () => {
     refetchIntervalInBackground: true
   });
 
-  // Fetch doctors list
+  useEffect(() => {
+    const unsubscribe = workflowRealtime.subscribe((event) => {
+      appointmentsRefetch();
+      if (!event) return;
+      const eventType = event.type || '';
+      const qState = (event.queueState || event.queueStatus || event.status || '').toUpperCase();
+
+      const isCallEvent =
+        eventType === 'TriggerVoiceCall' ||
+        eventType === 'ConsultationStarted' ||
+        (eventType === 'PatientCalled' && (qState === 'CALLED' || qState.includes('CONSULTATION')));
+
+      if (isCallEvent && (event.tokenNumber || event.token || event.patientName || event.patientId || event.appointmentId || event._id)) {
+        voiceAnnouncement.announceCall({
+          tokenNumber: event.tokenNumber || event.token || event.tokenNo || '',
+          tokenNo: event.tokenNumber || event.token || event.tokenNo || '',
+          patientName: event.patientName || (typeof event.patientId === 'object' ? event.patientId?.name : '') || 'Patient',
+          doctorName: event.doctorName || (typeof event.doctorId === 'object' ? event.doctorId?.name : '') || 'Doctor',
+          roomNo: event.roomNo || event.roomNumber || (typeof event.doctorId === 'object' ? (event.doctorId?.roomNo || event.doctorId?.doctorProfile?.roomNo) : 'Consultation Room'),
+          roomNumber: event.roomNo || event.roomNumber || 'Consultation Room'
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, [appointmentsRefetch]);
+
+  // Fetch doctors list (including DOCTOR and DOCTOR_ADMIN)
   const { data: doctors } = useQuery({
     queryKey: ['doctors', 'dashboardList'],
     queryFn: async () => {
-      const res = await api.get('/admin/users?role=DOCTOR');
+      const res = await api.get('/admin/users?role=DOCTOR,DOCTOR_ADMIN');
       return res.data?.data || [];
     }
   });
@@ -47,7 +75,10 @@ const ReceptionistDashboard = () => {
   const doctorQueueList = useMemo(() => {
     if (!doctors || doctors.length === 0) return [];
     return doctors.map(doc => {
-      const docApps = todayApps.filter(a => (a.doctorId?._id === doc._id || a.doctorId === doc._id));
+      const docApps = todayApps.filter(a => {
+        const aDocId = a.doctorId?._id ? String(a.doctorId._id) : a.doctorId ? String(a.doctorId) : '';
+        return aDocId && aDocId === String(doc._id);
+      });
       const waiting = docApps.filter(a => ['Waiting', 'Scheduled', 'Admitted'].includes(a.status || a.queueStatus)).length;
       const consulting = docApps.filter(a => ['In Consultation', 'In-Consultation', 'Called'].includes(a.status || a.queueStatus)).length;
       const completed = docApps.filter(a => a.status === 'Completed' || a.queueStatus === 'Completed').length;
@@ -59,7 +90,7 @@ const ReceptionistDashboard = () => {
       return {
         id: doc._id,
         name: doc.name?.startsWith('Dr.') ? doc.name : `Dr. ${doc.name}`,
-        department: doc.departmentId?.name || 'General OPD',
+        department: doc.departmentId?.name || doc.doctorProfile?.specialization || 'General OPD',
         waiting,
         consulting,
         completed,
@@ -176,7 +207,7 @@ const ReceptionistDashboard = () => {
 
   const emergencyWaitingApps = useMemo(() => {
     return todayApps.filter(a => 
-      (a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || (a.consultationType || '').toLowerCase() === 'emergency' || (a.tokenNumber || '').startsWith('EMG')) &&
+      (a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || (a.consultationType || '').toLowerCase() === 'emergency' || String(a.tokenNumber || '').startsWith('EMG')) &&
       ['Waiting', 'Scheduled', 'Admitted'].includes(a.status || a.queueStatus)
     );
   }, [todayApps]);
@@ -201,25 +232,16 @@ const ReceptionistDashboard = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-3 justify-between sm:justify-end">
-          <div className="text-right">
+        <div className="flex items-center gap-3 justify-start sm:justify-end">
+          <div className="text-left sm:text-right">
             <div className="text-xs font-bold text-slate-800 font-sans">
               {formattedTodayDate}
             </div>
-            <div className="text-[10px] font-semibold text-emerald-600 flex items-center justify-end gap-1">
+            <div className="text-[10px] font-semibold text-emerald-600 flex items-center justify-start sm:justify-end gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               <span>Live OPD Active</span>
             </div>
           </div>
-
-          <Button
-            onClick={() => setIsBookOpen(true)}
-            variant="primary"
-            icon={Plus}
-            className="text-xs font-bold uppercase tracking-wider h-[42px] px-5 bg-[#3563F6] hover:bg-blue-700 shadow-xs cursor-pointer"
-          >
-            Generate Token
-          </Button>
         </div>
       </div>
 

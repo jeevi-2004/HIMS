@@ -188,18 +188,26 @@ const ReceptionistPrintQueue = () => {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="p-4 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-1">
-          <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Prescriptions Ready to Print</div>
-          <div className="text-2xl font-extrabold text-slate-900 font-mono flex items-center gap-2">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4">
+        <div className="p-3.5 sm:p-4 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-1">
+          <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 truncate" title="Prescriptions Ready to Print">
+            Prescriptions Ready to Print
+          </div>
+          <div className="text-xl sm:text-2xl font-extrabold text-slate-900 font-mono flex items-center gap-1.5 sm:gap-2 flex-wrap">
             <span>{metrics.totalCompleted}</span>
-            <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">Completed</span>
+            <span className="text-[10px] sm:text-xs font-semibold text-emerald-600 bg-emerald-50 px-1.5 sm:px-2 py-0.5 rounded-md border border-emerald-200">
+              Completed
+            </span>
           </div>
         </div>
 
-        <div className="p-4 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-1">
-          <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Today's Total Completed</div>
-          <div className="text-2xl font-extrabold text-[#3563F6] font-mono">{metrics.todayCompleted}</div>
+        <div className="p-3.5 sm:p-4 bg-white border border-slate-200/90 rounded-2xl shadow-2xs space-y-1">
+          <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 truncate" title="Today's Total Completed">
+            Today's Total Completed
+          </div>
+          <div className="text-xl sm:text-2xl font-extrabold text-[#3563F6] font-mono">
+            {metrics.todayCompleted}
+          </div>
         </div>
       </div>
 

@@ -11,6 +11,7 @@ const HospitalBillingWorkflowSettings = lazy(() => import('../../pages/HospitalB
 const BillingTransactions = lazy(() => import('../../pages/BillingTransactions'));
 const HospitalPrescriptionPrintConfiguration = lazy(() => import('../../pages/HospitalPrescriptionPrintConfiguration'));
 const SuperAdminDashboard = lazy(() => import('../../pages/SuperAdminDashboard'));
+const WardsBeds = lazy(() => import('../../pages/ipd/WardsBeds'));
 
 const ADMIN_ROLES = ROLE_GROUPS.ADMIN;
 
@@ -103,6 +104,15 @@ export const adminRoutes = (
         </WorkspaceRoute>
       } 
     />
+    <Route 
+      path={ROUTES.ADMIN.IPD_WARDS} 
+      element={
+        <WorkspaceRoute allowedRoles={ADMIN_ROLES} featureFlag="IPD">
+          <WardsBeds />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route path="/admin/wards" element={<Navigate to={ROUTES.ADMIN.IPD_WARDS} replace />} />
 
     {/* Fallback tabs for Super Admin System Modules */}
     <Route path="/features" element={<WorkspaceRoute allowedRoles={['SUPER_ADMIN']}><SuperAdminDashboard /></WorkspaceRoute>} />

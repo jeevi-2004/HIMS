@@ -42,7 +42,7 @@ const MobileNumber = ({
           {typeof label === 'string' ? label.replace(/\s*\*+$/, '') : label} {required && <span className="text-[#EF4444]">*</span>}
         </label>
       )}
-      <div className={`relative flex items-stretch rounded-lg border overflow-hidden transition-all bg-white ${
+      <div className={`relative flex items-stretch rounded-lg border overflow-hidden transition-all bg-white mt-auto h-[42px] ${
         error ? 'border-[#EF4444] focus-within:ring-2 focus-within:ring-[#EF4444]/10 focus-within:border-[#EF4444]' : 'border-slate-300 focus-within:ring-2 focus-within:ring-[#2F63F2]/10 focus-within:border-[#2F63F2]'
       }`}>
         

@@ -18,7 +18,13 @@ export const ROUTES = {
     FOLLOW_UPS: '/doctor/follow-ups',
     MEDICAL_HISTORY: '/doctor/history',
     CLINICAL_MASTERS: '/doctor/clinical-masters',
-    REPORTS: '/doctor/reports'
+    REPORTS: '/doctor/reports',
+    // IPD sub-module (shown only when hospital has IPD enabled)
+    IPD_DEPARTMENT: '/doctor/ipd',
+    IPD_INPATIENTS: '/doctor/ipd/inpatients',
+    IPD_WARDS: '/doctor/ipd/wards',
+    IPD_DISCHARGE: '/doctor/ipd/discharge',
+    IPD_REPORTS: '/doctor/ipd/reports'
   },
   RECEPTION: {
     BASE: '/reception',
@@ -28,12 +34,19 @@ export const ROUTES = {
     QUEUE: '/reception/queue',
     PRINT_QUEUE: '/reception/print-queue',
     BILLING: '/reception/billing',
-    REPORTS: '/reception/reports'
+    REPORTS: '/reception/reports',
+    // IPD sub-module (shown only when hospital has IPD enabled)
+    IPD_DEPARTMENT: '/reception/ipd',
+    IPD_INPATIENTS: '/reception/ipd/inpatients',
+    IPD_WARDS: '/reception/ipd/wards',
+    IPD_DISCHARGE: '/reception/ipd/discharge',
+    IPD_REPORTS: '/reception/ipd/reports'
   },
   PHARMACY: {
     BASE: '/pharmacy',
     DASHBOARD: '/pharmacy/dashboard',
     DISPENSE: '/pharmacy/dispense',
+    IPD_DISPENSE: '/pharmacy/ipd-dispense',
     REPORTS: '/pharmacy/reports'
   },
   ADMIN: {
@@ -49,7 +62,11 @@ export const ROUTES = {
     SETTINGS: '/admin/settings',
     REPORTS: '/admin/reports',
     DISPLAY_BOARD: '/display-board',
-    PRESCRIPTION_PRINT: '/hospital/prescription-print'
+    PRESCRIPTION_PRINT: '/hospital/prescription-print',
+    IPD_INPATIENTS: '/admin/ipd/inpatients',
+    IPD_WARDS: '/admin/ipd/wards',
+    IPD_DISCHARGE: '/admin/ipd/discharge',
+    IPD_REPORTS: '/admin/ipd/reports'
   },
   SUPER_ADMIN: {
     BASE: '/superadmin',

@@ -14,6 +14,13 @@ const DoctorReports = lazy(() => import('../../pages/DoctorReports'));
 const DoctorClinicalMasters = lazy(() => import('../../pages/DoctorClinicalMasters'));
 const DoctorPatientSearch = lazy(() => import('../../pages/DoctorPatientSearch'));
 
+// Reused IPD Pages — same components as Admin IPD, no new pages needed
+const IPDDepartmentPage = lazy(() => import('../../pages/ipd/IPDDepartmentPage'));
+const Inpatients = lazy(() => import('../../pages/ipd/Inpatients'));
+const WardsBeds = lazy(() => import('../../pages/ipd/WardsBeds'));
+const Discharge = lazy(() => import('../../pages/ipd/Discharge'));
+const IPDReports = lazy(() => import('../../pages/ipd/IPDReports'));
+
 // Keyed wrapper for Doctor Consultation workspace to guarantee 100% component unmounting and state isolation when switching patients
 export const DoctorConsultationKeyed = () => {
   const params = useParams();
@@ -139,6 +146,56 @@ export const doctorRoutes = (
       element={
         <WorkspaceRoute allowedRoles={ROLE_GROUPS.ALL_STAFF}>
           <DoctorPatientSearch />
+        </WorkspaceRoute>
+      } 
+    />
+
+    {/* IPD Department Routes — gated by featureFlag="IPD" */}
+    <Route 
+      path="/doctor/ipd" 
+      element={
+        <WorkspaceRoute allowedRoles={DOCTOR_ROLES} featureFlag="IPD">
+          <IPDDepartmentPage />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path={ROUTES.DOCTOR.IPD_DEPARTMENT} 
+      element={
+        <WorkspaceRoute allowedRoles={DOCTOR_ROLES} featureFlag="IPD">
+          <IPDDepartmentPage />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path={ROUTES.DOCTOR.IPD_INPATIENTS} 
+      element={
+        <WorkspaceRoute allowedRoles={DOCTOR_ROLES} featureFlag="IPD">
+          <Inpatients />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path={ROUTES.DOCTOR.IPD_WARDS} 
+      element={
+        <WorkspaceRoute allowedRoles={DOCTOR_ROLES} featureFlag="IPD">
+          <WardsBeds />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path={ROUTES.DOCTOR.IPD_DISCHARGE} 
+      element={
+        <WorkspaceRoute allowedRoles={DOCTOR_ROLES} featureFlag="IPD">
+          <Discharge />
+        </WorkspaceRoute>
+      } 
+    />
+    <Route 
+      path={ROUTES.DOCTOR.IPD_REPORTS} 
+      element={
+        <WorkspaceRoute allowedRoles={DOCTOR_ROLES} featureFlag="IPD">
+          <IPDReports />
         </WorkspaceRoute>
       } 
     />

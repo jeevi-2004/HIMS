@@ -7,32 +7,35 @@ export const parseError = (error) => {
     return { message: 'An unknown error occurred.', code: 'UNKNOWN_ERROR', status: 500 };
   }
 
+  // Unwrap if nested { error, componentStack }
+  const target = error.error || error;
+
   // Axios API response error
-  if (error.response) {
+  if (target.response) {
     return {
-      message: error.response.data?.message || error.response.data?.error || 'Server error occurred.',
-      code: error.response.data?.code || `HTTP_${error.response.status}`,
-      status: error.response.status,
-      stack: error.stack
+      message: target.response.data?.message || target.response.data?.error || 'Server error occurred.',
+      code: target.response.data?.code || `HTTP_${target.response.status}`,
+      status: target.response.status,
+      stack: target.stack
     };
   }
 
   // Axios network failure error (no response)
-  if (error.request) {
+  if (target.request) {
     return {
       message: 'Network error. Please check your internet connection.',
       code: 'NETWORK_ERROR',
       status: 0,
-      stack: error.stack
+      stack: target.stack
     };
   }
 
   // Standard JavaScript / React Error
   return {
-    message: error.message || String(error),
-    code: error.name || 'CLIENT_ERROR',
+    message: target.message || (typeof target === 'string' ? target : JSON.stringify(target)),
+    code: target.name || 'CLIENT_ERROR',
     status: 500,
-    stack: error.stack
+    stack: target.stack || error.componentStack
   };
 };
 

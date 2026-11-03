@@ -48,7 +48,8 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
     age: '',
     gender: '',
     bloodGroup: '',
-    place: ''
+    place: '',
+    allergies: ''
   });
 
   const { billingSettings } = useBillingSettings();
@@ -284,7 +285,8 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
       age: '',
       gender: 'Male',
       bloodGroup: 'O+',
-      place: ''
+      place: '',
+      allergies: ''
     });
     setSelectedComplaints([]);
     setAdditionalNotes('');
@@ -304,6 +306,17 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
     setSelectedPatient(patient);
     setPatientSearchQuery('');
     setIsSearchFocused(false);
+    const patAllergies = Array.isArray(patient?.allergies) ? patient.allergies.join(', ') : (patient?.allergies || '');
+    setQuickPatient(prev => ({
+      ...prev,
+      name: patient?.name || '',
+      mobileNumber: patient?.mobileNumber || '',
+      age: patient?.age ? String(patient.age) : '',
+      gender: patient?.gender || '',
+      bloodGroup: patient?.bloodGroup || '',
+      place: patient?.address || patient?.place || '',
+      allergies: patAllergies
+    }));
   };
 
   const handleGenerateToken = async (mode = 'generate') => {
@@ -363,7 +376,44 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
     setSubmitting(true);
 
     try {
-      // 1. Create Patient Profile if Quick Reg
+      // 1. Process & Deduplicate Allergies entered in Quick Patient form
+      const rawAllergies = quickPatient.allergies
+        ? (typeof quickPatient.allergies === 'string'
+            ? quickPatient.allergies.split(/[,;\n/]+/).map(s => s.trim()).filter(Boolean)
+            : Array.isArray(quickPatient.allergies)
+              ? quickPatient.allergies.map(s => String(s).trim()).filter(Boolean)
+              : [])
+        : [];
+      const seenAllergies = new Set();
+      const uniqueAllergies = [];
+      for (const a of rawAllergies) {
+        const k = a.toLowerCase();
+        if (!seenAllergies.has(k) && k !== 'none' && k !== 'null' && k !== 'undefined' && k !== 'nil') {
+          seenAllergies.add(k);
+          uniqueAllergies.push(a);
+        }
+      }
+
+      // Preserve existing patient allergies if none newly entered
+      if (uniqueAllergies.length === 0 && selectedPatient?.allergies) {
+        const existingAllergies = Array.isArray(selectedPatient.allergies)
+          ? selectedPatient.allergies
+          : String(selectedPatient.allergies).split(/[,;\n/]+/);
+        for (const a of existingAllergies) {
+          const clean = String(a).trim();
+          if (clean && !seenAllergies.has(clean.toLowerCase()) && clean.toLowerCase() !== 'none') {
+            seenAllergies.add(clean.toLowerCase());
+            uniqueAllergies.push(clean);
+          }
+        }
+      }
+
+      // If "Allergy" chip was selected and still no specific allergy entered, tag it
+      if (uniqueAllergies.length === 0 && selectedComplaints.includes('Allergy')) {
+        uniqueAllergies.push('Allergy Reported');
+      }
+
+      // 2. Create Patient Profile if Quick Reg
       if (!targetPatientId) {
         const patientPayload = {
           name: quickPatient.name.trim(),
@@ -371,7 +421,8 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
           gender: quickPatient.gender,
           bloodGroup: quickPatient.bloodGroup || 'O+',
           age: Number(quickPatient.age) || 0,
-          address: quickPatient.place?.trim() || undefined
+          address: quickPatient.place?.trim() || undefined,
+          allergies: uniqueAllergies
         };
 
         const regRes = await api.post('/operations/patients', patientPayload);
@@ -379,12 +430,21 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
         targetPatientId = targetPatientObj._id;
         if (regRes.data.isExisting) {
           toast.success(`Using existing patient profile: ${targetPatientObj.name} (${targetPatientObj.uhid})`);
+          if (uniqueAllergies.length > 0) {
+            try {
+              await api.put(`/operations/patients/${targetPatientId}`, { allergies: uniqueAllergies });
+            } catch (_) {}
+          }
         } else {
           toast.success(`Patient profile registered: ${targetPatientObj.uhid}`);
         }
+      } else if (targetPatientId && uniqueAllergies.length > 0) {
+        try {
+          await api.put(`/operations/patients/${targetPatientId}`, { allergies: uniqueAllergies });
+        } catch (_) {}
       }
 
-      // 2. Format Chief Complaints Text
+      // 3. Format Chief Complaints Text
       const complaintsList = selectedComplaints.filter(c => c !== 'Other');
       if (isOtherSelected && additionalNotes.trim()) {
         complaintsList.push(`Other: ${additionalNotes.trim()}`);
@@ -398,7 +458,7 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
       const isPaid = paymentStatus === 'Paid' || paymentStatus === 'Exempt';
       const billingStatus = isPaid ? (paymentStatus === 'Exempt' ? 'Exempt' : 'Paid') : (isReceptionBefore ? 'Unpaid' : 'Pending');
 
-      // 3. Generate Token via Appointment API
+      // 4. Generate Token via Appointment API
       const appPayload = {
         patientId: targetPatientId,
         doctorId: doctorId,
@@ -406,6 +466,7 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
         time: formatTimeTo12Hr(currentLocalTimeStr),
         consultationType: isEmergency ? 'Emergency' : (consultationDetails?.isFollowup ? 'Follow-Up' : 'Walk-In'),
         chiefComplaint: complaintSummary || undefined,
+        allergies: uniqueAllergies,
         isEmergency: !!isEmergency,
         consultationFee: Number(customFee) || consultationDetails?.amount || 500,
         billingStatus: billingStatus,
@@ -558,23 +619,28 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
             {/* SECTION 2: PATIENT DETAILS */}
             {selectedPatient ? (
               /* Selected Existing Patient Banner */
-              <div className="flex items-center justify-between p-3 bg-blue-50/80 border border-blue-200 rounded-xl font-sans">
-                <div className="flex items-center gap-2 flex-wrap text-xs">
-                  <span className="font-bold text-emerald-700 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-md text-[10px] uppercase tracking-wider">
-                    Existing Patient Auto-Filled ✓
-                  </span>
-                  <span className="font-bold text-slate-900 text-sm">{selectedPatient.name}</span>
-                  <span className="text-slate-500 font-mono text-xs">UHID: {selectedPatient.uhid}</span>
-                  <span className="text-slate-500">| Mobile: {selectedPatient.mobileNumber}</span>
-                  <span className="text-slate-500">| {selectedPatient.age} Yrs, {selectedPatient.gender}</span>
+              <div className="p-3 bg-blue-50/80 border border-blue-200 rounded-xl font-sans space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 flex-wrap text-xs">
+                    <span className="font-bold text-emerald-700 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-md text-[10px] uppercase tracking-wider">
+                      Existing Patient Auto-Filled ✓
+                    </span>
+                    <span className="font-bold text-slate-900 text-sm">{selectedPatient.name}</span>
+                    <span className="text-slate-500 font-mono text-xs">UHID: {selectedPatient.uhid}</span>
+                    <span className="text-slate-500">| Mobile: {selectedPatient.mobileNumber}</span>
+                    <span className="text-slate-500">| {selectedPatient.age} Yrs, {selectedPatient.gender}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPatient(null);
+                      setQuickPatient(prev => ({ ...prev, allergies: '' }));
+                    }}
+                    className="text-xs font-bold text-[#2F63F2] hover:underline flex-shrink-0 cursor-pointer"
+                  >
+                    Change
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedPatient(null)}
-                  className="text-xs font-bold text-[#2F63F2] hover:underline flex-shrink-0"
-                >
-                  Change
-                </button>
               </div>
             ) : (
               /* New Patient Details - 2 Row 3-Column Grid */
@@ -583,8 +649,8 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
                   Patient Details
                 </h4>
 
-                {/* Row 1: Mobile Number, Patient Name / Number, Age */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Row 1: Mobile Number, Patient Name */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <MobileNumber
                     label="Mobile Number"
                     numberValue={quickPatient.mobileNumber}
@@ -610,7 +676,10 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
                     required
                     error={formErrors.quickName}
                   />
+                </div>
 
+                {/* Row 2: Age & Gender (1 row & 2 columns) */}
+                <div className="grid grid-cols-2 gap-3">
                   <Input
                     label="Age"
                     type="number"
@@ -626,10 +695,7 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
                     required
                     error={formErrors.quickAge}
                   />
-                </div>
 
-                {/* Row 2: Gender, Place / Village, Blood Group */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-semibold text-[#6B7280] uppercase tracking-wider pl-1">Gender <span className="text-[#EF4444]">*</span></label>
                     <select
@@ -648,7 +714,10 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
                     </select>
                     {formErrors.quickGender && <span className="text-xs text-[#EF4444] pl-1 mt-0.5">{formErrors.quickGender}</span>}
                   </div>
+                </div>
 
+                {/* Row 3: Place / Village, Blood Group */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Input
                     label="Place / Village (Optional)"
                     placeholder="Enter city or village"
@@ -720,6 +789,21 @@ const AppointmentBookingModal = ({ isOpen, onClose, initialPatient = null, onSuc
                   + Other
                 </button>
               </div>
+
+              {/* Expanded Allergy Details Input if "Allergy" is selected */}
+              {selectedComplaints.includes('Allergy') && (
+                <div className="pt-2">
+                  <Input
+                    label="Allergy Details / Allergens *"
+                    placeholder="e.g. Dust, Penicillin, Peanuts, Sulfa"
+                    value={quickPatient.allergies}
+                    onChange={(e) => {
+                      const val = e?.target ? e.target.value : e;
+                      setQuickPatient({ ...quickPatient, allergies: val });
+                    }}
+                  />
+                </div>
+              )}
 
               {/* Smoothly Expanded Additional Notes Textarea if "Other" is selected */}
               {isOtherSelected && (

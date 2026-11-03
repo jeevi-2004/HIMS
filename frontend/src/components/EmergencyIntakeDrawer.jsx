@@ -737,7 +737,7 @@ const EmergencyIntakeDrawer = ({ isOpen, onClose, doctors = [], onSuccess }) => 
                   onClick={onClose}
                   className="px-5 py-3 border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer min-h-[44px]"
                 >
-                  Cancel
+                  Close
                 </button>
 
                 <button

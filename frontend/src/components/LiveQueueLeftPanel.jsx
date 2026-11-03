@@ -73,7 +73,7 @@ const LiveQueueLeftPanel = ({ isOpen, onClose, onViewAppointment }) => {
   // Filtered queue items based on active tab
   let filteredQueue = doctorApps.filter((app) => {
     if (queueTab === 'WAITING') {
-      return app.queueStatus === 'Waiting';
+      return app.queueStatus === 'Waiting' || app.queueStatus === 'Skipped';
     }
     if (queueTab === 'IN_CONSULTATION') {
       return ['In Consultation', 'In-Consultation', 'Called'].includes(app.queueStatus);
@@ -98,15 +98,21 @@ const LiveQueueLeftPanel = ({ isOpen, onClose, onViewAppointment }) => {
     });
   }
 
-  // Emergency First Sorting: Emergency Queue (EMG) -> Normal Queue (OP)
+  // Emergency First Sorting: Emergency Queue (EMG) -> Normal Queue (OP) -> Skipped Patients Last
   filteredQueue.sort((a, b) => {
-    const aIsEmg = a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || (a.tokenNumber || '').startsWith('EMG');
-    const bIsEmg = b.isEmergency || b.priorityLevel === 'EMERGENCY' || b.priority === 'EMERGENCY' || (b.tokenNumber || '').startsWith('EMG');
+    // 0. Skipped patients ALWAYS move to the LAST position of the waiting queue
+    const isSkippedA = a.queueStatus === 'Skipped' || a.status === 'Skipped';
+    const isSkippedB = b.queueStatus === 'Skipped' || b.status === 'Skipped';
+    if (isSkippedA && !isSkippedB) return 1;
+    if (!isSkippedA && isSkippedB) return -1;
+
+    const aIsEmg = a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || String(a.tokenNumber || '').startsWith('EMG');
+    const bIsEmg = b.isEmergency || b.priorityLevel === 'EMERGENCY' || b.priority === 'EMERGENCY' || String(b.tokenNumber || '').startsWith('EMG');
 
     if (aIsEmg && !bIsEmg) return -1;
     if (!aIsEmg && bIsEmg) return 1;
 
-    return (a.tokenNumber || '').localeCompare(b.tokenNumber || '', undefined, { numeric: true });
+    return String(a.tokenNumber || '').localeCompare(String(b.tokenNumber || ''), undefined, { numeric: true });
   });
 
   return (
@@ -353,6 +359,8 @@ const LiveQueueLeftPanel = ({ isOpen, onClose, onViewAppointment }) => {
                             ? 'bg-blue-50 text-blue-700 border-blue-200'
                             : isDone
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : app.queueStatus === 'Skipped'
+                            ? 'bg-amber-50 text-amber-700 border-amber-200'
                             : 'bg-slate-100 text-slate-600 border-slate-200'
                         }`}>
                           {app.queueStatus}

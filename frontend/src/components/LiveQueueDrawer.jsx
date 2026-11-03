@@ -74,7 +74,7 @@ const LiveQueueDrawer = ({ isOpen, onClose, onViewAppointment }) => {
   // Filtered queue items based on active tab
   let filteredQueue = doctorApps.filter((app) => {
     if (queueTab === 'WAITING') {
-      return app.queueStatus === 'Waiting';
+      return app.queueStatus === 'Waiting' || app.queueStatus === 'Skipped';
     }
     if (queueTab === 'IN_CONSULTATION') {
       return ['In Consultation', 'In-Consultation', 'Called'].includes(app.queueStatus);
@@ -98,6 +98,15 @@ const LiveQueueDrawer = ({ isOpen, onClose, onViewAppointment }) => {
       return pName.includes(q) || pUhid.includes(q) || token.includes(q);
     });
   }
+
+  // Skipped patients ALWAYS move to the LAST position of the waiting queue
+  filteredQueue.sort((a, b) => {
+    const isSkippedA = a.queueStatus === 'Skipped' || a.status === 'Skipped';
+    const isSkippedB = b.queueStatus === 'Skipped' || b.status === 'Skipped';
+    if (isSkippedA && !isSkippedB) return 1;
+    if (!isSkippedA && isSkippedB) return -1;
+    return String(a.tokenNumber || '').localeCompare(String(b.tokenNumber || ''), undefined, { numeric: true });
+  });
 
   // Active doctor details
   const activeDoctor = doctors.find((d) => d._id === selectedDoctorId);
@@ -362,6 +371,8 @@ const LiveQueueDrawer = ({ isOpen, onClose, onViewAppointment }) => {
                                     ? 'bg-blue-50 text-blue-700 border-blue-200'
                                     : isDone
                                     ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : app.queueStatus === 'Skipped'
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200 font-bold'
                                     : 'bg-slate-100 text-slate-600 border-slate-200'
                                 }`}>
                                   {app.queueStatus}

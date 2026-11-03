@@ -116,20 +116,20 @@ export const universalClinicalSearch = (query = '') => {
 
   const medicines = getMasterList('mlist').filter(m => 
     (m.name && m.name.toLowerCase().includes(cleanQ)) || 
-    (m.generic && m.generic.toLowerCase().includes(cleanQ)) || 
+    ((m.generic || m.genericName) && String(m.generic || m.genericName).toLowerCase().includes(cleanQ)) || 
     (m.brand && m.brand.toLowerCase().includes(cleanQ))
   );
 
   const investigations = getMasterList('investigations').filter(i => 
-    (typeof i === 'string' ? i.toLowerCase() : i.name.toLowerCase()).includes(cleanQ)
+    (typeof i === 'string' ? i.toLowerCase() : String(i?.name || '').toLowerCase()).includes(cleanQ)
   );
 
   const advice = getMasterList('adviceList').filter(a => 
-    (typeof a === 'string' ? a.toLowerCase() : a.name.toLowerCase()).includes(cleanQ)
+    (typeof a === 'string' ? a.toLowerCase() : String(a?.name || '').toLowerCase()).includes(cleanQ)
   );
 
   const procedures = getMasterList('procedureList').filter(p => 
-    (typeof p === 'string' ? p.toLowerCase() : p.name.toLowerCase()).includes(cleanQ)
+    (typeof p === 'string' ? p.toLowerCase() : String(p?.name || '').toLowerCase()).includes(cleanQ)
   );
 
   return { diagnoses, medicines, investigations, advice, procedures };
@@ -138,6 +138,42 @@ export const universalClinicalSearch = (query = '') => {
 /**
  * Allergy Conflict Detection Engine.
  */
+
+/**
+ * Canonical Food Timing Normalizer
+ * Guarantees mapping to strictly 'Before Food', 'After Food', or 'With Food'.
+ * Matches HTML <select> options perfectly and prevents blank dropdown selects.
+ */
+export const normalizeFoodTiming = (val) => {
+  if (!val) return 'After Food';
+  const str = String(val).trim().toLowerCase();
+  if (str.includes('before') || str === 'ac' || str.includes('empty') || str.includes('fasting')) {
+    return 'Before Food';
+  }
+  if (str.includes('with') || str === 'cc' || str.includes('during')) {
+    return 'With Food';
+  }
+  if (str.includes('after') || str === 'pc') {
+    return 'After Food';
+  }
+  return 'After Food';
+};
+
+/**
+ * Intelligent Clinical Default Food Timing by Drug Class/Name
+ */
+export const getDefaultFoodTimingForMedicine = (medicineName = '', explicitFood = '') => {
+  if (explicitFood && String(explicitFood).trim()) {
+    return normalizeFoodTiming(explicitFood);
+  }
+  const name = String(medicineName || '').toLowerCase();
+  // Antacids, PPIs, sucralfate, empty stomach / before food medications
+  if (/panto|omepra|rabe|esomepra|lansopra|antacid|sucralfate|levothyrox/i.test(name)) {
+    return 'Before Food';
+  }
+  return 'After Food';
+};
+
 export const checkAllergyConflict = (medicineName = '', patientAllergies = []) => {
   if (!medicineName || !patientAllergies || patientAllergies.length === 0) return null;
 

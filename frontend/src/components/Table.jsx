@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronUp, ChevronDown, MoreVertical } from 'lucide-react';
 
 // Safe helper to render action icons whether passed as Lucide components, dynamic functions, or React elements
@@ -49,23 +50,113 @@ const Table = ({
   itemsPerPage = 10,
   emptyState = null,
   flat = false,
-  renderMobileCard = null
+  renderMobileCard = null,
+  paginate = true,
+  showPagination = true,
+  actionsAlign = 'right'
 }) => {
+  const isOnlyThreeDots = !inlineActions && actions.length > 0 && !actions.some(act => act.isPrimary);
+  const effectiveActionsAlign = actionsAlign === 'center' || isOnlyThreeDots ? 'center' : actionsAlign;
   const [sortField, setSortField] = useState('');
   const [sortOrder, setSortOrder] = useState('asc');
   const [currentPage, setCurrentPage] = useState(1);
   const [activeMenuId, setActiveMenuId] = useState(null);
-  const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
+  const [menuPosition, setMenuPosition] = useState({ right: 0 });
   const triggerRefs = useRef({});
+  const menuRef = useRef(null);
 
-  // Close dropdown on outside click or scroll
+  // Helper to compute smart position with auto flip and boundary detection
+  const computePosition = useCallback((triggerEl, rowCount = 4) => {
+    if (!triggerEl) return null;
+    const rect = triggerEl.getBoundingClientRect();
+    const menuWidth = 192; // w-48 = 192px
+    const estimatedHeight = Math.max(80, rowCount * 38 + 16);
+
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+
+    // Flip upwards if space below is insufficient and there is more room above
+    const shouldFlipUp = spaceBelow < estimatedHeight + 12 && spaceAbove > spaceBelow;
+
+    // Horizontal boundary clamping: keep at least 8px padding from screen edges
+    const rawRight = window.innerWidth - rect.right;
+    const minRight = 8;
+    const maxRight = Math.max(8, window.innerWidth - menuWidth - 8);
+    const clampedRight = Math.min(Math.max(minRight, rawRight), maxRight);
+
+    if (shouldFlipUp) {
+      return {
+        bottom: Math.max(8, window.innerHeight - rect.top + 4),
+        right: clampedRight,
+        maxHeight: Math.max(120, rect.top - 16),
+        isFlipped: true
+      };
+    } else {
+      return {
+        top: Math.max(8, rect.bottom + 4),
+        right: clampedRight,
+        maxHeight: Math.max(120, window.innerHeight - rect.bottom - 16),
+        isFlipped: false
+      };
+    }
+  }, []);
+
+  // Close dropdown on outside click
   const handleClose = useCallback(() => setActiveMenuId(null), []);
 
+  // Handle outside scroll & window resize, and fine-tune menu position post-mount
   useEffect(() => {
     if (activeMenuId === null) return;
-    const handleScroll = () => setActiveMenuId(null);
+
+    // Fine-tune position if actual rendered DOM height differs from estimate
+    const triggerEl = triggerRefs.current[activeMenuId];
+    const menuEl = menuRef.current;
+    if (triggerEl && menuEl) {
+      const rect = triggerEl.getBoundingClientRect();
+      const menuRect = menuEl.getBoundingClientRect();
+      const menuHeight = menuRect.height;
+      const menuWidth = menuRect.width || 192;
+
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const shouldFlipUp = spaceBelow < menuHeight + 12 && spaceAbove > spaceBelow;
+
+      const rawRight = window.innerWidth - rect.right;
+      const minRight = 8;
+      const maxRight = Math.max(8, window.innerWidth - menuWidth - 8);
+      const clampedRight = Math.min(Math.max(minRight, rawRight), maxRight);
+
+      if (shouldFlipUp) {
+        const newBottom = Math.max(8, window.innerHeight - rect.top + 4);
+        const newMaxH = Math.max(120, rect.top - 16);
+        setMenuPosition(prev => {
+          if (prev.bottom === newBottom && prev.right === clampedRight && prev.maxHeight === newMaxH && prev.top === undefined) return prev;
+          return { bottom: newBottom, right: clampedRight, maxHeight: newMaxH, isFlipped: true };
+        });
+      } else {
+        const newTop = Math.max(8, rect.bottom + 4);
+        const newMaxH = Math.max(120, window.innerHeight - rect.bottom - 16);
+        setMenuPosition(prev => {
+          if (prev.top === newTop && prev.right === clampedRight && prev.maxHeight === newMaxH && prev.bottom === undefined) return prev;
+          return { top: newTop, right: clampedRight, maxHeight: newMaxH, isFlipped: false };
+        });
+      }
+    }
+
+    const handleScroll = (e) => {
+      // Don't close if scrolling inside the dropdown menu itself
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      setActiveMenuId(null);
+    };
+
+    const handleResize = () => setActiveMenuId(null);
+
     window.addEventListener('scroll', handleScroll, true);
-    return () => window.removeEventListener('scroll', handleScroll, true);
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('resize', handleResize);
+    };
   }, [activeMenuId]);
 
   const handleSort = (field) => {
@@ -96,11 +187,11 @@ const Table = ({
   });
 
   // Paginate data
-  const totalPages = Math.ceil(sortedData.length / itemsPerPage);
-  const paginatedData = sortedData.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  );
+  const shouldPaginate = paginate !== false && showPagination !== false;
+  const totalPages = shouldPaginate ? Math.ceil(sortedData.length / itemsPerPage) : 1;
+  const paginatedData = shouldPaginate
+    ? sortedData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
+    : sortedData;
 
   const getStatusBadgeClass = (status) => {
     if (!status) return '';
@@ -143,7 +234,15 @@ const Table = ({
                   </div>
                 </th>
               ))}
-              {actions.length > 0 && <th className="p-4 pr-11 sticky top-0 bg-slate-50 z-10 text-right whitespace-nowrap font-bold uppercase tracking-wider text-[10px] text-[#6B7280]">Actions</th>}
+              {actions.length > 0 && (
+                <th className={`p-4 sticky top-0 bg-slate-50 z-10 whitespace-nowrap font-bold uppercase tracking-wider text-[10px] text-[#6B7280] ${
+                  effectiveActionsAlign === 'center' ? 'text-center' : 'text-right pr-11'
+                }`}>
+                  <div className={`w-full flex items-center ${effectiveActionsAlign === 'center' ? 'justify-center text-center' : 'justify-end'}`}>
+                    Actions
+                  </div>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-[#E5E7EB] text-xs text-[#111827] font-medium">
@@ -173,9 +272,9 @@ const Table = ({
 
                 {/* Inline Action Buttons or 3-Dot Dropdown Menu */}
                 {actions.length > 0 && (
-                  <td className="p-4 text-right whitespace-nowrap">
+                  <td className={`p-4 whitespace-nowrap ${effectiveActionsAlign === 'center' ? 'text-center' : 'text-right'}`}>
                     {inlineActions ? (
-                      <div className="flex items-center justify-end gap-2">
+                      <div className={`w-full flex items-center gap-2 ${effectiveActionsAlign === 'center' ? 'justify-center' : 'justify-end'}`}>
                         {actions
                           .filter(act => {
                             if (act.hidden && typeof act.hidden === 'function' && act.hidden(row)) return false;
@@ -227,7 +326,7 @@ const Table = ({
                           })}
                       </div>
                     ) : (
-                      <div className="flex items-center justify-end gap-2">
+                      <div className={`w-full flex items-center gap-2 ${effectiveActionsAlign === 'center' ? 'justify-center' : 'justify-end'}`}>
                         {/* 1. Primary status-driven action rendered inline */}
                         {actions.filter(act => act.isPrimary && (!act.show || act.show(row))).map((act, aIdx) => {
                           const actLabel = typeof act.label === 'function' ? act.label(row) : act.label;
@@ -271,24 +370,29 @@ const Table = ({
 
                         {/* 2. Secondary actions inside dedicated 3-dot dropdown menu */}
                         {actions.some(act => !act.isPrimary && (!act.show || act.show(row))) && (
-                          <div className="relative">
+                          <div className="relative inline-flex items-center justify-center">
                             <button 
                               ref={el => { triggerRefs.current[row._id || row.id || idx] = el; }}
                               onClick={(e) => {
+                                e.stopPropagation();
                                 const rowId = row._id || row.id || idx;
                                 if (activeMenuId === rowId) {
                                   setActiveMenuId(null);
                                 } else {
-                                  const rect = e.currentTarget.getBoundingClientRect();
-                                  setMenuPosition({
-                                    top: rect.bottom + 4,
-                                    right: window.innerWidth - rect.right
-                                  });
+                                  const rowActions = actions.filter(act => !act.isPrimary && (!act.show || act.show(row)));
+                                  const pos = computePosition(e.currentTarget, rowActions.length);
+                                  if (pos) setMenuPosition(pos);
                                   setActiveMenuId(rowId);
                                 }
                               }}
-                              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors inline-flex items-center justify-center"
+                              className={`p-1.5 rounded-lg border transition-colors inline-flex items-center justify-center cursor-pointer ${
+                                activeMenuId === (row._id || row.id || idx)
+                                  ? 'bg-slate-100 border-slate-300 text-slate-800'
+                                  : 'border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-700'
+                              }`}
                               title="More Options"
+                              aria-label="More Options"
+                              aria-expanded={activeMenuId === (row._id || row.id || idx)}
                             >
                               <MoreVertical className="w-4 h-4" />
                             </button>
@@ -311,21 +415,28 @@ const Table = ({
         </table>
       </div>
 
-      {/* Fixed-position 3-dot dropdown — escapes overflow constraints */}
+      {/* Fixed-position 3-dot dropdown — escapes overflow constraints with intelligent flip & clamping */}
       {activeMenuId !== null && (() => {
-        const row = paginatedData.find(r => (r._id || r.id) === activeMenuId) || paginatedData[activeMenuId];
+        const row = paginatedData.find((r, i) => (r._id || r.id || i) === activeMenuId) || paginatedData[activeMenuId];
         if (!row) return null;
         const rowActions = actions.filter(act => !act.isPrimary && (!act.show || act.show(row)));
         if (rowActions.length === 0) return null;
-        return (
+        return createPortal(
           <>
-            <div className="fixed inset-0 z-[998]" onClick={handleClose} />
+            <div className="fixed inset-0 z-[9998]" onClick={handleClose} />
             <div
-              className="fixed z-[999] w-48 bg-white border border-[#E5E7EB] rounded-xl shadow-lg py-1.5 text-left"
-              style={{ top: menuPosition.top, right: menuPosition.right }}
+              ref={menuRef}
+              className="fixed z-[9999] w-48 bg-white border border-[#E5E7EB] rounded-xl shadow-xl py-1.5 text-left overflow-y-auto animate-in fade-in zoom-in-95 duration-100"
+              style={{
+                ...(menuPosition.top !== undefined ? { top: `${menuPosition.top}px` } : {}),
+                ...(menuPosition.bottom !== undefined ? { bottom: `${menuPosition.bottom}px` } : {}),
+                right: `${menuPosition.right}px`,
+                maxHeight: menuPosition.maxHeight ? `${menuPosition.maxHeight}px` : 'calc(100vh - 24px)',
+              }}
             >
               {rowActions.map((act, aIdx) => {
                 const actLabel = typeof act.label === 'function' ? act.label(row) : act.label;
+                const isDelete = String(actLabel || '').toLowerCase().includes('delete') || act.variant === 'delete' || act.variant === 'danger';
                 return (
                   <button
                     key={aIdx}
@@ -333,9 +444,11 @@ const Table = ({
                       act.onClick(row);
                       setActiveMenuId(null);
                     }}
-                    className={`w-full px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-[#2F63F2]/5 hover:text-[#2F63F2] transition-colors flex items-center gap-2 ${
-                      act.className || ''
-                    }`}
+                    className={`w-full px-4 py-2 text-xs font-semibold transition-colors flex items-center gap-2 text-left cursor-pointer ${
+                      isDelete
+                        ? 'text-rose-600 hover:bg-rose-50 hover:text-rose-700'
+                        : 'text-slate-700 hover:bg-[#2F63F2]/5 hover:text-[#2F63F2]'
+                    } ${act.className || ''}`}
                   >
                     {renderActionIcon(act.icon, row)}
                     <span>{actLabel}</span>
@@ -343,7 +456,8 @@ const Table = ({
                 );
               })}
             </div>
-          </>
+          </>,
+          document.body
         );
       })()}
 
@@ -360,53 +474,74 @@ const Table = ({
                 {renderMobileCard(row, idx)}
               </React.Fragment>
             ) : (
-              <div key={row._id || row.id || idx} className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 shadow-xs text-left font-sans transition-all hover:shadow-md">
-                {/* 2-Column Grid for Primary Card Fields */}
-                <div className="grid grid-cols-2 gap-2 pb-2 border-b border-slate-100">
-                  {headers.slice(0, 2).map((header) => {
-                    const resolveVal = (obj, path) => {
-                      return path.split('.').reduce((acc, part) => acc && acc[part], obj);
-                    };
-                    const cellVal = resolveVal(row, header.key);
-                    return (
-                      <div key={header.key} className="text-left text-xs">
-                        <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">{header.label}</span>
-                        <div className="mt-0.5 text-slate-900 font-bold">
-                          {header.render ? header.render(row) : (cellVal || '-')}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+              (() => {
+                const isActionCol = (h) => {
+                  const k = String(h?.key || '').toLowerCase();
+                  const l = String(h?.label || '').toLowerCase();
+                  return k === 'actions' || k === 'action' || k === 'actionbutton' || l === 'action' || l === 'actions';
+                };
+                const dataHeaders = headers.filter(h => !isActionCol(h));
+                const actionHeaders = headers.filter(isActionCol);
 
-                {/* Remaining Card Fields */}
-                <div className="space-y-2 pt-0.5">
-                  {headers.slice(2).map((header) => {
-                    const resolveVal = (obj, path) => {
-                      return path.split('.').reduce((acc, part) => acc && acc[part], obj);
-                    };
-                    const cellVal = resolveVal(row, header.key);
+                return (
+                  <div key={row._id || row.id || idx} className="bg-white border border-slate-200/80 rounded-2xl p-3.5 sm:p-4 space-y-2.5 sm:space-y-3 shadow-xs text-left font-sans transition-all hover:shadow-md">
+                    {/* 2-Column Grid for Primary Card Fields */}
+                    <div className="grid grid-cols-2 gap-2 pb-2.5 border-b border-slate-100">
+                      {dataHeaders.slice(0, 2).map((header) => {
+                        const resolveVal = (obj, path) => {
+                          return path.split('.').reduce((acc, part) => acc && acc[part], obj);
+                        };
+                        const cellVal = resolveVal(row, header.key);
+                        return (
+                          <div key={header.key} className="text-left text-xs">
+                            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">{header.label}</span>
+                            <div className="mt-0.5 text-slate-900 font-bold">
+                              {header.render ? header.render(row) : (cellVal || '-')}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Remaining Card Data Fields */}
+                    <div className="space-y-2 pt-0.5">
+                      {dataHeaders.slice(2).map((header) => {
+                        const resolveVal = (obj, path) => {
+                          return path.split('.').reduce((acc, part) => acc && acc[part], obj);
+                        };
+                        const cellVal = resolveVal(row, header.key);
+                        
+                        return (
+                          <div key={header.key} className="flex justify-between items-center text-xs py-0.5">
+                            <span className="text-[11px] font-medium text-slate-500 shrink-0">{header.label}</span>
+                            <div className="text-slate-800 font-semibold text-right pl-2">
+                              {header.render ? (
+                                header.render(row)
+                              ) : header.isStatus ? (
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${getStatusBadgeClass(cellVal)}`}>
+                                  {cellVal}
+                                </span>
+                              ) : (
+                                cellVal || '-'
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                     
-                    return (
-                      <div key={header.key} className="flex justify-between items-center text-xs">
-                        <span className="text-[11px] font-semibold text-slate-500">{header.label}</span>
-                        <div className="text-slate-800 font-medium">
-                          {header.render ? (
-                            header.render(row)
-                          ) : header.isStatus ? (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${getStatusBadgeClass(cellVal)}`}>
-                              {cellVal}
-                            </span>
-                          ) : (
-                            cellVal || '-'
-                          )}
-                        </div>
+                    {/* Header Action Column (Full-Width Bottom Bar) */}
+                    {actionHeaders.length > 0 && (
+                      <div className="border-t border-slate-100 pt-2.5 mt-1 flex items-center justify-end w-full">
+                        {actionHeaders.map((header) => (
+                          <div key={header.key} className="w-full">
+                            {header.render ? header.render(row) : null}
+                          </div>
+                        ))}
                       </div>
-                    );
-                  })}
-                </div>
-                
-                {/* Mobile Card Actions */}
+                    )}
+
+                    {/* Mobile Card Actions (when passed via `actions` prop) */}
                 {actions.length > 0 && (
                   <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
                     {actions.filter(act => !act.show || act.show(row)).map((act, aIdx) => {
@@ -447,13 +582,15 @@ const Table = ({
                   </div>
                 )}
               </div>
-            )
-          ))
-        )}
+            );
+          })()
+        )
+      ))
+    )}
       </div>
 
       {/* Pagination Footer */}
-      {totalPages > 1 && (
+      {shouldPaginate && totalPages > 1 && (
         <div className="flex justify-between items-center px-2">
           <span className="text-xs font-semibold text-[#6B7280]">
             Page {currentPage} of {totalPages}

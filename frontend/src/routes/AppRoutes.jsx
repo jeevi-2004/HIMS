@@ -39,7 +39,11 @@ const DashboardHome = () => {
     return <Navigate to={ROUTES.SUPER_ADMIN.DASHBOARD} replace />;
   }
 
-  if (role === USER_ROLES.DOCTOR_ADMIN || role === 'DOCTOR_ADMIN' || role === 'DOCTORADMIN' || role === 'ADMIN' || role === 'HOSPITAL_ADMIN') {
+  if (role === USER_ROLES.ADMIN || role === 'ADMIN' || role === 'HOSPITAL_ADMIN') {
+    return <Navigate to={ROUTES.ADMIN.DASHBOARD} replace />;
+  }
+
+  if (role === USER_ROLES.DOCTOR_ADMIN || role === 'DOCTOR_ADMIN' || role === 'DOCTORADMIN') {
     if (workspaceMode === 'clinical_consultation') {
       return <Navigate to={ROUTES.DOCTOR.DASHBOARD} replace />;
     }

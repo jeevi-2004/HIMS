@@ -33,6 +33,21 @@ const ConsultationSchema = new mongoose.Schema({
   followupDate: {
     type: Date
   },
+  isIpd: {
+    type: Boolean,
+    default: false
+  },
+  admissionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'IPDAdmission'
+  },
+  roundNumber: {
+    type: Number
+  },
+  dayNumber: {
+    type: Number
+  },
+  allergies: [String],
   // Detailed OPD Workflow Fields
   chiefComplaint: String,
   historyOfPresentIllness: String,
@@ -91,6 +106,27 @@ const ConsultationSchema = new mongoose.Schema({
       type: Date,
       default: Date.now
     }
+  }],
+  investigations: [{
+    serviceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Service'
+    },
+    name: {
+      type: String,
+      required: true
+    },
+    code: String,
+    serviceType: {
+      type: String,
+      default: 'Laboratory'
+    },
+    category: String,
+    price: {
+      type: Number,
+      default: 0
+    },
+    notes: String
   }],
 
   // Enterprise Multi-Tenancy & Audit Fields

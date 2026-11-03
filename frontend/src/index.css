@@ -9,7 +9,6 @@
     @apply bg-[#F8FAFC] text-[#111827] font-sans antialiased;
     font-family: 'Poppins', sans-serif;
     min-height: 100vh;
-    overflow-y: auto;
   }
   
   h1, h2, h3, h4, h5, h6 {
@@ -48,6 +47,13 @@
   @apply w-full bg-white border border-[#E5E7EB] rounded-xl px-4 py-2.5 text-[#111827] placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2F63F2]/10 focus:border-[#2F63F2] transition-all duration-200 text-sm box-border;
 }
 
+select.enterprise-input {
+  padding-top: 0.375rem;
+  padding-bottom: 0.375rem;
+  padding-right: 2rem;
+  line-height: 1.25rem;
+}
+
 /* Remove default browser number input stepper / spin buttons (increase & decrease arrows) */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
@@ -57,6 +63,7 @@ input[type="number"]::-webkit-inner-spin-button {
 
 input[type="number"] {
   -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 /* Disable native browser password reveal & clear buttons (Edge/IE/Chrome) */
@@ -278,4 +285,20 @@ input::-webkit-credentials-auto-fill-button {
 .btn-primary-action .calendar-icon {
   transition: transform 180ms cubic-bezier(0.4, 0, 0.2, 1);
   color: currentColor;
+}
+
+/* Subtle, slow moving animation for discharge button icon */
+@keyframes slowDischargeNudge {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(3px);
+  }
+}
+
+.animate-discharge-icon {
+  animation: slowDischargeNudge 2.2s ease-in-out infinite;
+  display: inline-block;
+  will-change: transform;
 }

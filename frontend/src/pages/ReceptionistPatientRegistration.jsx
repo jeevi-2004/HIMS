@@ -285,7 +285,22 @@ const ReceptionistPatientRegistration = () => {
               { 
                 key: 'age', 
                 label: 'Age / Gender', 
-                render: (row) => <span className="font-semibold text-slate-700">{row.age} Yrs / {row.gender}</span> 
+                render: (row) => {
+                  const genderLetter = row.gender ? (row.gender.length === 1 ? row.gender.toUpperCase() : row.gender.charAt(0).toUpperCase()) : '';
+                  const ageGenderText = row.age ? `${row.age} yrs / ${genderLetter || row.gender}` : (genderLetter || '—');
+                  return (
+                    <div className="flex flex-col items-start gap-0.5 whitespace-nowrap">
+                      <span className="font-semibold text-slate-700 text-xs">{ageGenderText}</span>
+                      {row.bloodGroup && row.bloodGroup !== 'Unknown' && row.bloodGroup !== 'N/A' && row.bloodGroup !== '—' ? (
+                        <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight shadow-2xs">
+                          {row.bloodGroup}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 text-[10px] font-medium leading-tight">—</span>
+                      )}
+                    </div>
+                  );
+                }
               },
               { 
                 key: 'bloodGroup', 

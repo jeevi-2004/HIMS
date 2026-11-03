@@ -161,13 +161,17 @@ UserSchema.pre(/^find/, function (next) {
 });
 
 UserSchema.methods.matchPassword = async function (enteredPassword) {
-  if (!this.password) return false;
-  return await bcrypt.compare(enteredPassword, this.password);
+  if (!this.password || enteredPassword === undefined || enteredPassword === null) return false;
+  return await bcrypt.compare(String(enteredPassword), String(this.password));
 };
 
 UserSchema.methods.matchPin = async function (enteredPin) {
-  if (!this.pin) return false;
-  return await bcrypt.compare(enteredPin, this.pin);
+  if (!this.pin || enteredPin === undefined || enteredPin === null) return false;
+  try {
+    return await bcrypt.compare(String(enteredPin), String(this.pin));
+  } catch (err) {
+    return false;
+  }
 };
 
 module.exports = createTenantModel('User', UserSchema, { centralCollection: 'platform_users', tenantCollection: 'users' });

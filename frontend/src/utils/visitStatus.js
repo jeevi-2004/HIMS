@@ -29,22 +29,39 @@ export const getVisitStatus = (app) => {
     return VISIT_STATUSES.NO_SHOW;
   }
 
-  // Emergency Override: Emergency patients enter Waiting Queue immediately
-  const isEmg = app.isEmergency || app.priorityLevel === 'EMERGENCY' || (app.consultationType || '').toLowerCase() === 'emergency';
+  // 2. Check if upcoming/future date
+  const now = new Date();
+  const currY = now.getFullYear();
+  const currM = String(now.getMonth() + 1).padStart(2, '0');
+  const currD = String(now.getDate()).padStart(2, '0');
+  const currentTodayStr = `${currY}-${currM}-${currD}`;
 
-  // 3. Currently in Consultation Room
-  if (app.queueStatus === 'In-Consultation' || app.status === 'In Consultation') {
+  let appDateStr = '';
+  if (app.date) {
+    try {
+      const d = new Date(app.date);
+      if (!isNaN(d.getTime())) {
+        appDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      }
+    } catch (_) {}
+  }
+
+  // Strictly future booking date (appDateStr > currentTodayStr) is SCHEDULED.
+  // Future dates cannot be actively in consultation today.
+  const isFuture = Boolean(appDateStr && appDateStr > currentTodayStr);
+  if (isFuture) {
+    return VISIT_STATUSES.SCHEDULED;
+  }
+
+  // Currently in Consultation Room (today's active visits)
+  if (app.queueStatus === 'In-Consultation' || app.status === 'In Consultation' || app.workflow?.queueState === 'IN_CONSULTATION') {
     return VISIT_STATUSES.IN_CONSULTATION;
   }
 
-  // Emergency active check
+  // Emergency Override: Emergency patients enter Waiting Queue immediately once checked in
+  const isEmg = app.isEmergency || app.priorityLevel === 'EMERGENCY' || (app.consultationType || '').toLowerCase() === 'emergency';
   if (isEmg && app.status !== 'Completed' && app.queueStatus !== 'Completed' && app.status !== 'Sent to Pharmacy') {
     return VISIT_STATUSES.WAITING;
-  }
-
-  // 2. Scheduled (Not yet checked in / admitted)
-  if (app.status === 'Scheduled') {
-    return VISIT_STATUSES.SCHEDULED;
   }
 
   // 4. Sent to Pharmacy
@@ -52,16 +69,21 @@ export const getVisitStatus = (app) => {
     app.status === 'Sent to Pharmacy' ||
     app.status === 'Sent To Pharmacy' ||
     app.queueStatus === 'Sent to Pharmacy' ||
-    app.queueStatus === 'Sent To Pharmacy'
+    app.queueStatus === 'Sent To Pharmacy' ||
+    app.pharmacyStatus === 'SENT' ||
+    app.pharmacyStatus === 'DISPENSING' ||
+    app.workflow?.queueState === 'SENT_TO_PHARMACY' ||
+    app.workflow?.pharmacyState === 'SENT' ||
+    app.workflow?.pharmacyState === 'DISPENSING'
   ) {
-    if (app.status === 'Completed' && app.billingStatus === 'Paid') {
+    if (app.pharmacyStatus === 'DISPENSED' || app.workflow?.pharmacyState === 'DISPENSED') {
       return VISIT_STATUSES.COMPLETED;
     }
     return VISIT_STATUSES.SENT_TO_PHARMACY;
   }
 
   // 5. Skipped by Doctor
-  if (app.queueStatus === 'Skipped') {
+  if (app.queueStatus === 'Skipped' || app.status === 'Skipped') {
     return VISIT_STATUSES.SKIPPED;
   }
 
@@ -69,20 +91,33 @@ export const getVisitStatus = (app) => {
   if (
     app.queueStatus === 'Completed' || 
     app.status === 'Completed' ||
+    app.workflow?.queueState === 'COMPLETED' ||
+    app.workflow?.consultationState === 'COMPLETED' ||
+    app.workflow?.pharmacyState === 'DISPENSED' ||
     app.pharmacyStatus === 'SENT' ||
     app.pharmacyStatus === 'DISPENSING' ||
-    app.pharmacyStatus === 'DISPENSED'
+    app.pharmacyStatus === 'DISPENSED' ||
+    Boolean(app.workflow?.timestamps?.completedAt) ||
+    Boolean(app.workflow?.timestamps?.pharmacyCompletedAt)
   ) {
-    if (app.pharmacyStatus === 'SENT' || app.pharmacyStatus === 'DISPENSING') {
+    if (
+      app.pharmacyStatus === 'SENT' || 
+      app.pharmacyStatus === 'DISPENSING' || 
+      app.workflow?.pharmacyState === 'SENT' || 
+      app.workflow?.pharmacyState === 'DISPENSING' ||
+      app.status === 'Sent to Pharmacy' ||
+      app.queueStatus === 'Sent to Pharmacy'
+    ) {
       return VISIT_STATUSES.SENT_TO_PHARMACY;
     }
-    if (app.billingStatus === 'Unpaid') {
-      return VISIT_STATUSES.BILLING_PENDING;
-    }
-    if (app.pharmacyStatus === 'DISPENSED' && app.billingStatus === 'Paid') {
+    if (app.pharmacyStatus === 'DISPENSED' || app.workflow?.pharmacyState === 'DISPENSED') {
       return VISIT_STATUSES.COMPLETED;
     }
-    return VISIT_STATUSES.CONSULTATION_COMPLETED;
+    // In Doctor Desk for Plan 2 / Digital OPD: after consultation, compulsory place Sent to Pharmacy!
+    if (app.hasPrescription !== false && app.prescriptionsCount !== 0 && !app.isTokenOnly) {
+      return VISIT_STATUSES.SENT_TO_PHARMACY;
+    }
+    return VISIT_STATUSES.COMPLETED;
   }
 
   // 7. Checked-in / Waiting in Lobby

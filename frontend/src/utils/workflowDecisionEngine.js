@@ -75,7 +75,7 @@ export const createWorkflowDecisionEngine = (billingSettings = {}, currentUserRo
       let canStartConsultation = true;
       let startConsultationReason = null;
 
-      const isEmergencyPatient = appointment.isEmergency || appointment.priorityLevel === 'EMERGENCY' || appointment.priority === 'EMERGENCY' || (appointment.consultationType || '').toLowerCase() === 'emergency' || (appointment.tokenNumber || '').startsWith('EMG');
+      const isEmergencyPatient = appointment.isEmergency || appointment.priorityLevel === 'EMERGENCY' || appointment.priority === 'EMERGENCY' || (appointment.consultationType || '').toLowerCase() === 'emergency' || String(appointment.tokenNumber || '').startsWith('EMG');
 
       if (!isEmergencyPatient && isBeforeTiming && (isReceptionCollector || isDoctorCollector)) {
         if (!paid) {

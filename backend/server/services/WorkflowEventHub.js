@@ -27,17 +27,33 @@ class WorkflowEventHubService extends EventEmitter {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.flushHeaders();
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
 
     const client = { id: Date.now(), res };
     this.clients.add(client);
 
-    // Send initial connection event & recent history
-    res.write(`data: ${JSON.stringify({ type: 'CONNECTED', clientCount: this.clients.size, timestamp: new Date().toISOString() })}\n\n`);
-
-    req.on('close', () => {
+    const cleanup = () => {
       this.clients.delete(client);
+    };
+
+    req.on('close', cleanup);
+    req.on('end', cleanup);
+    req.on('error', (err) => {
+      // Prevent uncaught ECONNRESET / EPIPE socket aborts from crashing Node process
+      cleanup();
     });
+    res.on('error', (err) => {
+      // Prevent uncaught socket write errors from crashing Node process
+      cleanup();
+    });
+
+    try {
+      res.write(`data: ${JSON.stringify({ type: 'CONNECTED', clientCount: this.clients.size, timestamp: new Date().toISOString() })}\n\n`);
+    } catch (_) {
+      cleanup();
+    }
   }
 
   /**

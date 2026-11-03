@@ -12,8 +12,12 @@ import { initClinicalMasters } from '../utils/clinicalMasters';
 import { 
   Clock, ShieldCheck, Play, Eye, 
   History as HistoryIcon, RefreshCw, XCircle, Printer, Calendar,
-  AlertTriangle, UserX, FileText, CheckCircle2, Volume2
+  AlertTriangle, UserX, FileText, CheckCircle2, Volume2, Bed
 } from 'lucide-react';
+import { ROUTES } from '../constants/routes';
+import TransferToIPDModal from '../components/ipd/TransferToIPDModal';
+import PatientHistoryDrawer from '../components/PatientHistoryDrawer';
+import { isIpdAvailable } from '../utils/featureUtils';
 import { useBillingSettings } from '../context/BillingSettingsContext';
 import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
 import { formatTimeTo12Hr, formatTimeTo24Hr } from '../utils/timeFormat';
@@ -59,6 +63,8 @@ const DoctorDashboard = () => {
                           user?.opdOperationMode === 'TOKEN_ONLY' || 
                           billingSettings?.opdOperationMode === 'TOKEN_ONLY';
 
+  const isIpdEnabled = Boolean(isIpdAvailable(user?.hospital || user));
+
   useEffect(() => { initClinicalMasters(); }, []);
 
   const [activeQueueTab, setActiveQueueTab] = useState('waiting');
@@ -68,6 +74,8 @@ const DoctorDashboard = () => {
   const [isRescheduleOpen, setIsRescheduleOpen] = useState(false);
   const [isPrintTokenOpen, setIsPrintTokenOpen] = useState(false);
   const [isNoShowConfirmOpen, setIsNoShowConfirmOpen] = useState(false);
+  const [transferToIpdApp, setTransferToIpdApp] = useState(null);
+  const [historyPatient, setHistoryPatient] = useState(null);
 
   const [transferDoctorId, setTransferDoctorId] = useState('');
   const [rescheduleForm, setRescheduleForm] = useState({ date: '', time: '' });
@@ -135,19 +143,28 @@ const DoctorDashboard = () => {
     }
   });
 
-  // ── Fetch today's queue with auto-refresh every 15s ──
+  // ── Fetch today's queue with auto-refresh every 15s (Strictly OPD patients queue) ──
   const { data: queue, isLoading: queueLoading, refetch } = useQuery({
     queryKey: ['doctorQueue', user?._id],
     queryFn: async () => {
       const today = new Date().toLocaleDateString('en-CA');
-      const res = await api.get(`/operations/appointments?date=${today}&doctorId=${user?._id}`);
-      return res.data.data;
+      const appRes = await api.get(`/operations/appointments?date=${today}&doctorId=${user?._id}`).catch(() => ({ data: { data: [] } }));
+      const appList = appRes.data?.data || [];
+      // Strictly pure OPD appointments: exclude any IPD admissions or IPD-related patients
+      return appList.filter(app => !app.isIpd && !app.isIPDAdmission && !app.ipdAdmissionId && (app.consultationType || '').toUpperCase() !== 'IPD');
     },
     refetchInterval: 15000,
     refetchIntervalInBackground: true
   });
 
-  const todayQueue = useMemo(() => queue || [], [queue]);
+  const todayQueue = useMemo(() => {
+    const list = (queue || []).filter(a => !a.isIpd && !a.isIPDAdmission && !a.ipdAdmissionId && (a.consultationType || '').toUpperCase() !== 'IPD');
+    if (!user?._id) return list;
+    return list.filter(a => {
+      const docId = a.doctorId?._id || a.doctorId;
+      return !docId || String(docId) === String(user._id);
+    });
+  }, [queue, user?._id]);
 
   // ── Single Source of Truth: Group appointments by Visit Status ──
   const currentApp = useMemo(() => {
@@ -192,13 +209,19 @@ const DoctorDashboard = () => {
   const sortedWaitingQueue = useMemo(() => {
     const arrivedOnly = waitingQueue.filter(a => getVisitStatus(a) !== VISIT_STATUSES.SCHEDULED);
     return [...arrivedOnly].sort((a, b) => {
+      const isSkippedA = getVisitStatus(a) === VISIT_STATUSES.SKIPPED;
+      const isSkippedB = getVisitStatus(b) === VISIT_STATUSES.SKIPPED;
+      
+      if (isSkippedA && !isSkippedB) return 1;
+      if (!isSkippedA && isSkippedB) return -1;
+
       const scoreA = getPriorityScore(a);
       const scoreB = getPriorityScore(b);
       if (scoreA !== scoreB) return scoreA - scoreB;
       const timeA = formatTimeTo24Hr(a.time) || a.time || '';
       const timeB = formatTimeTo24Hr(b.time) || b.time || '';
       if (timeA !== timeB) return timeA.localeCompare(timeB);
-      return (a.tokenNumber || '').localeCompare(b.tokenNumber || '');
+      return String(a.tokenNumber || '').localeCompare(String(b.tokenNumber || ''), undefined, { numeric: true });
     });
   }, [waitingQueue]);
 
@@ -210,13 +233,36 @@ const DoctorDashboard = () => {
 
   // Start Consultation
   const startConsultationMutation = useMutation({
-    mutationFn: async (appId) => {
+    mutationFn: async (appOrId) => {
+      const appId = typeof appOrId === 'object' ? appOrId._id : appOrId;
+      const app = typeof appOrId === 'object' ? appOrId : (todayApps || []).find(a => a._id === appId);
+
       if (currentApp) {
         if (currentApp._id === appId) {
           return appId;
         }
         throw new Error(`Active consultation in progress for ${currentApp.patientId?.name || 'current patient'}. Please finish it first or click Continue Consultation.`);
       }
+
+      // Trigger Voice Call announcement on Reception desk (Doctor speakers stay muted)
+      if (app) {
+        const callPayload = {
+          tokenNumber: app.tokenNumber,
+          tokenNo: app.tokenNumber,
+          patientName: app.patientId?.name || app.patientName || 'Patient',
+          doctorName: app.doctorId?.name || app.doctorName || user?.name || 'Doctor',
+          roomNumber: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
+          roomNo: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
+          type: 'TriggerVoiceCall'
+        };
+        api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
+        voiceAnnouncement.enqueueAnnouncement({
+          ...callPayload,
+          patientObj: app,
+          broadcastOnly: true
+        });
+      }
+
       await api.put(`/operations/appointments/${appId}/queue`, { status: 'In Consultation', queueStatus: 'In-Consultation' });
       return appId;
     },
@@ -338,7 +384,7 @@ const DoctorDashboard = () => {
       toast.error('No waiting patients in the arrived queue.');
       return;
     }
-    startConsultationMutation.mutate(nextApp._id);
+    startConsultationMutation.mutate(nextApp);
   };
 
   const handleAcceptPatientPlan1 = (app) => {
@@ -405,16 +451,18 @@ const DoctorDashboard = () => {
   // ─────────────────────────────────────────────────────
 
   const consultationTypeColors = {
-    'Emergency': 'bg-rose-50 text-rose-600 border-rose-100',
-    'Walk-In': 'bg-slate-100 text-slate-700 border-slate-200',
-    'Appointment': 'bg-blue-50 text-blue-600 border-blue-100',
-    'Follow-Up': 'bg-amber-50 text-amber-600 border-amber-100'
+    'Emergency': 'bg-rose-50 text-rose-700 border-rose-200/90 shadow-2xs',
+    'Walk-In': 'bg-slate-100 text-slate-700 border-slate-300/90 shadow-2xs',
+    'Appointment': 'bg-blue-50 text-blue-700 border-blue-200/90 shadow-2xs',
+    'Follow-Up': 'bg-amber-50 text-amber-800 border-amber-200/90 shadow-2xs'
   };
 
   const queueTableHeaders = [
     { key: 'tokenNumber', label: 'Token', render: (row) => (
       <div className="flex flex-col">
-        <span className="font-bold text-[#2F63F2] font-mono text-sm">#{row.tokenNumber || '—'}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="font-bold text-[#2F63F2] font-mono text-sm">#{row.tokenNumber || '—'}</span>
+        </div>
         {row.consultationType === 'Emergency' && (
           <span className="text-[8px] font-extrabold text-rose-500 uppercase tracking-widest mt-0.5">🚨 EMERGENCY</span>
         )}
@@ -422,20 +470,39 @@ const DoctorDashboard = () => {
     )},
     { key: 'patientId.name', label: 'Patient', render: (row) => (
       <div>
-        <p className="font-bold text-slate-800 text-xs">{row.patientId?.name}</p>
-        <p className="text-[10px] text-slate-400 font-mono">{row.patientId?.uhid}</p>
+        <p className="font-bold text-slate-800 text-xs">{row.patientId?.name || row.patientName}</p>
+        <p className="text-[10px] text-slate-400 font-mono">{row.patientId?.uhid || '—'}</p>
       </div>
     )},
-    { key: 'patientId.age', label: 'Age/Gender', render: (row) => (
-      <span className="text-slate-600 font-medium text-xs">{row.patientId?.age}Y / {row.patientId?.gender?.charAt(0)}</span>
-    )},
+    { key: 'patientId.age', label: 'Age / Gender', render: (row) => {
+      const p = row.patientId || {};
+      const age = p.age || row.age;
+      const gender = p.gender || row.gender;
+      const bloodGroup = p.bloodGroup || row.bloodGroup || row.patientBloodGroup;
+      const genderLetter = gender ? (gender.length === 1 ? gender.toUpperCase() : gender.charAt(0).toUpperCase()) : '';
+      const ageGenderText = age ? `${age} yrs / ${genderLetter || gender}` : (genderLetter || '—');
+      return (
+        <div className="flex flex-col items-start gap-0.5 whitespace-nowrap">
+          <span className="text-slate-700 font-semibold text-xs">
+            {ageGenderText}
+          </span>
+          {bloodGroup && bloodGroup !== 'Unknown' && bloodGroup !== 'N/A' && bloodGroup !== '—' ? (
+            <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight shadow-2xs">
+              {bloodGroup}
+            </span>
+          ) : (
+            <span className="text-slate-400 text-[10px] font-medium leading-tight">—</span>
+          )}
+        </div>
+      );
+    }},
     { key: 'time', label: 'Slot', render: (row) => (
-      <span className="font-mono text-xs text-slate-600">{row.time}</span>
+      <span className="font-mono text-xs text-slate-600 whitespace-nowrap">{row.time || '—'}</span>
     )},
     { key: 'consultationType', label: 'Type', render: (row) => {
       const type = row.consultationType || 'Walk-In';
       return (
-        <span className={`text-[9px] font-bold border px-2 py-0.5 rounded-lg uppercase tracking-wider ${consultationTypeColors[type] || 'bg-slate-50'}`}>
+        <span className={`inline-flex items-center justify-center whitespace-nowrap text-[10px] font-bold border px-2.5 py-1 rounded-md uppercase tracking-wider ${consultationTypeColors[type] || 'bg-slate-100 text-slate-700 border-slate-300 shadow-2xs'}`}>
           {type}
         </span>
       );
@@ -444,16 +511,11 @@ const DoctorDashboard = () => {
       const status = getVisitStatus(row);
       const badge = getVisitStatusBadgeConfig(status);
       return (
-        <span className={`text-[9px] font-bold border px-2.5 py-1 rounded-xl uppercase tracking-wider ${badge.style}`}>
+        <span className={`inline-flex items-center justify-center whitespace-nowrap text-[9px] font-bold border px-2.5 py-1 rounded-xl uppercase tracking-wider ${badge.style}`}>
           {badge.label}
         </span>
       );
-    }},
-    { key: 'vitals', label: 'BP/Pulse', render: (row) => row.vitals?.bpSystolic ? (
-      <span className="font-mono text-[11px] text-slate-700 font-semibold">{row.vitals.bpSystolic}/{row.vitals.bpDiastolic} | {row.vitals.pulse}bpm</span>
-    ) : (
-      <span className="text-slate-300 text-[10px] font-mono italic">No vitals</span>
-    )}
+    }}
   ];
 
   // ─────────────────────────────────────────────────────
@@ -731,7 +793,7 @@ const DoctorDashboard = () => {
               </div>
             </div>
 
-            <div className="border border-[#E5E7EB] rounded-xl overflow-hidden bg-white">
+            <div className="border border-[#E5E7EB] rounded-xl bg-white">
               <Table
                 headers={queueTableHeaders}
                 data={
@@ -753,7 +815,7 @@ const DoctorDashboard = () => {
                       isPrimary: true,
                       disabled: (row) => !getAppointmentActions(row, 'Doctor').actions.canStartConsultation,
                       onClick: (row) => handleAcceptPatientPlan1(row),
-                      show: (row) => activeQueueTab === 'waiting' && getVisitStatus(row) !== VISIT_STATUSES.SCHEDULED && !isCompletedVisit(getVisitStatus(row))
+                      show: (row) => activeQueueTab === 'waiting' && getVisitStatus(row) !== VISIT_STATUSES.SCHEDULED && !isCompletedVisit(getVisitStatus(row)) && getVisitStatus(row) !== VISIT_STATUSES.SKIPPED
                     }
                   ] : [
                     {
@@ -770,9 +832,9 @@ const DoctorDashboard = () => {
                           toast.error('Please finish current consultation before starting another.');
                           return;
                         }
-                        startConsultationMutation.mutate(row._id);
+                        startConsultationMutation.mutate(row);
                       },
-                      show: (row) => activeQueueTab === 'waiting' && getVisitStatus(row) !== VISIT_STATUSES.SCHEDULED && !isCompletedVisit(getVisitStatus(row))
+                      show: (row) => activeQueueTab === 'waiting' && getVisitStatus(row) !== VISIT_STATUSES.SCHEDULED && !isCompletedVisit(getVisitStatus(row)) && getVisitStatus(row) !== VISIT_STATUSES.SKIPPED
                     }
                   ]),
                   {
@@ -810,6 +872,16 @@ const DoctorDashboard = () => {
                     onClick: (row) => { setSelectedApp(row); setTransferDoctorId(''); setIsTransferOpen(true); },
                     show: () => activeQueueTab === 'waiting'
                   },
+                  {
+                    label: 'Transfer to IPD',
+                    icon: Bed,
+                    onClick: (row) => setTransferToIpdApp(row),
+                    show: (row) => {
+                      if (!isIpdEnabled) return false;
+                      const appSt = (row.status || row.queueStatus || '').toLowerCase();
+                      return appSt !== 'admitted';
+                    }
+                  },
 
                   // 2. Actions for IN CONSULTATION TAB ONLY
                   ...(isTokenOnlyPlan ? [
@@ -843,15 +915,7 @@ const DoctorDashboard = () => {
                   ]),
 
                   // 3. Actions for COMPLETED TODAY TAB ONLY
-                  ...(isTokenOnlyPlan ? [
-                    {
-                      label: 'Re-Call Voice',
-                      icon: Volume2,
-                      isPrimary: true,
-                      onClick: (row) => handleRecallVoicePlan1(row),
-                      show: () => activeQueueTab === 'completed'
-                    }
-                  ] : [
+                  ...(isTokenOnlyPlan ? [] : [
                     {
                       label: 'View Consultation',
                       icon: Eye,
@@ -874,9 +938,16 @@ const DoctorDashboard = () => {
                     onClick: (row) => { setSelectedApp(row); setIsPatientDetailOpen(true); }
                   },
                   {
-                    label: 'Medical History',
+                    label: 'Visit History',
                     icon: HistoryIcon,
-                    onClick: (row) => navigate(`/clinical/medical-history?patientId=${row.patientId?._id}`)
+                    onClick: (row) => {
+                      const pat = (row.patientId && typeof row.patientId === 'object')
+                        ? row.patientId
+                        : (row.patient && typeof row.patient === 'object')
+                          ? row.patient
+                          : { _id: row.patientId?._id || row.patientId || row.patient, name: row.patientId?.name || row.patientName };
+                      setHistoryPatient(pat);
+                    }
                   }
                 ]}
                 loading={queueLoading}
@@ -1108,11 +1179,28 @@ const DoctorDashboard = () => {
               variant="secondary"
               className="flex-1 text-xs font-bold uppercase tracking-wider h-[40px]"
             >
-              Cancel
+              Close
             </Button>
           </div>
         </div>
       </Modal>
+
+      {/* Transfer to IPD Modal (Strictly gated by isIpdEnabled) */}
+      {isIpdEnabled && (
+        <TransferToIPDModal
+          isOpen={Boolean(transferToIpdApp)}
+          onClose={() => setTransferToIpdApp(null)}
+          appointment={transferToIpdApp}
+        />
+      )}
+
+      {/* Patient Visit History Drawer */}
+      <PatientHistoryDrawer
+        isOpen={!!historyPatient}
+        onClose={() => setHistoryPatient(null)}
+        patient={historyPatient}
+        title={historyPatient?.name ? `VISIT HISTORY - ${historyPatient.name.toUpperCase()}` : 'VISIT HISTORY'}
+      />
 
     </div>
   );

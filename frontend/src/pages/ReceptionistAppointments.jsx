@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -12,9 +13,13 @@ import MobileNumber from '../components/MobileNumber';
 import Input from '../components/Input';
 import AppointmentBookingModal from '../components/AppointmentBookingModal';
 import OpdTokenPrintModal from '../components/OpdTokenPrintModal';
+import ConsultationRecordModal from '../components/ConsultationRecordModal';
+import PrescriptionDetailsModal from '../components/PrescriptionDetailsModal';
+import BillingSummaryModal from '../components/BillingSummaryModal';
 import LiveQueueLeftPanel from '../components/LiveQueueLeftPanel';
 import EmergencyIntakeDrawer from '../components/EmergencyIntakeDrawer';
 import ConvertUnknownPatientModal from '../components/ConvertUnknownPatientModal';
+import PatientHistoryDrawer from '../components/PatientHistoryDrawer';
 import {
   Plus, AlertTriangle, Calendar, Clock, User, ChevronDown, ChevronUp,
   Play, CheckCircle2, RotateCcw, SkipForward, Eye, Edit, Trash2, XCircle,
@@ -22,7 +27,7 @@ import {
   X, Phone, ShieldAlert, Edit3, Heart, Megaphone, DoorOpen, DollarSign,
   CreditCard, Wallet, Camera, ShieldCheck, Search, Stethoscope, HelpCircle,
   Filter, ChevronRight, RefreshCw, Printer, ArrowRight, Sparkles, Check,
-  Layers, Lock, Siren, AlertCircle, Languages, MapPin
+  Layers, Lock, Siren, AlertCircle, Languages, MapPin, Bed
 } from 'lucide-react';
 import { formatTimeTo12Hr } from '../utils/timeFormat';
 import { useAuth } from '../context/AuthContext';
@@ -31,6 +36,12 @@ import { workflowRealtime } from '../services/workflowRealtimeService';
 import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
 import { triggerPrint } from '../modules/prescription-print/printUtils';
 import { DEFAULT_PRINT_CONFIG } from '../modules/prescription-print/prescriptionPrint.types';
+import { enrichInvestigationsList, categorizeInvestigations } from '../utils/investigationUtils';
+import { ipdService } from '../services/ipd/ipdService';
+import { ROUTES } from '../constants/routes';
+import TransferToIPDModal from '../components/ipd/TransferToIPDModal';
+import { isIpdAvailable, isFeatureModuleEnabled } from '../utils/featureUtils';
+import EarlyCheckInModal from '../components/EarlyCheckInModal';
 
 // Helper to determine if a patient profile is complete
 const isPatientProfileComplete = (patient) => {
@@ -43,6 +54,17 @@ const isPatientProfileComplete = (patient) => {
   );
 };
 
+// Helper to sanitize decimal amounts and disallow invalid characters while enabling standard manual typing
+const sanitizeDecimalInput = (val) => {
+  if (val === undefined || val === null) return '';
+  const str = String(val).replace(/[^0-9.]/g, '');
+  const parts = str.split('.');
+  if (parts.length > 2) {
+    return parts[0] + '.' + parts.slice(1).join('');
+  }
+  return str;
+};
+
 // Payment Collection Modal Component
 const PaymentCollectionModal = ({ appointment, isOpen, onClose, onSuccess }) => {
   if (!isOpen || !appointment) return null;
@@ -53,25 +75,187 @@ const PaymentCollectionModal = ({ appointment, isOpen, onClose, onSuccess }) => 
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [submitting, setSubmitting] = useState(false);
 
+  // UPI payment fields
+  const [upiMethod, setUpiMethod] = useState('');
+  const [upiOtherMethod, setUpiOtherMethod] = useState('');
+  const [upiTransactionId, setUpiTransactionId] = useState('');
+
+  // Card payment fields
+  const [cardType, setCardType] = useState('');
+  const [cardNo, setCardNo] = useState('');
+  const [cardTransactionId, setCardTransactionId] = useState('');
+
+  // Specific additional charge picker states
+  const [showSpecificChargePicker, setShowSpecificChargePicker] = useState(false);
+  const [selectedSpecificCharges, setSelectedSpecificCharges] = useState([]);
+  const [customChargeName, setCustomChargeName] = useState('');
+  const [customChargeAmount, setCustomChargeAmount] = useState('');
+
+  const standardAdditionalCharges = useMemo(() => [
+    { id: 'reg_card', name: 'Registration / Patient Card Fee', amount: 50, icon: '📋', desc: 'OPD registration card issuance' },
+    { id: 'emergency_priority', name: 'Emergency / Priority Care Fee', amount: 200, icon: '🚨', desc: 'Urgent priority handling surcharge' },
+    { id: 'nursing_triage', name: 'Nursing Care & Triage Assessment', amount: 50, icon: '🩺', desc: 'Vitals check and preliminary nursing' },
+    { id: 'wound_dressing', name: 'Wound Dressing & Minor Procedure', amount: 150, icon: '🩹', desc: 'Antiseptic dressing or bandage' },
+    { id: 'nebulization', name: 'Nebulization Treatment Charge', amount: 150, icon: '💨', desc: 'Respiratory nebulizer therapy' },
+    { id: 'med_cert', name: 'Medical Certificate / Fitness Record', amount: 100, icon: '📄', desc: 'Official signed doctor certificate' },
+    { id: 'ppe_consumable', name: 'PPE & Sterile Consumables', amount: 50, icon: '🧤', desc: 'Disposable gloves, syringe, kit' },
+    { id: 'injection_admin', name: 'Injection Administration Fee', amount: 40, icon: '💉', desc: 'IM/IV injection clinical charge' }
+  ], []);
+
+  const { data: hospitalServices = [] } = useQuery({
+    queryKey: ['hospitalServicesBillingModal', appointment?.hospitalId || appointment?.patientId?.hospitalId],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/admin/services');
+        return Array.isArray(res.data?.data) ? res.data.data : [];
+      } catch (err) {
+        return [];
+      }
+    },
+    staleTime: 60 * 1000
+  });
+
+  const catalogAdditionalCharges = useMemo(() => {
+    return (hospitalServices || [])
+      .filter(s => s && s.name && s.category !== 'Laboratory' && s.category !== 'Radiology')
+      .map(s => ({
+        id: `svc_${s._id || s.code}`,
+        name: s.name,
+        amount: Number(s.price || 100),
+        icon: '🏥',
+        desc: s.category || 'Hospital Service'
+      }));
+  }, [hospitalServices]);
+
   useEffect(() => {
     if (appointment) {
       setConsultationFee(appointment.consultationFee ?? appointment.doctorId?.consultationFee ?? 500);
+      setAdditionalCharges(appointment.additionalCharges || 0);
+      if (Array.isArray(appointment.additionalChargeItems) && appointment.additionalChargeItems.length > 0) {
+        setSelectedSpecificCharges(appointment.additionalChargeItems);
+      } else {
+        setSelectedSpecificCharges([]);
+      }
     }
   }, [appointment]);
 
+  const handleToggleSpecificCharge = (charge) => {
+    setSelectedSpecificCharges(prev => {
+      const exists = prev.some(c => c.name === charge.name);
+      let updated;
+      if (exists) {
+        updated = prev.filter(c => c.name !== charge.name);
+      } else {
+        updated = [...prev, { name: charge.name, amount: Number(charge.amount), icon: charge.icon }];
+      }
+      const sum = updated.reduce((s, c) => s + Number(c.amount || 0), 0);
+      setAdditionalCharges(sum);
+      return updated;
+    });
+  };
+
+  const handleAddCustomCharge = () => {
+    if (!customChargeName.trim() || Number(customChargeAmount) <= 0) return;
+    const newCharge = {
+      name: customChargeName.trim(),
+      amount: Number(customChargeAmount),
+      icon: '🏷️'
+    };
+    setSelectedSpecificCharges(prev => {
+      const updated = [...prev, newCharge];
+      const sum = updated.reduce((s, c) => s + Number(c.amount || 0), 0);
+      setAdditionalCharges(sum);
+      return updated;
+    });
+    setCustomChargeName('');
+    setCustomChargeAmount('');
+  };
+
+  const handleRemoveSpecificCharge = (chargeName) => {
+    setSelectedSpecificCharges(prev => {
+      const updated = prev.filter(c => c.name !== chargeName);
+      const sum = updated.reduce((s, c) => s + Number(c.amount || 0), 0);
+      setAdditionalCharges(sum);
+      return updated;
+    });
+  };
+
+  const handleManualAdditionalChargesChange = (val) => {
+    const clean = sanitizeDecimalInput(val);
+    setAdditionalCharges(clean);
+    if (!clean || Number(clean) === 0) {
+      setSelectedSpecificCharges([]);
+    }
+  };
+
+  // Extract and categorize doctor-ordered investigations with auto-pricing from hospital services catalog
+  const investigations = useMemo(() => {
+    const rawList = Array.isArray(appointment?.investigations) ? appointment.investigations : [];
+    return enrichInvestigationsList(rawList, hospitalServices);
+  }, [appointment, hospitalServices]);
+
+  const {
+    labInvestigations,
+    radInvestigations,
+    otherInvestigations,
+    labTotal,
+    radTotal,
+    otherTotal: otherInvTotal,
+    totalAmount: investigationsTotal
+  } = useMemo(() => {
+    return categorizeInvestigations(investigations);
+  }, [investigations]);
+
   const totalAmount = useMemo(() => {
-    const base = (Number(consultationFee) || 0) + (Number(additionalCharges) || 0);
+    const base = (Number(consultationFee) || 0) + (Number(additionalCharges) || 0) + investigationsTotal;
     const disc = Number(discount) || 0;
     return Math.max(0, base - disc);
-  }, [consultationFee, additionalCharges, discount]);
+  }, [consultationFee, additionalCharges, discount, investigationsTotal]);
 
   const handleConfirmPayment = async (e) => {
     e.preventDefault();
+
+    if (paymentMethod === 'UPI' && !upiMethod) {
+      toast.error('Please select a UPI method');
+      return;
+    }
+
+    if (paymentMethod === 'Card' && !cardType) {
+      toast.error('Please select a card type (Debit Card or Credit Card)');
+      return;
+    }
+
     setSubmitting(true);
+
+    const activeTransactionId = paymentMethod === 'UPI' ? upiTransactionId.trim()
+      : paymentMethod === 'Card' ? cardTransactionId.trim()
+      : '';
+
+    const effectiveUpi = paymentMethod === 'UPI'
+      ? (upiMethod === 'other' ? (upiOtherMethod.trim() || 'Other') : upiMethod)
+      : undefined;
+
+    const effectiveCardType = paymentMethod === 'Card' ? cardType : undefined;
+    const effectiveCardNo = paymentMethod === 'Card' ? cardNo.trim() : undefined;
+
     try {
       await api.put(`/operations/appointments/${appointment._id}/queue`, {
         billingStatus: 'Paid',
-        consultationFee: Number(consultationFee)
+        consultationFee: Number(consultationFee),
+        additionalCharges: Number(additionalCharges),
+        additionalChargeItems: selectedSpecificCharges,
+        discount: Number(discount),
+        paymentMethod,
+        transactionId: activeTransactionId || undefined,
+        paymentDetails: {
+          paymentMethod,
+          upiMethod: effectiveUpi,
+          transactionId: activeTransactionId || undefined,
+          cardType: effectiveCardType,
+          cardNo: effectiveCardNo
+        },
+        totalAmount,
+        investigations
       });
       toast.success(`Payment of ₹${totalAmount} collected successfully (${paymentMethod})!`);
       onSuccess();
@@ -88,7 +272,7 @@ const PaymentCollectionModal = ({ appointment, isOpen, onClose, onSuccess }) => 
       isOpen={isOpen}
       onClose={onClose}
       title="COLLECT PAYMENT"
-      maxWidth="max-w-[500px]"
+      maxWidth="max-w-[540px]"
     >
       <form onSubmit={handleConfirmPayment} className="space-y-4 text-left font-sans text-xs">
         <div className="p-3.5 bg-blue-50/70 border border-blue-200/80 rounded-xl space-y-2">
@@ -111,44 +295,358 @@ const PaymentCollectionModal = ({ appointment, isOpen, onClose, onSuccess }) => 
           </div>
         )}
 
+        {/* Doctor-prescribed investigations breakdown */}
+        {investigations.length > 0 && (
+          <div className="space-y-2 border border-slate-200/80 rounded-xl p-3 bg-slate-50/60">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+              <span className="font-bold text-slate-800 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                🔬 Prescribed Investigations ({investigations.length})
+              </span>
+              <span className="font-mono font-bold text-xs text-[#2F63F2] bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+                Subtotal: ₹{investigationsTotal}
+              </span>
+            </div>
+
+            {/* Laboratory Category */}
+            {labInvestigations.length > 0 && (
+              <div className="space-y-1">
+                <div className="flex justify-between items-center text-[10px] font-bold text-indigo-700 bg-indigo-50/80 px-2 py-0.5 rounded">
+                  <span>🧪 Laboratory ({labInvestigations.length})</span>
+                  <span className="font-mono">₹{labTotal}</span>
+                </div>
+                <div className="space-y-1 pl-1">
+                  {labInvestigations.map((inv, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-[11px] text-slate-700 bg-white px-2 py-1 rounded border border-slate-200/60">
+                      <span className="truncate pr-2">
+                        <span className="text-[10px] text-indigo-500 font-medium mr-1.5">[{inv.category || 'Lab'}]</span>
+                        {inv.name}
+                      </span>
+                      <span className="font-mono font-bold text-slate-800 shrink-0">₹{inv.price || 0}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Radiology Category */}
+            {radInvestigations.length > 0 && (
+              <div className="space-y-1 mt-1.5">
+                <div className="flex justify-between items-center text-[10px] font-bold text-cyan-800 bg-cyan-50/80 px-2 py-0.5 rounded">
+                  <span>🩻 Radiology & Imaging ({radInvestigations.length})</span>
+                  <span className="font-mono">₹{radTotal}</span>
+                </div>
+                <div className="space-y-1 pl-1">
+                  {radInvestigations.map((inv, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-[11px] text-slate-700 bg-white px-2 py-1 rounded border border-slate-200/60">
+                      <span className="truncate pr-2">
+                        <span className="text-[10px] text-cyan-600 font-medium mr-1.5">[{inv.category || 'Radiology'}]</span>
+                        {inv.name}
+                      </span>
+                      <span className="font-mono font-bold text-slate-800 shrink-0">₹{inv.price || 0}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Other investigations if any */}
+            {otherInvestigations.length > 0 && (
+              <div className="space-y-1 mt-1.5">
+                <div className="flex justify-between items-center text-[10px] font-bold text-amber-800 bg-amber-50/80 px-2 py-0.5 rounded">
+                  <span>📋 Other Investigations ({otherInvestigations.length})</span>
+                  <span className="font-mono">₹{otherInvTotal}</span>
+                </div>
+                <div className="space-y-1 pl-1">
+                  {otherInvestigations.map((inv, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-[11px] text-slate-700 bg-white px-2 py-1 rounded border border-slate-200/60">
+                      <span className="truncate pr-2">{inv.name}</span>
+                      <span className="font-mono font-bold text-slate-800 shrink-0">₹{inv.price || 0}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="space-y-3">
           <Input
             label="Consultation Fee (₹)"
-            type="number"
+            type="text"
+            inputMode="decimal"
             value={consultationFee}
-            onChange={(e) => setConsultationFee(e.target.value)}
+            onChange={(e) => setConsultationFee(sanitizeDecimalInput(e.target.value))}
+            onWheel={(e) => e.target.blur()}
             required
           />
           <div className="grid grid-cols-2 gap-3">
-            <Input
-              label="Additional Charges (₹)"
-              type="number"
-              value={additionalCharges}
-              onChange={(e) => setAdditionalCharges(e.target.value)}
-            />
+            {/* Additional Charges Field with + (Add) Button in Header */}
+            <div className="flex flex-col gap-1.5 w-full">
+              <div className="flex items-center justify-between pl-1">
+                <label className="text-[10px] font-semibold text-[#6B7280] uppercase tracking-wider flex items-center gap-1.5">
+                  <span>Additional Charges (₹)</span>
+                  {selectedSpecificCharges.length > 0 && (
+                    <span className="text-[9px] font-mono font-bold bg-blue-100 text-[#2F63F2] px-1.5 py-0.2 rounded-full">
+                      {selectedSpecificCharges.length}
+                    </span>
+                  )}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowSpecificChargePicker(!showSpecificChargePicker)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border transition-all cursor-pointer shadow-xs ${
+                    showSpecificChargePicker || selectedSpecificCharges.length > 0
+                      ? 'bg-[#2F63F2] text-white border-[#2F63F2] hover:bg-blue-700'
+                      : 'bg-blue-50 text-[#2F63F2] border-blue-200 hover:bg-blue-100 hover:border-blue-300'
+                  }`}
+                  title="Click to view and choose specific charges to collect"
+                >
+                  <Plus className="w-3 h-3 stroke-[2.5]" />
+                  <span>{showSpecificChargePicker ? 'Close' : 'Add'}</span>
+                </button>
+              </div>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={additionalCharges}
+                onChange={(e) => handleManualAdditionalChargesChange(e.target.value)}
+                onWheel={(e) => e.target.blur()}
+                placeholder="0"
+                className="enterprise-input w-full"
+              />
+            </div>
+
             <Input
               label="Discount (₹)"
-              type="number"
+              type="text"
+              inputMode="decimal"
               value={discount}
-              onChange={(e) => setDiscount(e.target.value)}
+              onChange={(e) => setDiscount(sanitizeDecimalInput(e.target.value))}
+              onWheel={(e) => e.target.blur()}
             />
+          </div>
+
+          {/* Selected Specific Charges Breakdown Chips */}
+          {selectedSpecificCharges.length > 0 && (
+            <div className="p-2.5 bg-blue-50/70 border border-blue-200/80 rounded-xl space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] font-bold text-blue-900 uppercase tracking-wider">
+                <span>Selected Specific Charges ({selectedSpecificCharges.length})</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedSpecificCharges([]);
+                    setAdditionalCharges(0);
+                  }}
+                  className="text-rose-600 hover:underline cursor-pointer lowercase font-medium"
+                >
+                  clear all
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {selectedSpecificCharges.map((item, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white border border-blue-200 text-slate-800 text-[11px] shadow-xs"
+                  >
+                    <span>{item.icon || '🏷️'}</span>
+                    <span className="font-semibold">{item.name}:</span>
+                    <span className="font-mono font-bold text-[#2F63F2]">₹{item.amount}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveSpecificCharge(item.name)}
+                      className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer p-0.5 rounded hover:bg-slate-100"
+                      title="Remove charge"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Specific Charges Selection Picker Panel */}
+          <AnimatePresence>
+            {showSpecificChargePicker && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden"
+              >
+                <div className="p-3.5 bg-gradient-to-br from-slate-50 to-blue-50/40 border border-blue-200 rounded-xl space-y-3 shadow-md">
+                  <div className="flex items-center justify-between border-b border-blue-200/70 pb-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                      <Sparkles className="w-4 h-4 text-[#2F63F2]" />
+                      <span>Select Specific Additional Charge to Collect</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowSpecificChargePicker(false)}
+                      className="text-slate-400 hover:text-slate-600 p-1 rounded-md hover:bg-slate-200/60 transition-colors cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Standard Hospital Charges Grid */}
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      Standard Hospital OPD Charges
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-[170px] overflow-y-auto pr-1">
+                      {standardAdditionalCharges.map((charge) => {
+                        const isSelected = selectedSpecificCharges.some(c => c.name === charge.name);
+                        return (
+                          <button
+                            key={charge.id}
+                            type="button"
+                            onClick={() => handleToggleSpecificCharge(charge)}
+                            className={`flex items-center justify-between p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-blue-100/80 border-[#2F63F2] text-blue-900 shadow-xs ring-1 ring-[#2F63F2]/30'
+                                : 'bg-white hover:bg-blue-50/50 border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0 pr-1 truncate">
+                              <span className="text-sm shrink-0">{charge.icon}</span>
+                              <div className="truncate">
+                                <div className="font-semibold truncate text-[11px] leading-tight">{charge.name}</div>
+                                <div className="text-[9px] text-slate-400 truncate">{charge.desc}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0 ml-1">
+                              <span className="font-mono font-bold text-[11px] text-slate-900">₹{charge.amount}</span>
+                              {isSelected ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-[#2F63F2] shrink-0" />
+                              ) : (
+                                <Plus className="w-3 h-3 text-slate-400 shrink-0" />
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+
+                      {catalogAdditionalCharges.map((charge) => {
+                        const isSelected = selectedSpecificCharges.some(c => c.name === charge.name);
+                        return (
+                          <button
+                            key={charge.id}
+                            type="button"
+                            onClick={() => handleToggleSpecificCharge(charge)}
+                            className={`flex items-center justify-between p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-blue-100/80 border-[#2F63F2] text-blue-900 shadow-xs ring-1 ring-[#2F63F2]/30'
+                                : 'bg-white hover:bg-blue-50/50 border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0 pr-1 truncate">
+                              <span className="text-sm shrink-0">{charge.icon}</span>
+                              <div className="truncate">
+                                <div className="font-semibold truncate text-[11px] leading-tight">{charge.name}</div>
+                                <div className="text-[9px] text-slate-400 truncate">{charge.desc}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0 ml-1">
+                              <span className="font-mono font-bold text-[11px] text-slate-900">₹{charge.amount}</span>
+                              {isSelected ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-[#2F63F2] shrink-0" />
+                              ) : (
+                                <Plus className="w-3 h-3 text-slate-400 shrink-0" />
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Custom Charge Row */}
+                  <div className="pt-2 border-t border-blue-200/60">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                      Or Add Specific Custom Charge
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="Charge description (e.g. Suture Removal, ECG Strip)"
+                        value={customChargeName}
+                        onChange={(e) => setCustomChargeName(e.target.value)}
+                        className="enterprise-input flex-1 h-[34px] text-xs px-2.5"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddCustomCharge();
+                          }
+                        }}
+                      />
+                      <div className="relative w-24">
+                        <span className="absolute left-2.5 top-2 text-slate-400 text-xs font-mono">₹</span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="0"
+                          value={customChargeAmount}
+                          onChange={(e) => setCustomChargeAmount(sanitizeDecimalInput(e.target.value))}
+                          onWheel={(e) => e.target.blur()}
+                          className="enterprise-input w-full h-[34px] text-xs pl-6 pr-2"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddCustomCharge();
+                            }
+                          }}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleAddCustomCharge}
+                        disabled={!customChargeName.trim() || Number(customChargeAmount) <= 0}
+                        className="h-[34px] px-3.5 bg-[#2F63F2] hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1 shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <div className="p-4 bg-slate-900 text-white rounded-xl space-y-1.5 shadow-inner">
+          <div className="flex justify-between items-center text-[11px] text-slate-400">
+            <span>Consultation: <strong className="text-slate-200 font-mono">₹{consultationFee || 0}</strong></span>
+            {investigationsTotal > 0 && <span>Tests: <strong className="text-slate-200 font-mono">₹{investigationsTotal}</strong></span>}
+            {Number(additionalCharges) > 0 && (
+              <span>
+                Add.: <strong className="text-slate-200 font-mono">₹{additionalCharges}</strong>
+                {selectedSpecificCharges.length > 0 && (
+                  <span className="text-[10px] text-blue-300 ml-1">
+                    ({selectedSpecificCharges.map(c => `${c.name}: ₹${c.amount}`).join(', ')})
+                  </span>
+                )}
+              </span>
+            )}
+            {Number(discount) > 0 && <span>Disc.: <strong className="text-rose-400 font-mono">-₹{discount}</strong></span>}
+          </div>
+          <div className="flex justify-between items-center border-t border-slate-800 pt-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Total Payable Amount</span>
+            <span className="text-2xl font-extrabold font-mono text-emerald-400">₹{totalAmount}</span>
           </div>
         </div>
 
-        <div className="p-4 bg-slate-900 text-white rounded-xl flex justify-between items-center shadow-inner">
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Total Payable Amount</span>
-          <span className="text-2xl font-extrabold font-mono text-emerald-400">₹{totalAmount}</span>
-        </div>
-
-        <div className="space-y-1.5">
+        <div className="space-y-2.5">
           <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Payment Method <span className="text-rose-500">*</span></label>
-          <div className="grid grid-cols-4 gap-2">
-            {['Cash', 'UPI', 'Card', 'Credit'].map((method) => (
+          <div className="grid grid-cols-3 gap-2">
+            {['Cash', 'UPI', 'Card'].map((method) => (
               <button
                 key={method}
                 type="button"
                 onClick={() => setPaymentMethod(method)}
-                className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${paymentMethod === method
+                className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${paymentMethod === method
                   ? 'bg-[#2F63F2] text-white border-[#2F63F2] shadow-xs'
                   : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                   }`}
@@ -157,11 +655,132 @@ const PaymentCollectionModal = ({ appointment, isOpen, onClose, onSuccess }) => 
               </button>
             ))}
           </div>
+
+          {/* UPI Payment Extra Fields */}
+          {paymentMethod === 'UPI' && (
+            <div className="p-3 bg-blue-50/60 border border-blue-200/80 rounded-xl space-y-2.5 animate-in fade-in duration-150">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                    UPI Method <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={upiMethod}
+                    onChange={(e) => setUpiMethod(e.target.value)}
+                    className="enterprise-input w-full h-[36px] text-xs bg-white cursor-pointer"
+                    required={paymentMethod === 'UPI'}
+                  >
+                    <option value="">Select a UPI</option>
+                    <option value="phonepe">PhonePe</option>
+                    <option value="gpay">GPay</option>
+                    <option value="paytm">Paytm</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                    Transaction ID
+                  </label>
+                  <input
+                    type="text"
+                    value={upiTransactionId}
+                    onChange={(e) => setUpiTransactionId(e.target.value)}
+                    placeholder="Enter Transaction ID"
+                    className="enterprise-input w-full h-[36px] text-xs bg-white font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Manual Entry field: ONLY displayed when 'other' is selected */}
+              {upiMethod === 'other' && (
+                <div className="flex flex-col gap-1 pt-0.5">
+                  <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                    Enter Other UPI Method <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={upiOtherMethod}
+                    onChange={(e) => setUpiOtherMethod(e.target.value)}
+                    placeholder="Enter UPI app or method (e.g. BHIM, Amazon Pay)"
+                    className="enterprise-input w-full h-[36px] text-xs bg-white"
+                    required={upiMethod === 'other'}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Card Payment Extra Fields */}
+          {paymentMethod === 'Card' && (
+            <div className="p-3 bg-blue-50/60 border border-blue-200/80 rounded-xl space-y-2.5 animate-in fade-in duration-150">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                  Select Card Type <span className="text-rose-500">*</span>
+                </label>
+                <div className="flex items-center gap-4 pt-1">
+                  <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700 hover:text-slate-900">
+                    <input
+                      type="radio"
+                      name="collectPaymentCardType"
+                      value="debit card"
+                      checked={cardType === 'debit card'}
+                      onChange={(e) => setCardType(e.target.value)}
+                      className="w-4 h-4 text-[#2F63F2] focus:ring-[#2F63F2] border-slate-300 cursor-pointer accent-[#2F63F2]"
+                    />
+                    <span>Debit Card</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700 hover:text-slate-900">
+                    <input
+                      type="radio"
+                      name="collectPaymentCardType"
+                      value="credit card"
+                      checked={cardType === 'credit card'}
+                      onChange={(e) => setCardType(e.target.value)}
+                      className="w-4 h-4 text-[#2F63F2] focus:ring-[#2F63F2] border-slate-300 cursor-pointer accent-[#2F63F2]"
+                    />
+                    <span>Credit Card</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Display Card No and Transaction ID only when Debit Card or Credit Card is selected */}
+              {(cardType === 'debit card' || cardType === 'credit card') && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-0.5">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                      Card No
+                    </label>
+                    <input
+                      type="text"
+                      value={cardNo}
+                      onChange={(e) => setCardNo(e.target.value)}
+                      placeholder="Enter Card No"
+                      className="enterprise-input w-full h-[36px] text-xs bg-white font-mono"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                      Transaction ID
+                    </label>
+                    <input
+                      type="text"
+                      value={cardTransactionId}
+                      onChange={(e) => setCardTransactionId(e.target.value)}
+                      placeholder="Enter Transaction ID"
+                      className="enterprise-input w-full h-[36px] text-xs bg-white font-mono"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
           <Button onClick={onClose} type="button" variant="secondary" className="text-xs px-5 h-[40px]">
-            Cancel
+            Close
           </Button>
           <Button type="submit" variant="primary" loading={submitting} className="text-xs px-6 h-[40px] bg-emerald-600 hover:bg-emerald-700">
             Confirm & Mark Paid
@@ -170,6 +789,124 @@ const PaymentCollectionModal = ({ appointment, isOpen, onClose, onSuccess }) => 
       </form>
     </Modal>
   );
+};
+
+export const parseDateRobust = (val) => {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    const isoMatch = trimmed.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if (isoMatch) return new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+    const dmyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if (dmyMatch) return new Date(Number(dmyMatch[3]), Number(dmyMatch[2]) - 1, Number(dmyMatch[1]));
+  }
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+// Robust Local Date (YYYY-MM-DD) helper resilient to timezone offsets
+export const getAppDateString = (app) => {
+  if (!app) return '9999-99-99';
+  const rawDate = app.date || app.appointmentDate;
+  if (!rawDate) return '9999-99-99';
+  const d = parseDateRobust(rawDate);
+  if (!d) return '9999-99-99';
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+// Helper to convert time string (e.g., "10:30 AM", "09:00", "14:15") to minutes for chronological sorting
+export const parseTimeToMinutes = (timeStr) => {
+  if (!timeStr) return 0;
+  const str = String(timeStr).trim().toUpperCase();
+  const isPM = str.includes('PM');
+  const isAM = str.includes('AM');
+  const cleanStr = str.replace(/(AM|PM)/g, '').trim();
+  const parts = cleanStr.split(':');
+  let hours = parseInt(parts[0], 10) || 0;
+  const minutes = parseInt(parts[1], 10) || 0;
+
+  if (isPM && hours < 12) hours += 12;
+  if (isAM && hours === 12) hours = 0;
+
+  return hours * 60 + minutes;
+};
+
+// Calculates authoritative appointment status dynamically
+export const getAppointmentStatus = (app) => {
+  if (!app) return 'Waiting';
+  if (app.status === 'Cancelled' || app.queueStatus === 'Cancelled') return 'Cancelled';
+
+  // 1. Completed status takes top priority
+  const isCompleted =
+    app.status === 'Completed' ||
+    app.queueStatus === 'Completed' ||
+    app.workflow?.queueState === 'COMPLETED' ||
+    app.workflow?.consultationState === 'COMPLETED' ||
+    app.workflow?.pharmacyState === 'DISPENSED' ||
+    app.pharmacyStatus === 'DISPENSED' ||
+    Boolean(app.workflow?.timestamps?.completedAt) ||
+    Boolean(app.workflow?.timestamps?.pharmacyCompletedAt);
+
+  if (isCompleted) {
+    return 'Completed';
+  }
+
+  // 2. Strictly future booking date (appDateStr > currentTodayStr) belongs in 'Scheduled'.
+  // Future appointments cannot be in active consultation today unless emergency started today.
+  const now = new Date();
+  const currY = now.getFullYear();
+  const currM = String(now.getMonth() + 1).padStart(2, '0');
+  const currD = String(now.getDate()).padStart(2, '0');
+  const currentTodayStr = `${currY}-${currM}-${currD}`;
+
+  const appDateStr = getAppDateString(app);
+  const isFuture = Boolean(appDateStr && appDateStr > currentTodayStr);
+  if (isFuture && app.status !== 'Admitted') {
+    return 'Scheduled';
+  }
+
+  // 3. Active in Consultation Room (today's active appointments)
+  if (
+    app.status === 'In Consultation' ||
+    app.status === 'In-Consultation' ||
+    app.queueStatus === 'In-Consultation' ||
+    app.queueStatus === 'In Consultation' ||
+    app.workflow?.queueState === 'IN_CONSULTATION' ||
+    app.workflow?.consultationState === 'STARTED'
+  ) {
+    return 'In Consultation';
+  }
+
+  // 4. Sent to Pharmacy
+  const isPharmacy =
+    app.status === 'Sent to Pharmacy' ||
+    app.status === 'Sent To Pharmacy' ||
+    app.queueStatus === 'Sent to Pharmacy' ||
+    app.queueStatus === 'Sent To Pharmacy' ||
+    app.workflow?.queueState === 'SENT_TO_PHARMACY' ||
+    app.workflow?.pharmacyState === 'SENT' ||
+    app.workflow?.pharmacyState === 'DISPENSING' ||
+    app.pharmacyStatus === 'SENT' ||
+    app.pharmacyStatus === 'DISPENSING';
+
+  if (isPharmacy) {
+    return 'Sent to Pharmacy';
+  }
+
+  if (app.status === 'Called' || app.queueStatus === 'Called' || app.workflow?.queueState === 'CALLED') {
+    return 'Called';
+  }
+
+  if (app.status === 'Skipped' || app.queueStatus === 'Skipped' || app.workflow?.queueState === 'SKIPPED') {
+    return 'Skipped';
+  }
+
+  // When booked date arrives (date <= today), patient redirects to Active Queue ('Waiting')
+  return 'Waiting';
 };
 
 // Compact Mobile Card Renderer (Material Design 3)
@@ -183,7 +920,8 @@ const CompactAppointmentCard = ({
   onPrintToken,
   onOpenBottomSheet,
   onViewDetail,
-  onEditProfile
+  onEditProfile,
+  onCheckIn
 }) => {
   const { billingSettings, workflow, getAppointmentActions, getQueueEvaluation } = useBillingSettings();
   const isReceptionFeeCollector = billingSettings?.feeCollectionRole === 'Reception';
@@ -204,7 +942,7 @@ const CompactAppointmentCard = ({
     'Emergency': 'bg-red-100 text-red-700 border-red-200 font-extrabold'
   };
 
-  const status = row.status || row.queueStatus || 'Waiting';
+  const status = getAppointmentStatus(row);
   const isWaiting = status === 'Waiting' || status === 'Scheduled';
   const isCalled = status === 'Called';
   const isInConsultation = status === 'In Consultation' || status === 'Admitted' || row.queueStatus === 'In-Consultation';
@@ -296,7 +1034,7 @@ const CompactAppointmentCard = ({
             {row.patientId?.name || 'Unknown Patient'}
           </h3>
           <p className="text-xs text-slate-500 font-medium mt-0.5">
-            {row.patientId?.age ? `${row.patientId.age} Years` : 'Age N/A'} • {row.patientId?.gender || 'N/A'}
+            {row.patientId?.age ? `${row.patientId.age} Years` : 'Age N/A'} / {row.patientId?.gender || 'N/A'}
           </p>
         </div>
         <span className="font-mono font-bold text-xs text-[#3563F6] bg-[#3563F6]/10 border border-[#3563F6]/20 px-3 py-1 rounded-xl flex-shrink-0">
@@ -359,28 +1097,86 @@ const CompactAppointmentCard = ({
 const PatientInfoDrawer = ({ patient, isOpen, onClose, onOpenCompleteProfile }) => {
   if (!isOpen || !patient) return null;
 
-  const isComplete = isPatientProfileComplete(patient);
+  const targetPatientId = patient?._id || (typeof patient === 'string' ? patient : null);
 
-  return (
-    <>
+  // Fresh query to fetch latest full patient demographics, contacts & medical alerts
+  const { data: freshPatientData, isLoading: isLoadingPatient } = useQuery({
+    queryKey: ['patientInfoDrawerDetail', targetPatientId],
+    queryFn: async () => {
+      if (!targetPatientId) return null;
+      const res = await api.get(`/operations/patients/${targetPatientId}`);
+      return res.data?.data || res.data || null;
+    },
+    enabled: Boolean(isOpen && targetPatientId),
+    staleTime: 0
+  });
+
+  const effectivePatient = freshPatientData || (typeof patient === 'object' ? patient : {});
+  const isComplete = isPatientProfileComplete(effectivePatient);
+
+  // Body scroll lock while modal is active
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isOpen]);
+
+  const placeDisplay = effectivePatient.address 
+    || effectivePatient.place 
+    || (Array.isArray(effectivePatient.addresses) && (effectivePatient.addresses[0]?.city || effectivePatient.addresses[0]?.street))
+    || 'N/A';
+
+  const emergencyName = effectivePatient.emergencyContact?.name 
+    || (Array.isArray(effectivePatient.contacts) && effectivePatient.contacts[0]?.name)
+    || effectivePatient.guardianName 
+    || 'N/A';
+
+  const emergencyPhone = effectivePatient.emergencyContact?.phone 
+    || (Array.isArray(effectivePatient.contacts) && effectivePatient.contacts[0]?.phone)
+    || effectivePatient.alternativeMobile 
+    || 'N/A';
+
+  const medicalConditions = typeof effectivePatient.medicalAlerts === 'string'
+    ? (effectivePatient.medicalAlerts.trim() || 'No recorded chronic conditions')
+    : (Array.isArray(effectivePatient.medicalAlerts) && effectivePatient.medicalAlerts.length > 0
+      ? effectivePatient.medicalAlerts.join(', ')
+      : 'No recorded chronic conditions');
+
+  const allergiesDisplay = Array.isArray(effectivePatient.allergies)
+    ? (effectivePatient.allergies.length > 0 ? effectivePatient.allergies.join(', ') : 'No known drug/food allergies')
+    : (typeof effectivePatient.allergies === 'string' && effectivePatient.allergies.trim()
+      ? effectivePatient.allergies
+      : 'No known drug/food allergies');
+
+  const modalContent = (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-5 overflow-hidden">
+      {/* Full-Screen Dark Overlay covering sidebar, navbar, and workspace */}
       <div
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 transition-opacity"
+        className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
         onClick={onClose}
       />
 
-      <div className="fixed inset-y-0 right-0 w-full sm:w-[460px] bg-white shadow-2xl z-50 border-l border-slate-200 overflow-y-auto flex flex-col font-sans text-left transition-all duration-300">
-        <div className="p-5 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between sticky top-0 z-10">
+      <div className="relative w-full max-w-[500px] max-h-[88vh] bg-white rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden font-sans text-left z-10 animate-in fade-in zoom-in-95 duration-200">
+        <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-[#2F63F2] text-white flex items-center justify-center font-extrabold text-lg shadow-md border-2 border-white/20">
-              {patient.name ? patient.name.substring(0, 2).toUpperCase() : 'PT'}
+              {effectivePatient.name ? effectivePatient.name.substring(0, 2).toUpperCase() : 'PT'}
             </div>
             <div>
-              <h3 className="font-bold text-base text-white tracking-tight">{patient.name || 'Unknown Patient'}</h3>
+              <h3 className="font-bold text-base text-white tracking-tight">{effectivePatient.name || 'Unknown Patient'}</h3>
               <div className="flex items-center gap-2 mt-0.5 font-mono text-xs text-blue-200">
-                <span>UHID: {patient.uhid || 'N/A'}</span>
+                <span>UHID: {effectivePatient.uhid || 'N/A'}</span>
                 <span className="text-white/30">•</span>
-                <span className={`px-2 py-0.2 rounded text-[10px] font-extrabold uppercase ${isComplete ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30' : 'bg-amber-500/20 text-amber-300 border border-amber-400/30'
-                  }`}>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
+                  isComplete 
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30' 
+                    : 'bg-amber-500/20 text-amber-300 border border-amber-400/30'
+                }`}>
                   {isComplete ? 'Full Profile ✓' : 'Quick Registered'}
                 </span>
               </div>
@@ -389,34 +1185,42 @@ const PatientInfoDrawer = ({ patient, isOpen, onClose, onOpenCompleteProfile }) 
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-xl hover:bg-white/10 text-slate-300 hover:text-white transition-colors"
+            className="p-1.5 rounded-xl hover:bg-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+            title="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-5 space-y-5 flex-1">
+        <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 overscroll-contain">
+          {isLoadingPatient && !freshPatientData && (
+            <div className="py-2 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#2F63F2]" />
+              <span>Fetching latest patient details...</span>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Mobile Number</span>
-              <span className="font-bold text-slate-800 font-mono text-sm">{patient.mobileNumber || 'N/A'}</span>
+              <span className="font-bold text-slate-800 font-mono text-sm">{effectivePatient.mobileNumber || 'N/A'}</span>
             </div>
 
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Age & Gender</span>
               <span className="font-bold text-slate-800 text-sm">
-                {patient.age ? `${patient.age} Yrs` : 'N/A'}, {patient.gender || 'N/A'}
+                {effectivePatient.age ? `${effectivePatient.age} Yrs` : 'N/A'}, {effectivePatient.gender || 'N/A'}
               </span>
             </div>
 
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Blood Group</span>
-              <span className="font-bold text-slate-800 text-sm">{patient.bloodGroup || 'N/A'}</span>
+              <span className="font-bold text-slate-800 text-sm">{effectivePatient.bloodGroup || 'N/A'}</span>
             </div>
 
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Place / Village</span>
-              <span className="font-bold text-slate-800 text-xs truncate block">{patient.address || patient.place || 'N/A'}</span>
+              <span className="font-bold text-slate-800 text-xs truncate block" title={placeDisplay}>{placeDisplay}</span>
             </div>
           </div>
 
@@ -428,11 +1232,11 @@ const PatientInfoDrawer = ({ patient, isOpen, onClose, onOpenCompleteProfile }) 
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div>
                 <span className="text-slate-400 text-[10px] block">Contact Name</span>
-                <span className="font-semibold text-slate-800">{patient.emergencyContact?.name || patient.guardianName || 'N/A'}</span>
+                <span className="font-semibold text-slate-800">{emergencyName}</span>
               </div>
               <div>
                 <span className="text-slate-400 text-[10px] block">Emergency Phone</span>
-                <span className="font-mono font-semibold text-slate-800">{patient.emergencyContact?.phone || patient.alternativeMobile || 'N/A'}</span>
+                <span className="font-mono font-semibold text-slate-800">{emergencyPhone}</span>
               </div>
             </div>
           </div>
@@ -447,13 +1251,13 @@ const PatientInfoDrawer = ({ patient, isOpen, onClose, onOpenCompleteProfile }) 
               <div>
                 <span className="text-slate-500 text-[10px] font-semibold block uppercase">Medical Conditions</span>
                 <span className="font-medium text-slate-800">
-                  {typeof patient.medicalAlerts === 'string' ? patient.medicalAlerts || 'No recorded chronic conditions' : (Array.isArray(patient.medicalAlerts) ? patient.medicalAlerts.join(', ') : 'No recorded chronic conditions')}
+                  {medicalConditions}
                 </span>
               </div>
               <div>
                 <span className="text-slate-500 text-[10px] font-semibold block uppercase">Allergies</span>
                 <span className="font-medium text-amber-800">
-                  {Array.isArray(patient.allergies) ? (patient.allergies.length ? patient.allergies.join(', ') : 'No known drug/food allergies') : (patient.allergies || 'No known drug/food allergies')}
+                  {allergiesDisplay}
                 </span>
               </div>
             </div>
@@ -465,26 +1269,28 @@ const PatientInfoDrawer = ({ patient, isOpen, onClose, onOpenCompleteProfile }) 
               Last Visit Summary
             </h4>
             <p className="text-slate-700">
-              Last OPD Intake: <strong className="text-slate-900 font-mono">{patient.lastVisitDate ? new Date(patient.lastVisitDate).toLocaleDateString() : 'Today'}</strong>
+              Last OPD Intake: <strong className="text-slate-900 font-mono">{effectivePatient.lastVisitDate ? new Date(effectivePatient.lastVisitDate).toLocaleDateString() : 'Today'}</strong>
             </p>
           </div>
         </div>
 
-        <div className="p-4 bg-slate-50 border-t border-slate-200 sticky bottom-0 flex gap-3">
+        <div className="p-4 bg-slate-50 border-t border-slate-200 shrink-0 flex gap-3">
           <Button
             onClick={() => {
               onClose();
-              onOpenCompleteProfile(patient);
+              onOpenCompleteProfile(effectivePatient);
             }}
             variant="primary"
-            className="w-full text-xs font-bold uppercase tracking-wider h-[42px] bg-[#2F63F2]"
+            className="w-full text-xs font-bold uppercase tracking-wider h-[42px] bg-[#2F63F2] cursor-pointer"
           >
             {isComplete ? '✏️ Edit Profile' : '📝 Complete Profile'}
           </Button>
         </div>
       </div>
-    </>
+    </div>
   );
+
+  return createPortal(modalContent, document.body);
 };
 
 // COMPLETE / EDIT PATIENT PROFILE MODAL
@@ -684,7 +1490,7 @@ const CompleteProfileModal = ({ patient, isOpen, onClose, onSuccess }) => {
 
         <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-200">
           <Button onClick={onClose} type="button" variant="secondary" className="text-xs px-5 h-[40px]">
-            Cancel
+            Close
           </Button>
           <Button type="submit" variant="primary" loading={submitting} className="text-xs px-6 h-[40px] bg-[#2F63F2]">
             Save Profile
@@ -695,88 +1501,29 @@ const CompleteProfileModal = ({ patient, isOpen, onClose, onSuccess }) => {
   );
 };
 
-// PATIENT VISIT HISTORY MODAL
+// PATIENT VISIT HISTORY MODAL - Uses the rich enterprise Patient History Drawer UI
 const PatientHistoryModal = ({ patient, isOpen, onClose }) => {
   if (!isOpen || !patient) return null;
 
-  const { data: historyData, isLoading } = useQuery({
-    queryKey: ['patient_history', patient._id],
-    queryFn: async () => {
-      const res = await api.get(`/operations/patients/${patient._id}/history`);
-      return res.data.data;
-    },
-    enabled: isOpen && !!patient._id
-  });
-
-  const historyList = useMemo(() => {
-    if (!historyData) return [];
-    if (Array.isArray(historyData)) return historyData;
-    if (Array.isArray(historyData.consultations)) return historyData.consultations;
-    if (Array.isArray(historyData.appointments)) return historyData.appointments;
-    if (Array.isArray(historyData.history)) return historyData.history;
-    return [];
-  }, [historyData]);
-
   return (
-    <Modal
+    <PatientHistoryDrawer
       isOpen={isOpen}
       onClose={onClose}
-      title={`VISIT HISTORY - ${patient.name?.toUpperCase()}`}
-      maxWidth="max-w-[650px]"
-    >
-      <div className="space-y-4 text-left font-sans text-xs max-h-[450px] overflow-y-auto pr-1">
-        {isLoading ? (
-          <div className="p-8 text-center text-slate-400 font-medium">Loading visit history...</div>
-        ) : !historyList || historyList.length === 0 ? (
-          <div className="p-8 text-center text-slate-400 bg-slate-50 rounded-xl border border-slate-200">
-            No previous consultation records found for this patient.
-          </div>
-        ) : (
-          historyList.map((item, idx) => (
-            <div key={item._id || idx} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-              <div className="flex justify-between items-center border-b pb-2">
-                <span className="font-bold text-slate-900 font-mono">
-                  {new Date(item.createdAt || item.date || Date.now()).toLocaleDateString()}
-                </span>
-                <span className="text-[10px] font-bold text-[#2F63F2] bg-[#2F63F2]/10 border border-[#2F63F2]/20 px-2 py-0.5 rounded-lg font-mono">
-                  {item.appointmentId?.tokenNumber ? `Token #${item.appointmentId.tokenNumber}` : `Record #${idx + 1}`}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                <div>
-                  <span className="text-slate-400 block">Consulting Doctor:</span>
-                  <strong className="text-slate-800">{item.doctorId?.name || item.doctorId || 'Unassigned'}</strong>
-                </div>
-                <div>
-                  <span className="text-slate-400 block">Primary Diagnosis:</span>
-                  <strong className="text-slate-800">{item.primaryDiagnosis || item.diagnosis || 'General Consultation'}</strong>
-                </div>
-              </div>
-              {item.clinicalNotes && (
-                <div className="text-[11px] bg-white p-2 rounded-lg border border-slate-200">
-                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Clinical Notes</span>
-                  <span className="text-slate-800">{item.clinicalNotes}</span>
-                </div>
-              )}
-            </div>
-          ))
-        )}
-
-        <div className="flex justify-end pt-2">
-          <Button onClick={onClose} variant="secondary" className="text-xs px-5">
-            Close
-          </Button>
-        </div>
-      </div>
-    </Modal>
+      patient={patient}
+      title={patient?.name ? `VISIT HISTORY - ${patient.name.toUpperCase()}` : 'VISIT HISTORY'}
+    />
   );
 };
 
 
 const ReceptionistAppointments = () => {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { billingSettings, workflow, getAppointmentActions, getQueueEvaluation } = useBillingSettings();
+
+  const isIpdEnabled = Boolean(isIpdAvailable(user?.hospital || user));
 
   const isReceptionFeeCollector = billingSettings?.feeCollectionRole === 'Reception';
   const isBeforeConsultationTiming = workflow.isBeforeConsultation;
@@ -794,7 +1541,8 @@ const ReceptionistAppointments = () => {
     age: '',
     gender: '',
     bloodGroup: '',
-    place: ''
+    place: '',
+    allergies: ''
   });
   const [tokenSelectedComplaints, setTokenSelectedComplaints] = useState([]);
   const [tokenAdditionalNotes, setTokenAdditionalNotes] = useState('');
@@ -872,7 +1620,12 @@ const ReceptionistAppointments = () => {
   const [historyPatient, setHistoryPatient] = useState(null);
   const [paymentModalApp, setPaymentModalApp] = useState(null);
   const [viewDetailModalData, setViewDetailModalData] = useState(null);
+  const [selectedConsultationRecordApp, setSelectedConsultationRecordApp] = useState(null);
+  const [selectedPrescriptionApp, setSelectedPrescriptionApp] = useState(null);
+  const [selectedBillingApp, setSelectedBillingApp] = useState(null);
   const [tokenPrintModalApp, setTokenPrintModalApp] = useState(null);
+  const [transferToIpdApp, setTransferToIpdApp] = useState(null);
+  const [earlyCheckInApp, setEarlyCheckInApp] = useState(null);
 
   const getLocalDateString = (d = new Date()) => {
     return d.toLocaleDateString('en-CA');
@@ -1009,7 +1762,44 @@ const ReceptionistAppointments = () => {
     setTokenSubmitting(true);
 
     try {
-      // 1. Create Patient Profile if New Patient
+      // 1. Process & Deduplicate Allergies entered in Generate Token Form
+      const rawAllergies = tokenPatientForm.allergies
+        ? (typeof tokenPatientForm.allergies === 'string'
+            ? tokenPatientForm.allergies.split(/[,;\n/]+/).map(s => s.trim()).filter(Boolean)
+            : Array.isArray(tokenPatientForm.allergies)
+              ? tokenPatientForm.allergies.map(s => String(s).trim()).filter(Boolean)
+              : [])
+        : [];
+      const seenAllergies = new Set();
+      const uniqueAllergies = [];
+      for (const a of rawAllergies) {
+        const k = a.toLowerCase();
+        if (!seenAllergies.has(k) && k !== 'none' && k !== 'null' && k !== 'undefined' && k !== 'nil') {
+          seenAllergies.add(k);
+          uniqueAllergies.push(a);
+        }
+      }
+
+      // Preserve existing patient allergies if none newly entered
+      if (uniqueAllergies.length === 0 && selectedTokenPatient?.allergies) {
+        const existingAllergies = Array.isArray(selectedTokenPatient.allergies)
+          ? selectedTokenPatient.allergies
+          : String(selectedTokenPatient.allergies).split(/[,;\n/]+/);
+        for (const a of existingAllergies) {
+          const clean = String(a).trim();
+          if (clean && !seenAllergies.has(clean.toLowerCase()) && clean.toLowerCase() !== 'none') {
+            seenAllergies.add(clean.toLowerCase());
+            uniqueAllergies.push(clean);
+          }
+        }
+      }
+
+      // If "Allergy" chip was selected and still no specific allergy entered, tag it
+      if (uniqueAllergies.length === 0 && tokenSelectedComplaints.includes('Allergy')) {
+        uniqueAllergies.push('Allergy Reported');
+      }
+
+      // 2. Create Patient Profile if New Patient
       if (!targetPatientId) {
         const patientPayload = {
           name: tokenPatientForm.name.trim(),
@@ -1017,7 +1807,8 @@ const ReceptionistAppointments = () => {
           gender: tokenPatientForm.gender,
           bloodGroup: tokenPatientForm.bloodGroup || 'O+',
           age: Number(tokenPatientForm.age) || 0,
-          address: tokenPatientForm.place?.trim() || undefined
+          address: tokenPatientForm.place?.trim() || undefined,
+          allergies: uniqueAllergies
         };
 
         const regRes = await api.post('/operations/patients', patientPayload);
@@ -1025,12 +1816,22 @@ const ReceptionistAppointments = () => {
         targetPatientId = targetPatientObj._id;
         if (regRes.data.isExisting) {
           toast.success(`Using existing patient profile: ${targetPatientObj.name} (${targetPatientObj.uhid})`);
+          if (uniqueAllergies.length > 0) {
+            try {
+              await api.put(`/operations/patients/${targetPatientId}`, { allergies: uniqueAllergies });
+            } catch (_) {}
+          }
         } else {
           toast.success(`Registered patient: ${targetPatientObj.uhid}`);
         }
+      } else if (targetPatientId && uniqueAllergies.length > 0) {
+        // Update existing patient's allergies if entered/edited
+        try {
+          await api.put(`/operations/patients/${targetPatientId}`, { allergies: uniqueAllergies });
+        } catch (_) {}
       }
 
-      // 2. Format Chief Complaints Text
+      // 3. Format Chief Complaints Text
       const complaintsList = tokenSelectedComplaints.filter(c => c !== 'Other');
       if (tokenSelectedComplaints.includes('Other') && tokenAdditionalNotes.trim()) {
         complaintsList.push(`Other: ${tokenAdditionalNotes.trim()}`);
@@ -1049,7 +1850,7 @@ const ReceptionistAppointments = () => {
         initialBillingStatus = (panelPaymentStatus === 'Paid') ? 'Paid' : 'Unpaid';
       }
 
-      // 3. Attach GPS Location for Geofence validation ONLY if Geofence Enforcement is enabled
+      // 4. Attach GPS Location for Geofence validation ONLY if Geofence Enforcement is enabled
       let submitLat = inlineGpsLocation.lat;
       let submitLng = inlineGpsLocation.lng;
 
@@ -1085,6 +1886,7 @@ const ReceptionistAppointments = () => {
         time: currentTimeStr,
         appointmentType: finalConsultType,
         chiefComplaint: complaintSummary || undefined,
+        allergies: uniqueAllergies,
         isEmergency: isEmergencyConsult,
         billingStatus: initialBillingStatus,
         paymentMethod: (initialBillingStatus === 'Paid') ? panelPaymentMethod : undefined,
@@ -1113,7 +1915,8 @@ const ReceptionistAppointments = () => {
         age: '',
         gender: 'Male',
         bloodGroup: 'O+',
-        place: ''
+        place: '',
+        allergies: ''
       });
       setTokenSelectedComplaints([]);
       setTokenAdditionalNotes('');
@@ -1183,13 +1986,27 @@ const ReceptionistAppointments = () => {
   useEffect(() => {
     const unsubscribe = workflowRealtime.subscribe((event) => {
       refetch();
-      if (event && event.type === 'TriggerVoiceCall') {
-        voiceAnnouncement.announceCall(event);
-      } else if (event && event.type === 'PatientCalled') {
-        const qState = (event.queueState || event.status || '').toUpperCase();
-        if (qState === 'CALLED' || qState.includes('CONSULTATION')) {
-          voiceAnnouncement.announceCall(event);
-        }
+      if (!event) return;
+      const eventType = event.type || '';
+      const qState = (event.queueState || event.queueStatus || event.status || '').toUpperCase();
+
+      const isCallEvent =
+        eventType === 'TriggerVoiceCall' ||
+        eventType === 'ConsultationStarted' ||
+        (eventType === 'PatientCalled' && (qState === 'CALLED' || qState.includes('CONSULTATION')));
+
+      if (isCallEvent && (event.tokenNumber || event.token || event.patientName || event.patientId || event.appointmentId || event._id)) {
+        const tNo = event.tokenNumber || event.token || event.tokenNo || '';
+        const pName = event.patientName || (typeof event.patientId === 'object' ? event.patientId?.name : '') || 'Patient';
+        toast.success(`📢 Calling Token #${tNo || 'OPD'} (${pName})`, { duration: 4000 });
+        voiceAnnouncement.announceCall({
+          tokenNumber: tNo,
+          tokenNo: tNo,
+          patientName: pName,
+          doctorName: event.doctorName || (typeof event.doctorId === 'object' ? event.doctorId?.name : ''),
+          roomNo: event.roomNo || event.roomNumber || (typeof event.doctorId === 'object' ? (event.doctorId?.roomNo || event.doctorId?.doctorProfile?.roomNo) : 'Consultation Room'),
+          roomNumber: event.roomNo || event.roomNumber || 'Consultation Room'
+        });
       }
     });
 
@@ -1236,7 +2053,7 @@ const ReceptionistAppointments = () => {
     }
   });
 
-  // Check-In Scheduled Patient Mutation
+    // Check-In Scheduled Patient Mutation
   const checkInMutation = useMutation({
     mutationFn: async (appointmentId) => {
       const res = await api.put(`/operations/appointments/${appointmentId}/check-in`);
@@ -1247,6 +2064,8 @@ const ReceptionistAppointments = () => {
       queryClient.invalidateQueries(['appointments']);
       queryClient.invalidateQueries(['todayQueue']);
       queryClient.invalidateQueries(['liveQueueAppointments']);
+      queryClient.invalidateQueries(['doctorQueue']);
+      setEarlyCheckInApp(null);
       refetch();
     },
     onError: (err) => {
@@ -1256,6 +2075,47 @@ const ReceptionistAppointments = () => {
 
   const handleCheckIn = (app) => {
     if (!app || !app._id) return;
+
+    // Determine the scheduled date of the appointment
+    let appDateStr = '';
+    const rawDate = app.date || app.appointmentDate;
+    if (rawDate) {
+      try {
+        const d = new Date(rawDate);
+        if (!isNaN(d.getTime())) {
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          appDateStr = `${y}-${m}-${day}`;
+        }
+      } catch (_) {}
+    }
+
+    const now = new Date();
+    const currY = now.getFullYear();
+    const currM = String(now.getMonth() + 1).padStart(2, '0');
+    const currD = String(now.getDate()).padStart(2, '0');
+    const currentTodayStr = `${currY}-${currM}-${currD}`;
+
+    // If appointment is in the future compared to today -> Early arrival
+    if (appDateStr && appDateStr > currentTodayStr) {
+      const [y1, m1, d1] = appDateStr.split('-').map(Number);
+      const [y2, m2, d2] = currentTodayStr.split('-').map(Number);
+      const appDateObj = new Date(y1, m1 - 1, d1);
+      const todayDateObj = new Date(y2, m2 - 1, d2);
+      const diffMs = appDateObj.getTime() - todayDateObj.getTime();
+      const daysEarly = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)));
+
+      setEarlyCheckInApp({
+        ...app,
+        daysEarly,
+        appDateStr,
+        currentTodayStr
+      });
+      return;
+    }
+
+    // Direct check-in on scheduled day or earlier
     checkInMutation.mutate(app._id);
   };
 
@@ -1269,9 +2129,9 @@ const ReceptionistAppointments = () => {
         map[docId] = { activeApp: null, waitingApps: [] };
       }
 
-      const st = app.status || app.queueStatus || 'Waiting';
-      const isInConsultationOrCalled = st === 'In Consultation' || st === 'Called' || st === 'Admitted';
-      const isWaiting = st === 'Waiting' || st === 'Scheduled';
+      const st = getAppointmentStatus(app);
+      const isInConsultationOrCalled = st === 'In Consultation' || st === 'Called';
+      const isWaiting = st === 'Waiting';
 
       if (isInConsultationOrCalled) {
         map[docId].activeApp = app;
@@ -1281,6 +2141,19 @@ const ReceptionistAppointments = () => {
     });
 
     return map;
+  }, [appointments]);
+
+  // Set of patient IDs that have already been consulted / completed today
+  const consultedOrCompletedPatientIds = useMemo(() => {
+    const ids = new Set();
+    appointments.forEach((a) => {
+      const st = getAppointmentStatus(a);
+      if (st === 'Completed' || st === 'In Consultation' || st === 'Sent to Pharmacy') {
+        const pId = String(a.patientId?._id || a.patientId || '');
+        if (pId) ids.add(pId);
+      }
+    });
+    return ids;
   }, [appointments]);
 
   // KPI Summary Counts
@@ -1294,56 +2167,61 @@ const ReceptionistAppointments = () => {
     let emergency = 0;
 
     appointments.forEach((app) => {
-      const st = app.status || app.queueStatus || 'Waiting';
-      const qState = (app.workflow?.queueState || '').toUpperCase();
+      const st = getAppointmentStatus(app);
       const isEmg = app.isEmergency || app.priorityLevel === 'EMERGENCY' || app.priority === 'EMERGENCY' || (app.consultationType || '').toLowerCase() === 'emergency';
-      const isScheduled = st === 'Scheduled' || qState === 'SCHEDULED' || (!app.tokenNumber && st !== 'Completed' && st !== 'In Consultation' && st !== 'Sent to Pharmacy' && st !== 'Cancelled' && st !== 'Admitted');
+      const isScheduled = st === 'Scheduled';
 
       if (isEmg && st !== 'Completed' && st !== 'In Consultation' && st !== 'Cancelled' && st !== 'Sent to Pharmacy') {
         emergency++;
       }
-      if (isScheduled) scheduled++;
-      else if (st === 'In Consultation' || st === 'Admitted' || qState === 'IN_CONSULTATION') inConsultation++;
-      else if (st === 'Called' || qState === 'CALLED') called++;
-      else if (st === 'Sent to Pharmacy' || qState === 'SENT_TO_PHARMACY' || app.pharmacyStatus === 'SENT' || app.pharmacyStatus === 'DISPENSING') sentToPharmacy++;
-      else if (st === 'Completed' || qState === 'COMPLETED' || app.pharmacyStatus === 'DISPENSED') completed++;
-      else if (st === 'Waiting' || qState === 'WAITING' || qState === 'CHECKED_IN') waiting++;
+      if (isScheduled) {
+        const pId = String(app.patientId?._id || app.patientId || '');
+        if (!consultedOrCompletedPatientIds.has(pId)) {
+          scheduled++;
+        }
+      }
+      else if (st === 'In Consultation') inConsultation++;
+      else if (st === 'Called') called++;
+      else if (st === 'Completed') completed++;
+      else if (st === 'Sent to Pharmacy') sentToPharmacy++;
+      else if (st === 'Waiting') waiting++;
     });
 
     return { scheduled, waiting, called, inConsultation, sentToPharmacy, completed, emergency };
-  }, [appointments]);
+  }, [appointments, consultedOrCompletedPatientIds]);
 
   // Filtered Appointments List by Status & Search Query
   const filteredAppointments = useMemo(() => {
-    return appointments.filter((app) => {
-      const st = app.status || app.queueStatus || 'Waiting';
-      const qState = (app.workflow?.queueState || '').toUpperCase();
-      const isScheduled = st === 'Scheduled' || qState === 'SCHEDULED' || (!app.tokenNumber && st !== 'Completed' && st !== 'In Consultation' && st !== 'Sent to Pharmacy' && st !== 'Cancelled' && st !== 'Admitted');
+    const matched = appointments.filter((app) => {
+      const st = getAppointmentStatus(app);
+      const isScheduled = st === 'Scheduled';
 
       // Workspace Segmented Tab Filter
       if (workspaceTab === 'SCHEDULED') {
         if (!isScheduled) return false;
+        const pId = String(app.patientId?._id || app.patientId || '');
+        if (consultedOrCompletedPatientIds.has(pId)) return false;
       } else if (workspaceTab === 'ACTIVE_QUEUE') {
         if (isScheduled) return false;
-        if (st === 'Completed' || st === 'Cancelled' || qState === 'COMPLETED' || qState === 'CANCELLED') return false;
+        if (st === 'Completed' || st === 'Cancelled') return false;
       } else if (workspaceTab === 'IN_CONSULTATION') {
-        if (st !== 'In Consultation' && st !== 'Admitted' && qState !== 'IN_CONSULTATION') return false;
+        if (st !== 'In Consultation') return false;
       } else if (workspaceTab === 'PHARMACY') {
-        if (st !== 'Sent to Pharmacy' && qState !== 'SENT_TO_PHARMACY' && app.pharmacyStatus !== 'SENT' && app.pharmacyStatus !== 'DISPENSING') return false;
+        if (st !== 'Sent to Pharmacy') return false;
       } else if (workspaceTab === 'COMPLETED') {
-        if (st !== 'Completed' && qState !== 'COMPLETED' && app.pharmacyStatus !== 'DISPENSED') return false;
+        if (st !== 'Completed') return false;
       }
 
       // Status Chip Filter (if set)
       let statusMatch = true;
       if (statusFilter === 'EMERGENCY') statusMatch = app.isEmergency || app.priorityLevel === 'EMERGENCY' || app.priority === 'EMERGENCY' || (app.consultationType || '').toLowerCase() === 'emergency';
       else if (statusFilter === 'SCHEDULED') statusMatch = isScheduled;
-      else if (statusFilter === 'WAITING') statusMatch = (st === 'Waiting' || qState === 'WAITING' || qState === 'CHECKED_IN') && !isScheduled;
-      else if (statusFilter === 'CALLED') statusMatch = st === 'Called' || qState === 'CALLED';
-      else if (statusFilter === 'IN_CONSULTATION') statusMatch = st === 'In Consultation' || st === 'Admitted' || qState === 'IN_CONSULTATION';
-      else if (statusFilter === 'SENT_TO_PHARMACY') statusMatch = st === 'Sent to Pharmacy' || qState === 'SENT_TO_PHARMACY';
-      else if (statusFilter === 'COMPLETED') statusMatch = st === 'Completed' || qState === 'COMPLETED';
-      else if (statusFilter === 'SKIPPED') statusMatch = st === 'Skipped' || qState === 'SKIPPED';
+      else if (statusFilter === 'WAITING') statusMatch = st === 'Waiting';
+      else if (statusFilter === 'CALLED') statusMatch = st === 'Called';
+      else if (statusFilter === 'IN_CONSULTATION') statusMatch = st === 'In Consultation';
+      else if (statusFilter === 'SENT_TO_PHARMACY') statusMatch = st === 'Sent to Pharmacy';
+      else if (statusFilter === 'COMPLETED') statusMatch = st === 'Completed';
+      else if (statusFilter === 'SKIPPED') statusMatch = st === 'Skipped';
 
       if (!statusMatch) return false;
 
@@ -1361,7 +2239,22 @@ const ReceptionistAppointments = () => {
 
       return true;
     });
-  }, [appointments, workspaceTab, statusFilter, searchQuery]);
+
+    // Deduplicate appointments in SCHEDULED tab by patient and date
+    if (workspaceTab === 'SCHEDULED') {
+      const seen = new Set();
+      return matched.filter(a => {
+        const pId = String(a.patientId?._id || a.patientId || '');
+        const d = getAppDateString(a);
+        const key = `${pId}_${d}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    return matched;
+  }, [appointments, workspaceTab, statusFilter, searchQuery, consultedOrCompletedPatientIds]);
 
   // Group By Date toggle state
   const [groupByDate, setGroupByDate] = useState(false);
@@ -1377,14 +2270,18 @@ const ReceptionistAppointments = () => {
     const groups = {};
 
     filteredAppointments.forEach(app => {
-      const dObj = app.date ? new Date(app.date) : new Date();
-      const dateStr = dObj.toISOString().split('T')[0];
-      const displayLabel = dObj.toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'short',
-        day: '2-digit',
-        year: 'numeric'
-      });
+      const dateStr = getAppDateString(app);
+      let displayLabel = 'Unknown Date';
+      if (dateStr && dateStr !== '9999-99-99') {
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const dObj = new Date(y, m - 1, d);
+        displayLabel = dObj.toLocaleDateString('en-US', {
+          weekday: 'long',
+          month: 'short',
+          day: '2-digit',
+          year: 'numeric'
+        });
+      }
 
       if (!groups[dateStr]) {
         groups[dateStr] = {
@@ -1396,27 +2293,69 @@ const ReceptionistAppointments = () => {
       groups[dateStr].items.push(app);
     });
 
-    // Sort dates descending (newest dates first)
+    // In each group, sort patients chronologically by slot time
+    Object.values(groups).forEach(g => {
+      g.items.sort((a, b) => {
+        const timeDiff = parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
+        if (timeDiff !== 0) return timeDiff;
+        return String(a.tokenNumber || '').localeCompare(String(b.tokenNumber || ''), undefined, { numeric: true });
+      });
+    });
+
+    // If viewing scheduled/follow-ups, sort dates ascending (earliest scheduled date first)
+    if (workspaceTab === 'SCHEDULED' || statusFilter === 'SCHEDULED') {
+      return Object.values(groups).sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+    }
+
+    // Otherwise sort dates descending (newest dates first)
     return Object.values(groups).sort((a, b) => b.dateStr.localeCompare(a.dateStr));
-  }, [filteredAppointments, groupByDate]);
+  }, [filteredAppointments, groupByDate, workspaceTab, statusFilter]);
 
   // Segmented Workspace Filtered Data
   const workspaceFilteredAppointments = useMemo(() => {
-    return filteredAppointments.filter((app) => {
-      const st = app.status || app.queueStatus || 'Waiting';
+    const list = filteredAppointments.filter((app) => {
+      const st = getAppointmentStatus(app);
 
-      if (workspaceTab === 'ACTIVE_QUEUE') {
-        return st === 'Waiting' || st === 'Scheduled' || st === 'Called' || st === 'Admitted' || st === 'Skipped';
+      if (workspaceTab === 'SCHEDULED') {
+        return st === 'Scheduled';
+      } else if (workspaceTab === 'ACTIVE_QUEUE') {
+        return st === 'Waiting' || st === 'Called' || st === 'Skipped';
       } else if (workspaceTab === 'IN_CONSULTATION') {
-        return st === 'In Consultation' || st === 'In-Consultation';
+        return st === 'In Consultation';
       } else if (workspaceTab === 'PHARMACY') {
-        return st === 'Sent to Pharmacy' || st === 'Sent To Pharmacy' || app.pharmacyStatus === 'SENT' || app.pharmacyStatus === 'DISPENSING';
+        return st === 'Sent to Pharmacy';
       } else if (workspaceTab === 'COMPLETED') {
         return st === 'Completed';
       }
       return true; // 'ALL'
     });
-  }, [filteredAppointments, workspaceTab]);
+
+    // In Scheduled tab (or when filtering by Scheduled), sort in chronological order based on consultation date and slot time
+    if (workspaceTab === 'SCHEDULED' || statusFilter === 'SCHEDULED') {
+      return [...list].sort((a, b) => {
+        const dateA = getAppDateString(a);
+        const dateB = getAppDateString(b);
+        const dateDiff = dateA.localeCompare(dateB);
+        if (dateDiff !== 0) return dateDiff;
+        const timeDiff = parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
+        if (timeDiff !== 0) return timeDiff;
+        return String(a.tokenNumber || '').localeCompare(String(b.tokenNumber || ''), undefined, { numeric: true });
+      });
+    }
+
+    // In Active Queue, move skipped patients to the LAST of the queue
+    if (workspaceTab === 'ACTIVE_QUEUE') {
+      return [...list].sort((a, b) => {
+        const isSkippedA = (a.status === 'Skipped' || a.queueStatus === 'Skipped' || getAppointmentStatus(a) === 'Skipped');
+        const isSkippedB = (b.status === 'Skipped' || b.queueStatus === 'Skipped' || getAppointmentStatus(b) === 'Skipped');
+        if (isSkippedA && !isSkippedB) return 1;
+        if (!isSkippedA && isSkippedB) return -1;
+        return 0;
+      });
+    }
+
+    return list;
+  }, [filteredAppointments, workspaceTab, statusFilter]);
 
   const handleCallNext = (app) => {
     updateQueueStatusMutation.mutate({
@@ -1471,31 +2410,24 @@ const ReceptionistAppointments = () => {
   };
 
   const handleViewConsultation = (app) => {
-    setViewDetailModalData({
-      title: 'CONSULTATION RECORD',
-      row: app,
-      content: `Consultation record for ${app.patientId?.name || 'Patient'}. Doctor: ${app.doctorId?.name || 'Unassigned'}. Status: ${app.status}.`
-    });
+    setSelectedConsultationRecordApp(app);
   };
 
   const handleViewPrescription = (app) => {
-    setViewDetailModalData({
-      title: 'PRESCRIPTION DETAILS',
-      row: app,
-      content: `Rx generated for ${app.patientId?.name || 'Patient'}. Prescribed by ${app.doctorId?.name || 'Doctor'}.`
-    });
+    setSelectedPrescriptionApp(app);
   };
 
   const handleViewBill = (app) => {
-    setViewDetailModalData({
-      title: 'PATIENT BILLING SUMMARY',
-      row: app,
-      content: `Billing breakdown for Token #${app.tokenNumber || 'N/A'}. Consultation & Pharmacy Billed.`
-    });
+    setSelectedBillingApp(app);
   };
 
   const handlePrintToken = (app) => {
     setTokenPrintModalApp(app);
+  };
+
+  const handleTransferToIPD = (app) => {
+    if (!app) return;
+    setTransferToIpdApp(app);
   };
 
   return (
@@ -1577,8 +2509,8 @@ const ReceptionistAppointments = () => {
           <button
             type="button"
             onClick={() => {
-              const activeCall = (appointments || []).find(a => ['Called', 'In Consultation', 'CALLED', 'IN_CONSULTATION'].includes(a.status || a.queueStatus)) 
-                || (appointments || []).find(a => ['Waiting', 'WAITING'].includes(a.status || a.queueStatus));
+              const activeCall = (appointments || []).find(a => ['Called', 'In Consultation'].includes(getAppointmentStatus(a)))
+                || (appointments || []).find(a => getAppointmentStatus(a) === 'Waiting');
               if (activeCall) {
                 voiceAnnouncement.announceCall({
                   tokenNumber: activeCall.tokenNumber,
@@ -1646,8 +2578,8 @@ const ReceptionistAppointments = () => {
           <button
             type="button"
             onClick={() => {
-              const activeCall = (appointments || []).find(a => ['Called', 'In Consultation', 'CALLED', 'IN_CONSULTATION'].includes(a.status || a.queueStatus)) 
-                || (appointments || []).find(a => ['Waiting', 'WAITING'].includes(a.status || a.queueStatus));
+              const activeCall = (appointments || []).find(a => ['Called', 'In Consultation'].includes(getAppointmentStatus(a)))
+                || (appointments || []).find(a => getAppointmentStatus(a) === 'Waiting');
               if (activeCall) {
                 voiceAnnouncement.announceCall({
                   tokenNumber: activeCall.tokenNumber,
@@ -1792,28 +2724,31 @@ const ReceptionistAppointments = () => {
                 </label>
 
                 {selectedTokenPatient ? (
-                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-extrabold text-slate-900 text-xs">{selectedTokenPatient.name}</span>
-                        <span className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
-                          {selectedTokenPatient.uhid}
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-slate-900 text-xs">{selectedTokenPatient.name}</span>
+                          <span className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
+                            {selectedTokenPatient.uhid}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-500 block mt-0.5">
+                          {selectedTokenPatient.mobileNumber} • {selectedTokenPatient.gender || 'N/A'} • {selectedTokenPatient.age ? `${selectedTokenPatient.age} Yrs` : ''}
                         </span>
                       </div>
-                      <span className="text-[11px] text-slate-500 block mt-0.5">
-                        {selectedTokenPatient.mobileNumber} • {selectedTokenPatient.gender || 'N/A'} • {selectedTokenPatient.age ? `${selectedTokenPatient.age} Yrs` : ''}
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTokenPatient(null);
+                          setTokenSearchQuery('');
+                          setTokenPatientForm(prev => ({ ...prev, allergies: '' }));
+                        }}
+                        className="text-[11px] font-bold text-rose-600 hover:underline cursor-pointer"
+                      >
+                        Change
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedTokenPatient(null);
-                        setTokenSearchQuery('');
-                      }}
-                      className="text-[11px] font-bold text-rose-600 hover:underline"
-                    >
-                      Change
-                    </button>
                   </div>
                 ) : (
                   <div className="relative">
@@ -1840,6 +2775,17 @@ const ReceptionistAppointments = () => {
                             onClick={() => {
                               setSelectedTokenPatient(p);
                               setTokenSearchQuery('');
+                              const patAllergies = Array.isArray(p.allergies) ? p.allergies.join(', ') : (p.allergies || '');
+                              setTokenPatientForm(prev => ({
+                                ...prev,
+                                name: p.name || '',
+                                mobileNumber: p.mobileNumber || '',
+                                age: p.age ? String(p.age) : '',
+                                gender: p.gender || '',
+                                bloodGroup: p.bloodGroup || '',
+                                place: p.address || p.place || '',
+                                allergies: patAllergies
+                              }));
                             }}
                             className="w-full p-2.5 text-left hover:bg-blue-50/60 transition-colors flex items-center justify-between"
                           >
@@ -1861,8 +2807,8 @@ const ReceptionistAppointments = () => {
               {/* 2. PATIENT DETAILS (IF NEW PATIENT) */}
               {!selectedTokenPatient && (
                 <div className="space-y-3 pt-1 border-t border-slate-100">
-                  {/* Row 1: Mobile Number, Patient Name, Age */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Row 1: Mobile Number, Patient Name */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <MobileNumber
                       id="panel-patient-mobile"
                       label="Mobile Number"
@@ -1885,7 +2831,10 @@ const ReceptionistAppointments = () => {
                         setTokenPatientForm({ ...tokenPatientForm, name: val });
                       }}
                     />
+                  </div>
 
+                  {/* Row 2: Age & Gender (1 row & 2 columns) */}
+                  <div className="grid grid-cols-2 gap-3">
                     <Input
                       id="panel-patient-age"
                       label="Age"
@@ -1898,16 +2847,13 @@ const ReceptionistAppointments = () => {
                         setTokenPatientForm({ ...tokenPatientForm, age: clean });
                       }}
                     />
-                  </div>
 
-                  {/* Row 2: Gender, Place, Blood Group */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="text-xs font-bold text-slate-700 block mb-1.5">Gender <span className="text-rose-500">*</span></label>
                       <select
                         value={tokenPatientForm.gender}
                         onChange={(e) => setTokenPatientForm({ ...tokenPatientForm, gender: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#3563F6]/20 focus:border-[#3563F6] h-[40px]"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#3563F6]/20 focus:border-[#3563F6] h-[42px]"
                       >
                         <option value="" disabled>-- Select Gender --</option>
                         <option value="Male">Male</option>
@@ -1915,7 +2861,10 @@ const ReceptionistAppointments = () => {
                         <option value="Other">Other</option>
                       </select>
                     </div>
+                  </div>
 
+                  {/* Row 3: Place, Blood Group */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <Input
                       id="panel-patient-place"
                       label="Place / Village"
@@ -1934,7 +2883,7 @@ const ReceptionistAppointments = () => {
                       <select
                         value={tokenPatientForm.bloodGroup}
                         onChange={(e) => setTokenPatientForm({ ...tokenPatientForm, bloodGroup: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#3563F6]/20 focus:border-[#3563F6] h-[40px]"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#3563F6]/20 focus:border-[#3563F6] h-[42px]"
                       >
                         <option value="">-- Select Blood Group --</option>
                         <option value="O+">O+</option>
@@ -1995,6 +2944,21 @@ const ReceptionistAppointments = () => {
                     );
                   })}
                 </div>
+
+                {tokenSelectedComplaints.includes('Allergy') && (
+                  <div className="pt-2">
+                    <Input
+                      id="panel-complaint-allergy-name"
+                      label="Allergy Details / Allergens *"
+                      placeholder="e.g. Dust, Penicillin, Peanuts, Sulfa"
+                      value={tokenPatientForm.allergies}
+                      onChange={(e) => {
+                        const val = e?.target ? e.target.value : e;
+                        setTokenPatientForm({ ...tokenPatientForm, allergies: val });
+                      }}
+                    />
+                  </div>
+                )}
 
                 {tokenSelectedComplaints.includes('Other') && (
                   <div className="pt-2">
@@ -2290,7 +3254,7 @@ const ReceptionistAppointments = () => {
                   : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
                   }`}
               >
-                <span className="truncate">📅 Scheduled</span>
+                <span className="truncate">📅 Scheduled / Follow-Up</span>
                 <span className="bg-amber-100 text-amber-800 text-[10px] font-mono px-1.5 py-0.5 rounded-full font-bold shrink-0">
                   {kpiCounts.scheduled}
                 </span>
@@ -2441,20 +3405,20 @@ const ReceptionistAppointments = () => {
                               key: 'tokenNumber',
                               label: 'Token',
                               render: (row) => {
-                                const isScheduled = row.status === 'Scheduled' || row.queueStatus === 'Scheduled' || row.workflow?.queueState === 'SCHEDULED';
-                                if (isScheduled || !row.tokenNumber) {
-                                  return (
-                                    <span className="font-bold font-mono text-xs px-2.5 py-0.5 rounded-lg border text-slate-400 bg-slate-100 border-slate-200">
-                                      —
-                                    </span>
-                                  );
-                                }
-                                const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.consultationType || '').toLowerCase() === 'emergency' || (row.tokenNumber || '').startsWith('EMG') || (row.patientId?.name || '').toLowerCase().includes('unknown');
+                                const displayToken = row.tokenNumber || (row.orderNumber ? `OP${String(row.orderNumber).padStart(3, '0')}` : '—');
+                                const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.consultationType || '').toLowerCase() === 'emergency' || (displayToken || '').startsWith('EMG') || (row.patientId?.name || '').toLowerCase().includes('unknown');
+                                const st = getAppointmentStatus(row);
+                                const isScheduled = st === 'Scheduled';
+
                                 return (
                                   <span className={`font-bold font-mono text-xs px-2.5 py-0.5 rounded-lg border ${
-                                    isEmg ? 'text-rose-700 bg-rose-50 border-rose-300 ring-2 ring-rose-500/20 font-extrabold' : 'text-[#2F63F2] bg-[#2F63F2]/10 border-[#2F63F2]/20'
+                                    isEmg
+                                      ? 'text-rose-700 bg-rose-50 border-rose-300 ring-2 ring-rose-500/20 font-extrabold'
+                                      : isScheduled
+                                        ? 'text-amber-800 bg-amber-50 border-amber-200 font-extrabold'
+                                        : 'text-[#2F63F2] bg-[#2F63F2]/10 border-[#2F63F2]/20'
                                   }`}>
-                                    {row.tokenNumber}
+                                    {displayToken}
                                   </span>
                                 );
                               }
@@ -2463,7 +3427,7 @@ const ReceptionistAppointments = () => {
                               key: 'date',
                               label: 'Consultation Date',
                               render: (row) => {
-                                const dateObj = new Date(row.date);
+                                const dateObj = parseDateRobust(row.date) || new Date();
                                 const day = String(dateObj.getDate()).padStart(2, '0');
                                 const month = String(dateObj.getMonth() + 1).padStart(2, '0');
                                 const year = dateObj.getFullYear();
@@ -2492,7 +3456,7 @@ const ReceptionistAppointments = () => {
                               label: 'Patient Status',
                               render: (row) => {
                                 const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.consultationType || '').toLowerCase() === 'emergency' || (row.patientId?.name || '').toLowerCase().includes('unknown');
-                                const status = row.status || row.queueStatus || 'Waiting';
+                                const status = getAppointmentStatus(row);
 
                                 if (isEmg && (status === 'Scheduled' || status === 'Waiting' || status === 'Arrived')) {
                                   return (
@@ -2504,6 +3468,7 @@ const ReceptionistAppointments = () => {
                                 }
 
                                 const colors = {
+                                  'Scheduled': 'bg-amber-50 text-amber-700 border-amber-200 font-bold',
                                   'Waiting': 'bg-blue-50 text-blue-600 border-blue-100',
                                   'Called': 'bg-cyan-50 text-cyan-700 border-cyan-200 font-bold',
                                   'In Consultation': 'bg-purple-50 text-purple-700 border-purple-200 font-bold',
@@ -2542,9 +3507,20 @@ const ReceptionistAppointments = () => {
                                     </span>
                                   );
                                 }
+                                if (isReceptionFeeCollector) {
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => setPaymentModalApp(row)}
+                                      className="px-3 py-1.5 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer border bg-[#2F63F2] text-white border-[#2F63F2] hover:bg-blue-700 shadow-xs whitespace-nowrap"
+                                    >
+                                      Collect Payment
+                                    </button>
+                                  );
+                                }
                                 return (
-                                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg whitespace-nowrap">
-                                    Collect Payment
+                                  <span className="text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg whitespace-nowrap">
+                                    Unpaid
                                   </span>
                                 );
                               }
@@ -2553,13 +3529,20 @@ const ReceptionistAppointments = () => {
                           data={group.items}
                           actions={[
                             {
+                              label: 'Check In',
+                              icon: UserCheck,
+                              isPrimary: true,
+                              className: 'bg-[#2F63F2] text-white hover:bg-[#1E4FD9] font-bold shadow-xs',
+                              show: (row) => {
+                                const status = getAppointmentStatus(row);
+                                return status === 'Scheduled';
+                              },
+                              onClick: (row) => handleCheckIn(row)
+                            },
+                            {
                               label: (row) => {
-                                const billingStatus = row.billingStatus || 'Unpaid';
-                                const status = row.status || row.queueStatus || 'Waiting';
+                                const status = getAppointmentStatus(row);
 
-                                if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                                  return 'Collect Payment';
-                                }
                                 if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
                                   return 'Print Token';
                                 }
@@ -2572,12 +3555,8 @@ const ReceptionistAppointments = () => {
                                 return status;
                               },
                               icon: (row) => {
-                                const billingStatus = row.billingStatus || 'Unpaid';
-                                const status = row.status || row.queueStatus || 'Waiting';
+                                const status = getAppointmentStatus(row);
 
-                                if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                                  return null;
-                                }
                                 if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
                                   return Ticket;
                                 }
@@ -2588,13 +3567,13 @@ const ReceptionistAppointments = () => {
                                 return null;
                               },
                               isPrimary: true,
+                              show: (row) => {
+                                const status = getAppointmentStatus(row);
+                                return status !== 'Skipped' && status !== 'Scheduled';
+                              },
                               disabled: (row) => {
-                                const billingStatus = row.billingStatus || 'Unpaid';
-                                const status = row.status || row.queueStatus || 'Waiting';
+                                const status = getAppointmentStatus(row);
 
-                                if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                                  return false;
-                                }
                                 if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
                                   return false;
                                 }
@@ -2607,12 +3586,9 @@ const ReceptionistAppointments = () => {
                                 return true;
                               },
                               onClick: (row) => {
-                                const billingStatus = row.billingStatus || 'Unpaid';
-                                const status = row.status || row.queueStatus || 'Waiting';
+                                const status = getAppointmentStatus(row);
 
-                                if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                                  setPaymentModalApp(row);
-                                } else if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
+                                if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
                                   handlePrintToken(row);
                                 } else if (status === 'Sent to Pharmacy' || status === 'Sent To Pharmacy' || status === 'Completed') {
                                   handleViewConsultation(row);
@@ -2625,7 +3601,7 @@ const ReceptionistAppointments = () => {
                               isPrimary: true,
                               variant: 'amber',
                               show: (row) => {
-                                const status = row.status || row.queueStatus || 'Waiting';
+                                const status = getAppointmentStatus(row);
                                 return status === 'Waiting' || status === 'Scheduled' || status === 'Called';
                               },
                               onClick: (row) => handleSkipToken(row)
@@ -2638,11 +3614,11 @@ const ReceptionistAppointments = () => {
                               onClick: (row) => setActiveDrawerPatient(row.patientId)
                             },
                             {
-                              label: 'Complete Profile',
-                              icon: Edit,
+                              label: 'Transfer to IPD',
+                              icon: Bed,
                               isPrimary: false,
-                              show: (row) => !isPatientProfileComplete(row.patientId) && row.status !== 'In Consultation' && row.status !== 'Admitted',
-                              onClick: (row) => setEditingPatientModal(row.patientId)
+                              show: (row) => isIpdEnabled && row.status !== 'Admitted' && row.queueStatus !== 'Admitted',
+                              onClick: (row) => handleTransferToIPD(row)
                             },
                             {
                               label: 'Mark Completed',
@@ -2662,8 +3638,15 @@ const ReceptionistAppointments = () => {
                               label: 'Visit History',
                               icon: FileText,
                               isPrimary: false,
-                              show: (row) => row.status !== 'In Consultation' && row.status !== 'Admitted',
-                              onClick: (row) => setHistoryPatient(row.patientId)
+                              show: () => true,
+                              onClick: (row) => {
+                                const pat = (row.patientId && typeof row.patientId === 'object')
+                                  ? row.patientId
+                                  : (row.patient && typeof row.patient === 'object')
+                                    ? row.patient
+                                    : { _id: row.patientId || row.patient, name: row.patientName };
+                                setHistoryPatient(pat);
+                              }
                             },
                             {
                               label: 'View Consultation',
@@ -2676,21 +3659,32 @@ const ReceptionistAppointments = () => {
                               label: 'View Prescription',
                               icon: Pill,
                               isPrimary: false,
-                              show: (row) => row.status === 'Sent to Pharmacy' || row.status === 'Completed',
+                              show: (row) => {
+                                const st = getAppointmentStatus(row);
+                                return st === 'Sent to Pharmacy' || st === 'Completed';
+                              },
                               onClick: (row) => handleViewPrescription(row)
                             },
                             {
                               label: 'View Bill',
                               icon: Receipt,
                               isPrimary: false,
-                              show: (row) => row.status === 'Sent to Pharmacy' || row.status === 'Completed',
+                              show: (row) => {
+                                const isBillingOn = isFeatureModuleEnabled(user?.hospital || user, 'Billing');
+                                if (!isBillingOn) return false;
+                                const st = getAppointmentStatus(row);
+                                return st === 'Sent to Pharmacy' || st === 'Completed';
+                              },
                               onClick: (row) => handleViewBill(row)
                             },
                             {
                               label: 'Print Prescription',
                               icon: Printer,
                               isPrimary: false,
-                              show: (row) => row.status === 'Sent to Pharmacy' || row.status === 'Sent To Pharmacy' || row.status === 'Completed',
+                              show: (row) => {
+                                const st = getAppointmentStatus(row);
+                                return st === 'Sent to Pharmacy' || st === 'Completed';
+                              },
                               onClick: async (row) => {
                                 try {
                                   const hospitalIdToUse = user?.hospitalId?._id || user?.hospitalId || user?.hospital?._id || user?.hospital || row.hospitalId?._id || row.hospitalId;
@@ -2744,54 +3738,59 @@ const ReceptionistAppointments = () => {
                               }
                             },
                              {
-                               label: 'Check In',
-                               icon: UserCheck,
-                               isPrimary: true,
-                               className: 'bg-[#2F63F2] text-white hover:bg-[#1E4FD9] font-bold shadow-xs',
-                               show: (row) => row.status === 'Scheduled' || row.queueStatus === 'Scheduled' || row.workflow?.queueState === 'SCHEDULED',
-                               onClick: (row) => handleCheckIn(row)
-                             },
-                             {
                                label: 'Edit Appointment',
                               icon: Calendar,
                               isPrimary: false,
-                              show: (row) => row.status === 'Waiting' || row.status === 'Scheduled' || row.status === 'Called' || row.status === 'Skipped',
+                              show: (row) => {
+                                const st = getAppointmentStatus(row);
+                                return st === 'Waiting' || st === 'Scheduled' || st === 'Called' || st === 'Skipped';
+                              },
                               onClick: (row) => setIsBookOpen(true)
                             },
                             {
                               label: 'Recall Patient',
                               icon: RotateCcw,
-                              isPrimary: false,
-                              show: (row) => row.status === 'Skipped' || row.status === 'Called' || row.status === 'Waiting' || row.status === 'Scheduled',
+                              isPrimary: true,
+                              className: 'bg-[#2F63F2] text-white hover:bg-[#1E4FD9] font-bold shadow-xs',
+                              show: (row) => getAppointmentStatus(row) === 'Skipped',
                               onClick: (row) => handleRecallPatient(row)
                             },
                             {
-                              label: 'Skip Token',
-                              icon: SkipForward,
+                              label: 'Recall Patient',
+                              icon: RotateCcw,
                               isPrimary: false,
-                              show: (row) => row.status === 'Waiting' || row.status === 'Scheduled' || row.status === 'Called',
-                              onClick: (row) => handleSkipToken(row)
+                              show: (row) => {
+                                const st = getAppointmentStatus(row);
+                                return st === 'Called' || st === 'Waiting' || st === 'Scheduled';
+                              },
+                              onClick: (row) => handleRecallPatient(row)
                             },
                             {
                               label: 'Cancel Appointment',
                               icon: XCircle,
                               isPrimary: false,
                               className: 'text-rose-600 hover:bg-rose-50',
-                              show: (row) => row.status === 'Waiting' || row.status === 'Scheduled' || row.status === 'Called',
+                              show: (row) => {
+                                const st = getAppointmentStatus(row);
+                                return st === 'Waiting' || st === 'Scheduled' || st === 'Called';
+                              },
                               onClick: (row) => handleCancelAppointment(row)
                             },
                             {
                               label: 'Print Token',
                               icon: Ticket,
                               isPrimary: false,
-                              show: (row) => row.status !== 'In Consultation' && row.status !== 'Admitted',
+                              show: (row) => {
+                                const st = getAppointmentStatus(row);
+                                return st === 'Waiting' || st === 'Scheduled' || st === 'Called';
+                              },
                               onClick: (row) => handlePrintToken(row)
                             }
                           ]}
                           renderMobileCard={(row) => {
                             const docId = row.doctorId?._id || row.doctorId || 'unassigned';
                             const docState = doctorQueueState[docId];
-                            const appStatus = row.status || row.queueStatus || 'Waiting';
+                            const appStatus = getAppointmentStatus(row);
                             const isWaiting = appStatus === 'Waiting' || appStatus === 'Scheduled';
                             const isFirstEligible = isWaiting && !docState?.activeApp && docState?.waitingApps[0]?._id === row._id;
 
@@ -2822,20 +3821,20 @@ const ReceptionistAppointments = () => {
                     key: 'tokenNumber',
                     label: 'Token',
                     render: (row) => {
-                      const isScheduled = row.status === 'Scheduled' || row.queueStatus === 'Scheduled' || row.workflow?.queueState === 'SCHEDULED';
-                      if (isScheduled || !row.tokenNumber) {
-                        return (
-                          <span className="font-bold font-mono text-xs px-2.5 py-0.5 rounded-lg border text-slate-400 bg-slate-100 border-slate-200">
-                            —
-                          </span>
-                        );
-                      }
-                      const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.consultationType || '').toLowerCase() === 'emergency' || (row.tokenNumber || '').startsWith('EMG') || (row.patientId?.name || '').toLowerCase().includes('unknown');
+                      const displayToken = row.tokenNumber || (row.orderNumber ? `OP${String(row.orderNumber).padStart(3, '0')}` : '—');
+                      const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.consultationType || '').toLowerCase() === 'emergency' || (displayToken || '').startsWith('EMG') || (row.patientId?.name || '').toLowerCase().includes('unknown');
+                      const st = getAppointmentStatus(row);
+                      const isScheduled = st === 'Scheduled';
+
                       return (
                         <span className={`font-bold font-mono text-xs px-2.5 py-0.5 rounded-lg border ${
-                          isEmg ? 'text-rose-700 bg-rose-50 border-rose-300 ring-2 ring-rose-500/20 font-extrabold' : 'text-[#2F63F2] bg-[#2F63F2]/10 border-[#2F63F2]/20'
+                          isEmg
+                            ? 'text-rose-700 bg-rose-50 border-rose-300 ring-2 ring-rose-500/20 font-extrabold'
+                            : isScheduled
+                              ? 'text-amber-800 bg-amber-50 border-amber-200 font-extrabold'
+                              : 'text-[#2F63F2] bg-[#2F63F2]/10 border-[#2F63F2]/20'
                         }`}>
-                          {row.tokenNumber}
+                          {displayToken}
                         </span>
                       );
                     }
@@ -2844,7 +3843,7 @@ const ReceptionistAppointments = () => {
                     key: 'date',
                     label: 'Consultation Date',
                     render: (row) => {
-                      const dateObj = new Date(row.date);
+                      const dateObj = parseDateRobust(row.date) || new Date();
                       const day = String(dateObj.getDate()).padStart(2, '0');
                       const month = String(dateObj.getMonth() + 1).padStart(2, '0');
                       const year = dateObj.getFullYear();
@@ -2873,7 +3872,7 @@ const ReceptionistAppointments = () => {
                     label: 'Patient Status',
                     render: (row) => {
                       const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || (row.consultationType || '').toLowerCase() === 'emergency' || (row.patientId?.name || '').toLowerCase().includes('unknown');
-                      const status = row.status || row.queueStatus || 'Waiting';
+                      const status = getAppointmentStatus(row);
 
                       if (isEmg && (status === 'Scheduled' || status === 'Waiting' || status === 'Arrived')) {
                         return (
@@ -2885,6 +3884,7 @@ const ReceptionistAppointments = () => {
                       }
 
                       const colors = {
+                        'Scheduled': 'bg-amber-50 text-amber-700 border-amber-200 font-bold',
                         'Waiting': 'bg-blue-50 text-blue-600 border-blue-100',
                         'Called': 'bg-cyan-50 text-cyan-700 border-cyan-200 font-bold',
                         'In Consultation': 'bg-purple-50 text-purple-700 border-purple-200 font-bold',
@@ -2923,9 +3923,20 @@ const ReceptionistAppointments = () => {
                           </span>
                         );
                       }
+                      if (isReceptionFeeCollector) {
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => setPaymentModalApp(row)}
+                            className="px-3 py-1.5 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer border bg-[#2F63F2] text-white border-[#2F63F2] hover:bg-blue-700 shadow-xs whitespace-nowrap"
+                          >
+                            Collect Payment
+                          </button>
+                        );
+                      }
                       return (
-                        <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg whitespace-nowrap">
-                          Collect Payment
+                        <span className="text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg whitespace-nowrap">
+                          Unpaid
                         </span>
                       );
                     }
@@ -2938,17 +3949,16 @@ const ReceptionistAppointments = () => {
                     icon: UserCheck,
                     isPrimary: true,
                     className: 'bg-[#2F63F2] text-white hover:bg-[#1E4FD9] font-bold shadow-xs',
-                    show: (row) => row.status === 'Scheduled' || row.queueStatus === 'Scheduled' || row.workflow?.queueState === 'SCHEDULED',
+                    show: (row) => {
+                      const status = getAppointmentStatus(row);
+                      return status === 'Scheduled';
+                    },
                     onClick: (row) => handleCheckIn(row)
                   },
                   {
                     label: (row) => {
-                      const billingStatus = row.billingStatus || 'Unpaid';
-                      const status = row.status || row.queueStatus || 'Waiting';
+                      const status = getAppointmentStatus(row);
 
-                      if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                        return 'Collect Payment';
-                      }
                       if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
                         return 'Print Token';
                       }
@@ -2961,12 +3971,8 @@ const ReceptionistAppointments = () => {
                       return status;
                     },
                     icon: (row) => {
-                      const billingStatus = row.billingStatus || 'Unpaid';
-                      const status = row.status || row.queueStatus || 'Waiting';
+                      const status = getAppointmentStatus(row);
 
-                      if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                        return null;
-                      }
                       if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
                         return Ticket;
                       }
@@ -2977,13 +3983,13 @@ const ReceptionistAppointments = () => {
                       return null;
                     },
                     isPrimary: true,
+                    show: (row) => {
+                                const status = getAppointmentStatus(row);
+                                return status !== 'Skipped' && status !== 'Scheduled';
+                              },
                     disabled: (row) => {
-                      const billingStatus = row.billingStatus || 'Unpaid';
-                      const status = row.status || row.queueStatus || 'Waiting';
+                      const status = getAppointmentStatus(row);
 
-                      if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                        return false;
-                      }
                       if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
                         return false;
                       }
@@ -2996,12 +4002,9 @@ const ReceptionistAppointments = () => {
                       return true;
                     },
                     onClick: (row) => {
-                      const billingStatus = row.billingStatus || 'Unpaid';
-                      const status = row.status || row.queueStatus || 'Waiting';
+                      const status = getAppointmentStatus(row);
 
-                      if (billingStatus !== 'Paid' && billingStatus !== 'Exempt' && isReceptionFeeCollector) {
-                        setPaymentModalApp(row);
-                      } else if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
+                      if (status === 'Waiting' || status === 'Scheduled' || status === 'Admitted') {
                         handlePrintToken(row);
                       } else if (status === 'Sent to Pharmacy' || status === 'Sent To Pharmacy' || status === 'Completed') {
                         handleViewConsultation(row);
@@ -3014,7 +4017,7 @@ const ReceptionistAppointments = () => {
                     isPrimary: true,
                     variant: 'amber',
                     show: (row) => {
-                      const status = row.status || row.queueStatus || 'Waiting';
+                      const status = getAppointmentStatus(row);
                       return status === 'Waiting' || status === 'Scheduled' || status === 'Called';
                     },
                     onClick: (row) => handleSkipToken(row)
@@ -3027,11 +4030,11 @@ const ReceptionistAppointments = () => {
                     onClick: (row) => setActiveDrawerPatient(row.patientId)
                   },
                   {
-                    label: 'Complete Profile',
-                    icon: Edit,
+                    label: 'Transfer to IPD',
+                    icon: Bed,
                     isPrimary: false,
-                    show: (row) => !isPatientProfileComplete(row.patientId) && row.status !== 'In Consultation' && row.status !== 'Admitted',
-                    onClick: (row) => setEditingPatientModal(row.patientId)
+                    show: (row) => isIpdEnabled && row.status !== 'Admitted' && row.queueStatus !== 'Admitted',
+                    onClick: (row) => handleTransferToIPD(row)
                   },
                   {
                     label: 'Mark Completed',
@@ -3051,8 +4054,15 @@ const ReceptionistAppointments = () => {
                     label: 'Visit History',
                     icon: FileText,
                     isPrimary: false,
-                    show: (row) => row.status !== 'In Consultation' && row.status !== 'Admitted',
-                    onClick: (row) => setHistoryPatient(row.patientId)
+                    show: () => true,
+                    onClick: (row) => {
+                      const pat = (row.patientId && typeof row.patientId === 'object')
+                        ? row.patientId
+                        : (row.patient && typeof row.patient === 'object')
+                          ? row.patient
+                          : { _id: row.patientId || row.patient, name: row.patientName };
+                      setHistoryPatient(pat);
+                    }
                   },
                   {
                     label: 'View Consultation',
@@ -3065,57 +4075,78 @@ const ReceptionistAppointments = () => {
                     label: 'View Prescription',
                     icon: Pill,
                     isPrimary: false,
-                    show: (row) => row.status === 'Sent to Pharmacy' || row.status === 'Completed',
+                    show: (row) => {
+                                const st = getAppointmentStatus(row);
+                                return st === 'Sent to Pharmacy' || st === 'Completed';
+                              },
                     onClick: (row) => handleViewPrescription(row)
                   },
                   {
                     label: 'View Bill',
                     icon: Receipt,
                     isPrimary: false,
-                    show: (row) => row.status === 'Sent to Pharmacy' || row.status === 'Completed',
+                    show: (row) => {
+                      const isBillingOn = isFeatureModuleEnabled(user?.hospital || user, 'Billing');
+                      if (!isBillingOn) return false;
+                      const st = getAppointmentStatus(row);
+                      return st === 'Sent to Pharmacy' || st === 'Completed';
+                    },
                     onClick: (row) => handleViewBill(row)
                   },
                   {
                     label: 'Edit Appointment',
                     icon: Calendar,
                     isPrimary: false,
-                    show: (row) => row.status === 'Waiting' || row.status === 'Scheduled' || row.status === 'Called' || row.status === 'Skipped',
+                    show: (row) => {
+                      const st = getAppointmentStatus(row);
+                      return st === 'Waiting' || st === 'Scheduled' || st === 'Called' || st === 'Skipped';
+                    },
                     onClick: (row) => setIsBookOpen(true)
                   },
                   {
                     label: 'Recall Patient',
                     icon: RotateCcw,
-                    isPrimary: false,
-                    show: (row) => row.status === 'Skipped' || row.status === 'Called' || row.status === 'Waiting' || row.status === 'Scheduled',
+                    isPrimary: true,
+                    className: 'bg-[#2F63F2] text-white hover:bg-[#1E4FD9] font-bold shadow-xs',
+                    show: (row) => getAppointmentStatus(row) === 'Skipped',
                     onClick: (row) => handleRecallPatient(row)
                   },
                   {
-                    label: 'Skip Token',
-                    icon: SkipForward,
+                    label: 'Recall Patient',
+                    icon: RotateCcw,
                     isPrimary: false,
-                    show: (row) => row.status === 'Waiting' || row.status === 'Scheduled' || row.status === 'Called',
-                    onClick: (row) => handleSkipToken(row)
+                    show: (row) => {
+                      const st = getAppointmentStatus(row);
+                      return st === 'Called' || st === 'Waiting' || st === 'Scheduled';
+                    },
+                    onClick: (row) => handleRecallPatient(row)
                   },
                   {
                     label: 'Cancel Appointment',
                     icon: XCircle,
                     isPrimary: false,
                     className: 'text-rose-600 hover:bg-rose-50',
-                    show: (row) => row.status === 'Waiting' || row.status === 'Scheduled' || row.status === 'Called',
+                    show: (row) => {
+                      const st = getAppointmentStatus(row);
+                      return st === 'Waiting' || st === 'Scheduled' || st === 'Called';
+                    },
                     onClick: (row) => handleCancelAppointment(row)
                   },
                   {
                     label: 'Print Token',
                     icon: Ticket,
                     isPrimary: false,
-                    show: (row) => row.status !== 'In Consultation' && row.status !== 'Admitted',
+                    show: (row) => {
+                      const st = getAppointmentStatus(row);
+                      return st === 'Waiting' || st === 'Scheduled' || st === 'Called';
+                    },
                     onClick: (row) => handlePrintToken(row)
                   }
                 ]}
                 renderMobileCard={(row) => {
                   const docId = row.doctorId?._id || row.doctorId || 'unassigned';
                   const docState = doctorQueueState[docId];
-                  const appStatus = row.status || row.queueStatus || 'Waiting';
+                  const appStatus = getAppointmentStatus(row);
                   const isWaiting = appStatus === 'Waiting' || appStatus === 'Scheduled';
                   const isFirstEligible = isWaiting && !docState?.activeApp && docState?.waitingApps[0]?._id === row._id;
 
@@ -3183,10 +4214,49 @@ const ReceptionistAppointments = () => {
         onClose={() => setHistoryPatient(null)}
       />
 
+      {/* EXACT PATIENT CONSULTATION RECORD MODAL */}
+      <ConsultationRecordModal
+        isOpen={!!selectedConsultationRecordApp}
+        onClose={() => setSelectedConsultationRecordApp(null)}
+        appointment={selectedConsultationRecordApp}
+      />
+
+      {/* EXACT DOCTOR PRESCRIPTION DETAILS MODAL */}
+      <PrescriptionDetailsModal
+        isOpen={!!selectedPrescriptionApp}
+        onClose={() => setSelectedPrescriptionApp(null)}
+        appointment={selectedPrescriptionApp}
+      />
+
+      {/* EXACT PATIENT BILLING SUMMARY MODAL */}
+      <BillingSummaryModal
+        isOpen={!!selectedBillingApp}
+        onClose={() => setSelectedBillingApp(null)}
+        appointment={selectedBillingApp}
+      />
+
       {/* VIEW CONSULTATION / PRESCRIPTION / BILL / TOKEN MODAL */}
       {viewDetailModalData && (() => {
         const modalApp = viewDetailModalData.row || viewDetailModalData;
         const modalTitle = viewDetailModalData.title || 'APPOINTMENT DETAILS';
+        if (modalTitle === 'PRESCRIPTION DETAILS') {
+          return (
+            <PrescriptionDetailsModal
+              isOpen={true}
+              onClose={() => setViewDetailModalData(null)}
+              appointment={modalApp}
+            />
+          );
+        }
+        if (modalTitle === 'PATIENT BILLING SUMMARY') {
+          return (
+            <BillingSummaryModal
+              isOpen={true}
+              onClose={() => setViewDetailModalData(null)}
+              appointment={modalApp}
+            />
+          );
+        }
         const modalContent = viewDetailModalData.content || `Appointment record for ${modalApp.patientId?.name || 'Patient'}. Doctor: Dr. ${modalApp.doctorId?.name || 'Unassigned'}. Time: ${modalApp.time || 'N/A'}. Status: ${modalApp.status || modalApp.queueStatus || 'Scheduled'}.`;
 
         return (
@@ -3227,6 +4297,15 @@ const ReceptionistAppointments = () => {
           phone: user?.hospitalPhone
         }}
       />
+
+      {/* WARD & BED ALLOCATION TRANSFER TO IPD MODAL (Strictly gated by isIpdEnabled) */}
+      {isIpdEnabled && (
+        <TransferToIPDModal
+          isOpen={Boolean(transferToIpdApp)}
+          onClose={() => setTransferToIpdApp(null)}
+          appointment={transferToIpdApp}
+        />
+      )}
 
       {/* MATERIAL DESIGN 3 PATIENT ACTION BOTTOM SHEET */}
       <AnimatePresence>
@@ -3288,18 +4367,20 @@ const ReceptionistAppointments = () => {
                   <span>View Patient Info</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    const app = activeBottomSheetApp;
-                    setActiveBottomSheetApp(null);
-                    setEditingPatientModal(app.patientId);
-                  }}
-                  className="w-full min-h-[48px] px-4 flex items-center gap-3 rounded-xl border border-slate-200/80 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold transition-all text-left cursor-pointer"
-                >
-                  <Edit3 className="w-4 h-4 text-emerald-600" />
-                  <span>Complete Profile</span>
-                </button>
+                {isIpdEnabled && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const app = activeBottomSheetApp;
+                      setActiveBottomSheetApp(null);
+                      handleTransferToIPD(app);
+                    }}
+                    className="w-full min-h-[48px] px-4 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50/50 hover:bg-indigo-100/60 text-indigo-700 text-xs font-bold transition-all text-left cursor-pointer"
+                  >
+                    <Bed className="w-4 h-4 text-indigo-600" />
+                    <span>Transfer to IPD</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -3338,19 +4419,6 @@ const ReceptionistAppointments = () => {
                 >
                   <RotateCcw className="w-4 h-4 text-cyan-600" />
                   <span>Recall Patient</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    const app = activeBottomSheetApp;
-                    setActiveBottomSheetApp(null);
-                    handleSkipToken(app);
-                  }}
-                  className="w-full min-h-[48px] px-4 flex items-center gap-3 rounded-xl border border-slate-200/80 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold transition-all text-left cursor-pointer"
-                >
-                  <SkipForward className="w-4 h-4 text-amber-600" />
-                  <span>Skip Token</span>
                 </button>
 
                 <button
@@ -3407,6 +4475,15 @@ const ReceptionistAppointments = () => {
         onClose={() => setIsEmergencyDrawerOpen(false)}
         doctors={doctors}
         onSuccess={() => appointmentsRefetch()}
+      />
+
+      {/* Early Arrival Check-In Confirmation Modal */}
+      <EarlyCheckInModal
+        isOpen={Boolean(earlyCheckInApp)}
+        onClose={() => setEarlyCheckInApp(null)}
+        appointment={earlyCheckInApp}
+        onConfirm={() => earlyCheckInApp && checkInMutation.mutate(earlyCheckInApp._id)}
+        isLoading={checkInMutation.isPending}
       />
 
       {/* Convert Unknown Patient Modal */}

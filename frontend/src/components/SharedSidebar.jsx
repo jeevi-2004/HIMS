@@ -10,7 +10,8 @@ import {
   LayoutDashboard, GitBranch, ClipboardList, CreditCard, UserRound, Users,
   FileBarChart2, Building2, Clock, Settings, LogOut, X, Calendar,
   Stethoscope, History, Pill, UserPlus, Ticket, HeartPulse, Receipt,
-  Package, Database, ShoppingBag, FileCode2, Key, ToggleLeft, Printer
+  Package, Database, ShoppingBag, FileCode2, Key, ToggleLeft, Printer,
+  ChevronRight, ChevronDown
 } from 'lucide-react';
 
 const SharedSidebar = ({ sidebarOpen, setSidebarOpen }) => {
@@ -20,6 +21,14 @@ const SharedSidebar = ({ sidebarOpen, setSidebarOpen }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const [expandedMenus, setExpandedMenus] = React.useState({});
+
+  const toggleSubmenu = (menuTitle) => {
+    setExpandedMenus(prev => ({
+      ...prev,
+      [menuTitle]: !prev[menuTitle]
+    }));
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -44,14 +53,17 @@ const SharedSidebar = ({ sidebarOpen, setSidebarOpen }) => {
 
   // Configuration-driven Navigation Layer
   const hospitalMode = user?.hospital?.opdOperationMode || user?.opdOperationMode || billingSettings?.opdOperationMode || 'TOKEN_ONLY';
-  const rawConfigNav = getNavigationByRole(user?.role, workspaceMode, hospitalMode);
+  const rawConfigNav = getNavigationByRole(user?.role, workspaceMode, hospitalMode, user);
   
   const currentNav = [
     ...rawConfigNav.map((item) => ({
+      id: item.id,
       title: item.title,
       icon: item.icon,
       path: item.route,
-      matchPaths: item.matchPaths
+      route: item.route,
+      matchPaths: item.matchPaths,
+      submenu: item.submenu
     })),
     { title: 'Profile', icon: UserRound, path: '/profile' },
     { title: 'Logout', icon: LogOut, path: null, isAction: true, onClick: handleLogout }
@@ -125,10 +137,15 @@ const SharedSidebar = ({ sidebarOpen, setSidebarOpen }) => {
 
           const Icon = item.icon;
           const currentQueryTab = searchParams.get('tab');
+          const isIPDConsultation = (location.pathname.includes('/consultation') || location.pathname.includes('/prescription')) && 
+            (searchParams.get('type') === 'ipd' || location.search.includes('type=ipd'));
 
           let isActive = false;
           if (!item.isAction) {
-            if (item.queryTab) {
+            // Prevent Consultation Workspace from stealing active highlight during IPD consultation
+            if (isIPDConsultation && (item.title === 'Consultation Workspace' || item.id === 'doctor.consultation' || (item.path && item.path.includes('/consultation')))) {
+              isActive = false;
+            } else if (item.queryTab) {
               isActive = location.pathname.includes('/pharmacy/dispense') && 
                 (currentQueryTab === item.queryTab || (item.queryTab === 'queue' && !currentQueryTab));
             } else if (item.path) {
@@ -152,6 +169,90 @@ const SharedSidebar = ({ sidebarOpen, setSidebarOpen }) => {
                 {React.isValidElement(Icon) ? Icon : <Icon className="w-4 h-4 text-rose-500 group-hover:translate-x-[2px] transition-transform duration-150 flex-shrink-0" />}
                 <span className="truncate">{item.title}</span>
               </button>
+            );
+          }
+
+          if (item.submenu && item.submenu.length > 0) {
+            const isIPDMenu = item.title === 'IPD Department' || item.id === 'doctor.ipd' || 
+              (item.route && item.route.includes('/ipd')) || (item.path && item.path.includes('/ipd'));
+            
+            const isParentActive = (item.path && location.pathname === item.path) ||
+              (item.route && location.pathname === item.route) ||
+              (item.matchPaths && item.matchPaths.some(p => location.pathname === p));
+            
+            const hasActiveChild = item.submenu.some(sub => 
+              (isIPDConsultation && isIPDMenu && (sub.title === 'Inpatients' || sub.id === 'doctor.ipd.inpatients' || (sub.route && sub.route.includes('/inpatients')))) ||
+              location.pathname === sub.route || 
+              (sub.matchPaths && sub.matchPaths.some(p => location.pathname === p || location.pathname.startsWith(p)))
+            );
+            const isSubmenuActive = isParentActive || hasActiveChild;
+            const isExpanded = expandedMenus[item.title] !== undefined 
+              ? expandedMenus[item.title] 
+              : isSubmenuActive;
+
+            return (
+              <div key={idx} className="flex flex-col gap-1">
+                <button
+                  title={item.title}
+                  onClick={() => {
+                    if (item.path || item.route) {
+                      if (location.pathname !== (item.path || item.route)) {
+                        navigate(item.path || item.route);
+                        setExpandedMenus(prev => ({ ...prev, [item.title]: true }));
+                      } else {
+                        toggleSubmenu(item.title);
+                      }
+                    } else {
+                      toggleSubmenu(item.title);
+                    }
+                  }}
+                  className={`flex items-center justify-between px-3 py-2.5 rounded-[10px] text-[13px] font-semibold transition-all duration-150 group text-left ${
+                    isParentActive
+                      ? 'bg-[#EEF4FF] text-[#2F63F2] border-l-[3px] border-l-[#2F63F2]'
+                      : hasActiveChild
+                      ? 'text-[#2F63F2] hover:bg-[#F3F4F6] border-l-[3px] border-l-transparent'
+                      : 'text-[#4B5563] hover:text-[#111827] hover:bg-[#F3F4F6] border-l-[3px] border-l-transparent'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    {React.isValidElement(Icon) ? Icon : <Icon className={`w-4 h-4 flex-shrink-0 group-hover:translate-x-[2px] transition-transform duration-150 ${
+                      (isParentActive || hasActiveChild) ? 'text-[#2F63F2]' : 'text-[#6B7280]'
+                    }`} />}
+                    <span className="truncate">{item.title}</span>
+                  </div>
+                  {isExpanded ? (
+                    <ChevronDown className={`w-4 h-4 ${isParentActive ? 'text-[#2F63F2]' : 'text-[#9CA3AF]'}`} />
+                  ) : (
+                    <ChevronRight className={`w-4 h-4 ${isParentActive ? 'text-[#2F63F2]' : 'text-[#9CA3AF]'}`} />
+                  )}
+                </button>
+                {isExpanded && (
+                  <div className="flex flex-col gap-1 pl-4 mt-1">
+                    {item.submenu.map((subItem, subIdx) => {
+                      const isSubActive = (isIPDConsultation && isIPDMenu && (subItem.title === 'Inpatients' || subItem.id === 'doctor.ipd.inpatients' || (subItem.route && subItem.route.includes('/inpatients')))) ||
+                        location.pathname === subItem.route || 
+                        (subItem.matchPaths && subItem.matchPaths.some(p => location.pathname.includes(p)));
+                      
+                      return (
+                        <Link
+                          key={subIdx}
+                          to={subItem.route}
+                          title={subItem.title}
+                          onClick={() => setSidebarOpen(false)}
+                          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] font-medium transition-all duration-150 ${
+                            isSubActive
+                              ? 'text-[#2F63F2] bg-[#EEF4FF]/50 font-semibold'
+                              : 'text-[#6B7280] hover:text-[#111827] hover:bg-[#F3F4F6]'
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${isSubActive ? 'bg-[#2F63F2]' : 'bg-slate-300'}`} />
+                          <span className="truncate">{subItem.title}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           }
 

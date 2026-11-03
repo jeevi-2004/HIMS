@@ -1,6 +1,6 @@
 import { 
   LayoutDashboard, Settings, GitBranch, ClipboardList, CreditCard, 
-  UserRound, Users, Printer, HeartPulse, FileBarChart2 
+  UserRound, Users, Printer, HeartPulse, FileBarChart2
 } from 'lucide-react';
 import { ROUTES } from '../../constants/routes';
 import { PERMISSIONS } from '../../constants/permissions';

@@ -1,7 +1,9 @@
 import React from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { useBillingSettings } from '../../context/BillingSettingsContext';
+import { isIpdAvailable, isFeatureModuleEnabled } from '../../utils/featureUtils';
 import { 
-  User, Edit, FileText, Pill, Receipt, Calendar, RotateCcw, Printer, XCircle 
+  User, Edit, FileText, Pill, Receipt, Calendar, RotateCcw, Printer, XCircle, Bed 
 } from 'lucide-react';
 
 const WorkflowSecondaryActionsMenu = ({ 
@@ -9,7 +11,10 @@ const WorkflowSecondaryActionsMenu = ({
   role = 'Reception', 
   onActionSelect 
 }) => {
+  const { user } = useAuth();
   const { getAppointmentActions } = useBillingSettings();
+  const isIpdEnabled = Boolean(isIpdAvailable(user?.hospital || user));
+  const isBillingEnabled = Boolean(isFeatureModuleEnabled(user?.hospital || user, 'Billing'));
 
   if (!appointment) return [];
 
@@ -29,6 +34,12 @@ const WorkflowSecondaryActionsMenu = ({
       label: 'Edit Profile',
       icon: Edit,
       show: () => status !== 'In Consultation' && status !== 'Admitted'
+    },
+    {
+      id: 'transfer_to_ipd',
+      label: 'Transfer to IPD',
+      icon: Bed,
+      show: () => isIpdEnabled && status !== 'Admitted'
     },
     {
       id: 'visit_history',
@@ -52,7 +63,7 @@ const WorkflowSecondaryActionsMenu = ({
       id: 'view_bill',
       label: 'View Bill',
       icon: Receipt,
-      show: () => status === 'Sent to Pharmacy' || status === 'Completed'
+      show: () => isBillingEnabled && (status === 'Sent to Pharmacy' || status === 'Completed')
     },
     {
       id: 'print_token',

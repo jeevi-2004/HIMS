@@ -3,7 +3,7 @@ import React from 'react';
 const DialogFooter = React.memo(({
   primaryText = 'Save',
   onPrimary,
-  secondaryText = 'Cancel',
+  secondaryText = 'Close',
   onSecondary,
   loading = false,
   disabled = false,

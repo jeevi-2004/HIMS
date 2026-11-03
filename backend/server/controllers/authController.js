@@ -1,3 +1,5 @@
+
+
 const jwt = require('jsonwebtoken');
 const config = require('../config/config');
 const User = require('../models/User');
@@ -77,8 +79,8 @@ const login = async (req, res, next) => {
           mobileNumber: user.mobileNumber,
           employeeCode: user.employeeCode,
           hospitalCode: user.hospitalCode,
-          role: user.roleId.name,
-          permissions: user.roleId.permissions,
+          role: user.roleId?.name || 'SUPER_ADMIN',
+          permissions: user.roleId?.permissions || [],
           hospitalId: user.hospitalId,
           branchId: user.branchId,
           departmentId: user.departmentId
@@ -151,10 +153,14 @@ const login = async (req, res, next) => {
           });
         }
 
-        let isMatch = await user.matchPin(pin);
+        const stringPin = pin !== undefined && pin !== null ? String(pin).trim() : '';
+        let isMatch = await user.matchPin(stringPin);
         if (!isMatch) {
           const bcrypt = require('bcryptjs');
-          const isLegacyMatch = (pin === '123456' || pin === '1234') && user.pin && await bcrypt.compare('1234', user.pin);
+          let isLegacyMatch = false;
+          try {
+            isLegacyMatch = (stringPin === '123456' || stringPin === '1234') && user.pin && await bcrypt.compare('1234', String(user.pin));
+          } catch(_) {}
           if (isLegacyMatch) {
             isMatch = true;
             user.pin = '123456';
@@ -203,8 +209,8 @@ const login = async (req, res, next) => {
             mobileNumber: user.mobileNumber,
             employeeCode: user.employeeCode,
             hospitalCode: user.hospitalCode,
-            role: user.roleId.name,
-            permissions: user.roleId.permissions,
+            role: user.roleId?.name || user.role || 'STAFF',
+            permissions: user.roleId?.permissions || [],
             hospital: hospitalObj,
             opdOperationMode: hospitalObj.opdOperationMode || 'TOKEN_ONLY',
             planName: hospitalObj.planName,
@@ -256,7 +262,7 @@ const getProfile = async (req, res, next) => {
   try {
     const user = await User.findById(req.user._id)
       .populate('roleId')
-      .populate('hospitalId', 'name code featureModules opdOperationMode planName geolocationSettings')
+      .populate('hospitalId', 'name code featureModules opdOperationMode planName geolocationSettings ipd_requested')
       .populate('branchId', 'name code')
       .populate('departmentId', 'name code');
 
@@ -328,7 +334,7 @@ const createUser = async (req, res, next) => {
     // Super Admin can create any user
     // Hospital Admin can only create users under their hospital
     // Branch Admin can only create users under their branch
-    if (req.user.roleId.name === 'DOCTOR_ADMIN') {
+    if (['DOCTOR_ADMIN', 'ADMIN'].includes(req.user.roleId.name)) {
       if (hospitalId && hospitalId.toString() !== req.user.hospitalId.toString()) {
         return res.status(403).json({ success: false, message: 'Not authorized to create user in another hospital' });
       }
@@ -504,7 +510,7 @@ const setPin = async (req, res, next) => {
     }
 
     // Authorization checks
-    if (req.user.roleId.name === 'DOCTOR_ADMIN') {
+    if (['DOCTOR_ADMIN', 'ADMIN'].includes(req.user.roleId.name)) {
       if (targetUser.hospitalId.toString() !== req.user.hospitalId.toString()) {
         return res.status(403).json({ success: false, message: 'Not authorized to modify PIN of user in another hospital' });
       }

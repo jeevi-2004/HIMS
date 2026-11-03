@@ -11,6 +11,18 @@ import Button from '../components/Button';
 import { useBillingSettings } from '../context/BillingSettingsContext';
 import { CreditCard, Printer, ChevronDown, ChevronUp, Plus, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { enrichInvestigationsList, categorizeInvestigations } from '../utils/investigationUtils';
+
+// Helper to sanitize decimal amounts and disallow invalid characters while enabling standard manual typing
+const sanitizeDecimalInput = (val) => {
+  if (val === undefined || val === null) return '';
+  const str = String(val).replace(/[^0-9.]/g, '');
+  const parts = str.split('.');
+  if (parts.length > 2) {
+    return parts[0] + '.' + parts.slice(1).join('');
+  }
+  return str;
+};
 
 const ReceptionistOPDBilling = () => {
   const { billingSettings, workflow, getAppointmentActions, loading: billingSettingsLoading } = useBillingSettings();
@@ -26,6 +38,19 @@ const ReceptionistOPDBilling = () => {
     otherCharges: 0,
     discount: 0,
     paymentMode: 'Cash'
+  });
+
+  const { data: hospitalServices = [] } = useQuery({
+    queryKey: ['hospitalServicesBillingRegister'],
+    queryFn: async () => {
+      try {
+        const res = await api.get('/admin/services');
+        return Array.isArray(res.data?.data) ? res.data.data : [];
+      } catch (err) {
+        return [];
+      }
+    },
+    staleTime: 60 * 1000
   });
 
   const [showAdditionalCharges, setShowAdditionalCharges] = useState(false);
@@ -61,14 +86,10 @@ const ReceptionistOPDBilling = () => {
   useEffect(() => {
     if (activeAppDetail) {
       setSelectedApp(activeAppDetail);
-      // Auto adjust consultation fees if emergency
-      if (activeAppDetail.consultationType === 'Emergency') {
-        setBillingForm(prev => ({ ...prev, consultationFee: 500, registrationFee: 0, otherCharges: 0, discount: 0 }));
-      } else if (activeAppDetail.consultationType === 'Follow-Up') {
-        setBillingForm(prev => ({ ...prev, consultationFee: 150, registrationFee: 0, otherCharges: 0, discount: 0 }));
-      } else {
-        setBillingForm(prev => ({ ...prev, consultationFee: 300, registrationFee: 0, otherCharges: 0, discount: 0 }));
-      }
+      const appFee = activeAppDetail.consultationFee !== undefined && activeAppDetail.consultationFee !== null
+        ? activeAppDetail.consultationFee
+        : (activeAppDetail.consultationType === 'Emergency' ? 500 : (activeAppDetail.consultationType === 'Follow-Up' ? 150 : 300));
+      setBillingForm(prev => ({ ...prev, consultationFee: appFee, registrationFee: 0, otherCharges: 0, discount: 0 }));
     }
   }, [activeAppDetail]);
 
@@ -109,13 +130,10 @@ const ReceptionistOPDBilling = () => {
         if (nextUnpaid.length > 0) {
           const next = nextUnpaid[0];
           setSelectedApp(next);
-          if (next.consultationType === 'Emergency') {
-            setBillingForm({ consultationFee: 500, registrationFee: 0, otherCharges: 0, discount: 0, paymentMode: 'Cash' });
-          } else if (next.consultationType === 'Follow-Up') {
-            setBillingForm({ consultationFee: 150, registrationFee: 0, otherCharges: 0, discount: 0, paymentMode: 'Cash' });
-          } else {
-            setBillingForm({ consultationFee: 300, registrationFee: 0, otherCharges: 0, discount: 0, paymentMode: 'Cash' });
-          }
+          const nextFee = next.consultationFee !== undefined && next.consultationFee !== null
+            ? next.consultationFee
+            : (next.consultationType === 'Emergency' ? 500 : (next.consultationType === 'Follow-Up' ? 150 : 300));
+          setBillingForm({ consultationFee: nextFee, registrationFee: 0, otherCharges: 0, discount: 0, paymentMode: 'Cash' });
         } else {
           // Clear calculator if no unpaid patients remain
           setSelectedApp(null);
@@ -130,13 +148,22 @@ const ReceptionistOPDBilling = () => {
     }
   });
 
+  const rawInvestigations = Array.isArray(selectedApp?.investigations) ? selectedApp.investigations : [];
+  const selectedInvestigations = enrichInvestigationsList(rawInvestigations, hospitalServices);
+  const {
+    labInvestigations,
+    radInvestigations,
+    otherInvestigations,
+    totalAmount: investigationsTotal
+  } = categorizeInvestigations(selectedInvestigations);
+
   // Calculate totals cleanly handling empty strings & zero
   const consultationFeeNum = parseFloat(billingForm.consultationFee) || 0;
   const registrationFeeNum = parseFloat(billingForm.registrationFee) || 0;
   const otherChargesNum = parseFloat(billingForm.otherCharges) || 0;
   const discountNum = parseFloat(billingForm.discount) || 0;
 
-  const subtotal = consultationFeeNum + registrationFeeNum + otherChargesNum;
+  const subtotal = consultationFeeNum + registrationFeeNum + otherChargesNum + investigationsTotal;
   const gstAmount = parseFloat((subtotal * 0.18).toFixed(2));
   const netAmount = parseFloat((subtotal + gstAmount - discountNum).toFixed(2));
 
@@ -168,6 +195,19 @@ const ReceptionistOPDBilling = () => {
       gstAmount,
       netAmount
     };
+
+    if (selectedInvestigations.length > 0) {
+      selectedInvestigations.forEach(inv => {
+        const invPrice = parseFloat(inv.price) || 0;
+        payload.items.push({
+          name: `${inv.name}${inv.serviceType ? ` (${inv.serviceType})` : ''}`,
+          quantity: 1,
+          unitPrice: invPrice,
+          price: invPrice,
+          amount: invPrice
+        });
+      });
+    }
 
     if (registrationFeeNum > 0) {
       payload.items.push({ name: 'Registration Card Fee', quantity: 1, unitPrice: registrationFeeNum, price: registrationFeeNum });
@@ -261,13 +301,10 @@ const ReceptionistOPDBilling = () => {
                   hidden: (row) => row.billingStatus === 'Paid' || row.paymentStatus === 'Paid',
                   onClick: (row) => {
                     setSelectedApp(row);
-                    if (row.consultationType === 'Emergency') {
-                      setBillingForm({ consultationFee: 500, registrationFee: 0, otherCharges: 0, discount: 0, paymentMode: 'Cash' });
-                    } else if (row.consultationType === 'Follow-Up') {
-                      setBillingForm({ consultationFee: 150, registrationFee: 0, otherCharges: 0, discount: 0, paymentMode: 'Cash' });
-                    } else {
-                      setBillingForm({ consultationFee: 300, registrationFee: 0, otherCharges: 0, discount: 0, paymentMode: 'Cash' });
-                    }
+                    const rowFee = row.consultationFee !== undefined && row.consultationFee !== null
+                      ? row.consultationFee
+                      : (row.consultationType === 'Emergency' ? 500 : (row.consultationType === 'Follow-Up' ? 150 : 300));
+                    setBillingForm({ consultationFee: rowFee, registrationFee: 0, otherCharges: 0, discount: 0, paymentMode: 'Cash' });
                   }
                 },
                 {
@@ -352,14 +389,87 @@ const ReceptionistOPDBilling = () => {
                 <div>
                   <Input 
                     label="Consultation Fee" 
-                    type="number" 
+                    type="text"
+                    inputMode="decimal"
                     value={billingForm.consultationFee} 
-                    onChange={(e) => setBillingForm({ ...billingForm, consultationFee: e.target.value })} 
+                    onChange={(e) => setBillingForm({ ...billingForm, consultationFee: sanitizeDecimalInput(e.target.value) })} 
+                    onWheel={(e) => e.target.blur()}
                     required
                     disabled={isSelectedAppPaid}
                     placeholder="300"
                   />
                 </div>
+
+                {/* Section 2.5 — Doctor-Prescribed Investigations (if any) */}
+                {selectedInvestigations.length > 0 && (
+                  <div className="border border-blue-200/80 rounded-xl overflow-hidden bg-blue-50/30 p-3 space-y-2">
+                    <div className="flex items-center justify-between border-b border-blue-100 pb-1.5">
+                      <span className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                        🔬 Prescribed Tests ({selectedInvestigations.length})
+                      </span>
+                      <span className="text-[11px] font-mono font-bold text-[#2F63F2] bg-white border border-[#2F63F2]/30 px-2 py-0.5 rounded">
+                        +₹{investigationsTotal}
+                      </span>
+                    </div>
+
+                    {labInvestigations.length > 0 && (
+                      <div className="space-y-1">
+                        <div className="text-[10px] font-bold text-indigo-700 flex justify-between">
+                          <span>🧪 Laboratory Tests</span>
+                          <span>₹{labInvestigations.reduce((s, i) => s + (Number(i.price) || 0), 0)}</span>
+                        </div>
+                        <div className="space-y-1">
+                          {labInvestigations.map((inv, idx) => (
+                            <div key={idx} className="flex justify-between items-center text-[10px] text-slate-700 bg-white px-2 py-1 rounded border border-slate-100">
+                              <span className="truncate pr-1">
+                                <span className="text-indigo-400 font-medium mr-1">[{inv.category || 'Lab'}]</span>
+                                {inv.name}
+                              </span>
+                              <span className="font-mono font-bold text-slate-800 shrink-0">₹{inv.price || 0}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {radInvestigations.length > 0 && (
+                      <div className="space-y-1 pt-1">
+                        <div className="text-[10px] font-bold text-cyan-800 flex justify-between">
+                          <span>🩻 Radiology & Imaging</span>
+                          <span>₹{radInvestigations.reduce((s, i) => s + (Number(i.price) || 0), 0)}</span>
+                        </div>
+                        <div className="space-y-1">
+                          {radInvestigations.map((inv, idx) => (
+                            <div key={idx} className="flex justify-between items-center text-[10px] text-slate-700 bg-white px-2 py-1 rounded border border-slate-100">
+                              <span className="truncate pr-1">
+                                <span className="text-cyan-600 font-medium mr-1">[{inv.category || 'Radiology'}]</span>
+                                {inv.name}
+                              </span>
+                              <span className="font-mono font-bold text-slate-800 shrink-0">₹{inv.price || 0}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {otherInvestigations.length > 0 && (
+                      <div className="space-y-1 pt-1">
+                        <div className="text-[10px] font-bold text-amber-800 flex justify-between">
+                          <span>📋 Other Diagnostics</span>
+                          <span>₹{otherInvestigations.reduce((s, i) => s + (Number(i.price) || 0), 0)}</span>
+                        </div>
+                        <div className="space-y-1">
+                          {otherInvestigations.map((inv, idx) => (
+                            <div key={idx} className="flex justify-between items-center text-[10px] text-slate-700 bg-white px-2 py-1 rounded border border-slate-100">
+                              <span className="truncate pr-1">{inv.name}</span>
+                              <span className="font-mono font-bold text-slate-800 shrink-0">₹{inv.price || 0}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Section 3 — Additional Charges (Collapsed Accordion) */}
                 <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
@@ -393,17 +503,21 @@ const ReceptionistOPDBilling = () => {
                       >
                         <Input 
                           label="Registration Card Fee" 
-                          type="number" 
+                          type="text"
+                          inputMode="decimal" 
                           value={billingForm.registrationFee} 
-                          onChange={(e) => setBillingForm({ ...billingForm, registrationFee: e.target.value })} 
+                          onChange={(e) => setBillingForm({ ...billingForm, registrationFee: sanitizeDecimalInput(e.target.value) })} 
+                          onWheel={(e) => e.target.blur()}
                           disabled={isSelectedAppPaid}
                           placeholder="0"
                         />
                         <Input 
                           label="Other Hospital Charges" 
-                          type="number" 
+                          type="text"
+                          inputMode="decimal" 
                           value={billingForm.otherCharges} 
-                          onChange={(e) => setBillingForm({ ...billingForm, otherCharges: e.target.value })} 
+                          onChange={(e) => setBillingForm({ ...billingForm, otherCharges: sanitizeDecimalInput(e.target.value) })} 
+                          onWheel={(e) => e.target.blur()}
                           disabled={isSelectedAppPaid}
                           placeholder="0"
                         />
@@ -444,9 +558,11 @@ const ReceptionistOPDBilling = () => {
                       >
                         <Input 
                           label="Discount Amount" 
-                          type="number" 
+                          type="text"
+                          inputMode="decimal" 
                           value={billingForm.discount} 
-                          onChange={(e) => setBillingForm({ ...billingForm, discount: e.target.value })} 
+                          onChange={(e) => setBillingForm({ ...billingForm, discount: sanitizeDecimalInput(e.target.value) })} 
+                          onWheel={(e) => e.target.blur()}
                           disabled={isSelectedAppPaid}
                           placeholder="0"
                         />
@@ -476,6 +592,12 @@ const ReceptionistOPDBilling = () => {
                 <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs font-mono space-y-2">
                   <h4 className="font-bold border-b border-slate-200 pb-1.5 text-slate-700 uppercase tracking-widest text-[9px]">Bill Summary</h4>
                   <div className="flex justify-between text-slate-700"><span>Consultation Fee</span> <span>₹{consultationFeeNum}</span></div>
+                  {investigationsTotal > 0 && (
+                    <div className="flex justify-between text-indigo-700 font-bold">
+                      <span>Investigations ({selectedInvestigations.length})</span> 
+                      <span>+₹{investigationsTotal}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-slate-600"><span>Registration Fee</span> <span>₹{registrationFeeNum}</span></div>
                   <div className="flex justify-between text-slate-600"><span>Other Charges</span> <span>₹{otherChargesNum}</span></div>
                   {discountNum > 0 && <div className="flex justify-between text-rose-600 font-bold"><span>Discount</span> <span>-₹{discountNum}</span></div>}

@@ -5,7 +5,7 @@
   "main": "server/app.js",
   "scripts": {
     "start": "node server/app.js",
-    "dev": "nodemon server/app.js",
+    "dev": "node server/scripts/free-port.js && nodemon server/app.js",
     "seed": "node server/scripts/seed.js"
   },
   "keywords": [

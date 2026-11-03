@@ -10,6 +10,8 @@ const Modal = ({
   children,
   footer,
   size = 'md',
+  className = '',
+  bodyClassName = 'p-6 text-slate-800 text-sm space-y-6',
   closeOnOverlayClick = true
 }) => {
   // Prevent body scroll when modal is open
@@ -53,11 +55,15 @@ const Modal = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 10 }}
             transition={{ type: 'spring', duration: 0.3 }}
-            className={`relative w-full max-h-[88vh] bg-white border border-slate-200 rounded-2xl shadow-2xl z-10 flex flex-col overflow-hidden ${sizes[size] || sizes.md}`}
+            className={`relative w-full max-h-[88vh] bg-white border border-slate-200 rounded-2xl shadow-2xl z-10 flex flex-col overflow-hidden ${sizes[size] || sizes.md} ${className}`}
           >
             {/* Fixed Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50/90 shrink-0">
-              <h3 className="text-base font-bold text-[#2F63F2] uppercase tracking-wide truncate pr-4">{title}</h3>
+              {typeof title === 'string' ? (
+                <h3 className="text-base font-bold text-[#2F63F2] uppercase tracking-wide truncate pr-4">{title}</h3>
+              ) : (
+                <div className="flex-1 pr-4 min-w-0">{title}</div>
+              )}
               <button
                 type="button"
                 onClick={onClose}
@@ -69,7 +75,7 @@ const Modal = ({
             </div>
 
             {/* Scrollable Body Only */}
-            <div className="flex-1 overflow-y-auto p-6 text-slate-800 text-sm space-y-6">
+            <div className={`flex-1 overflow-y-auto ${bodyClassName}`}>
               {children}
             </div>
 

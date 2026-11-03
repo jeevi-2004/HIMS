@@ -4,8 +4,8 @@ export const generatePrescriptionPrintHTML = (consultation = {}, doctor = {}, te
 
   const rawPatient = consultation.patientId || consultation.patient || {};
   const patient = typeof rawPatient === 'object' ? rawPatient : {};
-  const rxList = consultation.prescription || consultation.prescriptions || [];
-  const diagnosisList = consultation.diagnosis || [];
+  const rawDiag = (consultation.diagnoses && Array.isArray(consultation.diagnoses) && consultation.diagnoses.length > 0) ? consultation.diagnoses : (consultation.diagnosis || []);
+  const diagnosisList = Array.isArray(rawDiag) ? rawDiag : (typeof rawDiag === 'string' && rawDiag.includes(',') ? rawDiag.split(',').map(s => s.trim()).filter(Boolean) : (rawDiag ? [rawDiag] : []));
   const adviceList = consultation.advice || [];
   const investigationList = consultation.investigations || [];
   const doctorProfile = doctor.doctorProfile || {};
@@ -52,10 +52,28 @@ export const generatePrescriptionPrintHTML = (consultation = {}, doctor = {}, te
       chiefComplaint: isPlaceholder ? '{{Chief Complaint}}' : (consultation.chiefComplaint || (isSample ? 'Fever, Cough, Bodyache for 2 days' : '')),
       diagnosis: isPlaceholder ? '{{Diagnosis}}' : (Array.isArray(diagnosisList) && diagnosisList.length > 0 ? diagnosisList.join(', ') : (typeof diagnosisList === 'string' && diagnosisList ? diagnosisList : (isSample ? 'Viral Upper Respiratory Infection' : ''))),
       clinicalNotes: isPlaceholder ? '{{Clinical Notes}}' : (consultation.clinicalNotes || (isSample ? 'Mild throat congestion observed upon examination.' : '')),
-      allergies: isPlaceholder ? '{{Known Allergies}}' : (consultation.allergies || (isSample ? 'No known drug allergies' : 'None')),
+      allergies: isPlaceholder 
+        ? '{{Known Allergies}}' 
+        : (() => {
+            const consultAllergies = consultation.allergies && (Array.isArray(consultation.allergies) ? consultation.allergies.length > 0 : String(consultation.allergies).trim())
+              ? consultation.allergies
+              : null;
+            const patientAllergies = patient.allergies && (Array.isArray(patient.allergies) ? patient.allergies.length > 0 : String(patient.allergies).trim())
+              ? patient.allergies
+              : null;
+            const raw = consultAllergies || patientAllergies;
+            if (Array.isArray(raw)) {
+              const cleaned = raw.map(a => String(a || '').trim()).filter(Boolean);
+              return cleaned.length > 0 ? cleaned.join(', ') : (isSample ? 'No known drug allergies' : 'None');
+            }
+            if (typeof raw === 'string' && raw.trim()) {
+              return raw.trim();
+            }
+            return isSample ? 'No known drug allergies' : 'None';
+          })(),
       advice: isPlaceholder ? '{{Advice & Guidelines}}' : (Array.isArray(adviceList) && adviceList.length > 0 ? adviceList.map(a => typeof a === 'object' ? a.name : a).join(', ') : (typeof adviceList === 'string' && adviceList ? adviceList : (isSample ? 'Drink plenty of warm fluids, Bed rest for 3 days' : ''))),
       followupDate: isPlaceholder ? '{{Next Follow-up Date}}' : (consultation.followupDate || consultation.followUpDate ? (isNaN(new Date(consultation.followupDate || consultation.followUpDate).getTime()) ? (consultation.followupDate || consultation.followUpDate) : new Date(consultation.followupDate || consultation.followUpDate).toLocaleDateString('en-GB')) : (isSample ? new Date(Date.now() + 5 * 86400000).toLocaleDateString('en-GB') : '')),
-      doctorName: isPlaceholder ? '{{Doctor Name}}' : (doctor.name ? (doctor.name.startsWith('Dr.') ? doctor.name : `Dr. ${doctor.name}`) : (isSample ? 'Dr. Sample Physician' : 'Doctor Name Not Available')),
+      doctorName: isPlaceholder ? '{{Doctor Name}}' : (doctor.name ? `Dr. ${String(doctor.name).replace(/^(Dr\.?\s*)+/i, '').trim()}` : (isSample ? 'Dr. Sample Physician' : 'Doctor Name Not Available')),
       qualification: isPlaceholder ? '{{Doctor Qualification}}' : (doctorProfile.qualification || (isSample ? 'MBBS, MD (General Medicine)' : '')),
       regNo: isPlaceholder ? '{{Registration No.}}' : (doctorProfile.registrationNumber || (isSample ? 'REG-TNMC/2026/45879' : '')),
       department: isPlaceholder ? '{{Doctor Department}}' : (doctorProfile.department || doctorProfile.specialization || (isSample ? 'Internal Medicine' : '')),
@@ -63,7 +81,7 @@ export const generatePrescriptionPrintHTML = (consultation = {}, doctor = {}, te
         ? '[Doctor Signature]' 
         : (doctorProfile.signatureUrl 
           ? `<img src="${doctorProfile.signatureUrl}" style="height:36px; object-fit:contain;" />` 
-          : (doctor.name ? `Dr. ${doctor.name}` : (isSample ? 'Dr. Sample Physician' : '')))
+          : (doctor.name ? `Dr. ${String(doctor.name).replace(/^(Dr\.?\s*)+/i, '').trim()}` : (isSample ? 'Dr. Sample Physician' : '')))
     };
 
     const renderedFieldsHTML = fieldMappings
@@ -226,7 +244,7 @@ export const generatePrescriptionPrintHTML = (consultation = {}, doctor = {}, te
 
   const displayPatientName = isPlaceholder ? '{{Patient Name}}' : (patient.name || (isSample ? 'Sample Patient' : 'Patient Name Not Available'));
   const displayUHID = isPlaceholder ? '{{UHID}}' : (patient.uhid || patient.patientId || (isSample ? 'SAMPLE-001' : 'N/A'));
-  const displayDoctorName = isPlaceholder ? '{{Doctor Name}}' : (doctor.name ? (doctor.name.startsWith('Dr.') ? doctor.name : `Dr. ${doctor.name}`) : (isSample ? 'Dr. Sample Doctor' : 'Doctor Name Not Available'));
+  const displayDoctorName = isPlaceholder ? '{{Doctor Name}}' : (doctor.name ? `Dr. ${String(doctor.name).replace(/^(Dr\.?\s*)+/i, '').trim()}` : (isSample ? 'Dr. Sample Doctor' : 'Doctor Name Not Available'));
   const displayQualification = isPlaceholder ? '{{Doctor Qualification}}' : (doctorProfile.qualification || (isSample ? 'MBBS, MD' : ''));
 
   return `
@@ -321,6 +339,22 @@ export const generatePrescriptionPrintHTML = (consultation = {}, doctor = {}, te
                 `).join('')}
               </tbody>
             </table>
+          </div>
+        ` : ''}
+        ${config.sections.investigations && investigationList.length > 0 ? `
+          <div class="section">
+            <div class="section-title">Diagnostic Investigations & Scans Ordered</div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;">
+              ${investigationList.map(inv => {
+                const name = typeof inv === 'object' ? (inv.name || inv.investigationName) : inv;
+                const type = typeof inv === 'object' ? (inv.serviceType || '') : '';
+                return `
+                  <span style="font-size:11px; font-weight:700; color:#1e293b; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:6px; padding:4px 10px;">
+                    ${type ? `<span style="color:#64748b; font-size:10px;">[${type}]</span> ` : ''}${name}
+                  </span>
+                `;
+              }).join('')}
+            </div>
           </div>
         ` : ''}
       </body>

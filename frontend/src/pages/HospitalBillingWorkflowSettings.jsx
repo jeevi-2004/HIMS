@@ -411,7 +411,7 @@ const HospitalBillingWorkflowSettings = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-800 font-sans p-4 sm:p-6 lg:p-7 text-left max-w-6xl mx-auto space-y-5">
+    <div className="min-h-screen bg-[#F8FAFC] text-slate-800 font-sans px-4 sm:px-6 lg:px-7 pt-1 sm:pt-2 pb-6 text-left max-w-6xl mx-auto space-y-5 -mt-2 sm:-mt-4">
       
       {/* Toast Notification Banner */}
       {toastMessage && (

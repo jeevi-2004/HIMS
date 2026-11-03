@@ -1,6 +1,6 @@
 import { 
-  LayoutDashboard, Users, Calendar, CalendarCheck, Stethoscope, FileText, 
-  History, UserRound, FileCode2 
+  LayoutDashboard, Users, CalendarCheck, Stethoscope, 
+  History, FileCode2, Bed
 } from 'lucide-react';
 import { ROUTES } from '../../constants/routes';
 import { PERMISSIONS } from '../../constants/permissions';
@@ -39,7 +39,6 @@ export const doctorNavigation = [
     group: 'clinical',
     order: 3
   },
-
   {
     id: 'doctor.completed',
     title: 'Completed Visits',
@@ -62,7 +61,6 @@ export const doctorNavigation = [
     group: 'clinical',
     order: 6
   },
-
   {
     id: 'doctor.masters',
     title: 'Clinical Masters Library',
@@ -73,6 +71,45 @@ export const doctorNavigation = [
     workspace: 'doctor',
     group: 'masters',
     order: 8
+  },
+  // IPD Department — automatically hidden by navigationHelpers when IPD is not enabled for this hospital
+  {
+    id: 'doctor.ipd',
+    title: 'IPD Department',
+    icon: Bed,
+    route: ROUTES.DOCTOR.IPD_DEPARTMENT || '/doctor/ipd',
+    matchPaths: ['/doctor/ipd'],
+    permission: PERMISSIONS.PATIENT_VIEW,
+    featureFlag: 'IPD',
+    workspace: 'doctor',
+    group: 'ipd',
+    order: 9,
+    submenu: [
+      {
+        id: 'doctor.ipd.inpatients',
+        title: 'Inpatients',
+        route: ROUTES.DOCTOR.IPD_INPATIENTS,
+        matchPaths: [ROUTES.DOCTOR.IPD_INPATIENTS]
+      },
+      {
+        id: 'doctor.ipd.wards',
+        title: 'Wards & Beds',
+        route: ROUTES.DOCTOR.IPD_WARDS,
+        matchPaths: [ROUTES.DOCTOR.IPD_WARDS]
+      },
+      {
+        id: 'doctor.ipd.discharge',
+        title: 'Discharge History',
+        route: ROUTES.DOCTOR.IPD_DISCHARGE,
+        matchPaths: [ROUTES.DOCTOR.IPD_DISCHARGE]
+      },
+      {
+        id: 'doctor.ipd.reports',
+        title: 'IPD Reports',
+        route: ROUTES.DOCTOR.IPD_REPORTS,
+        matchPaths: [ROUTES.DOCTOR.IPD_REPORTS]
+      }
+    ]
   }
 ];
 

@@ -10,8 +10,10 @@ import { DEFAULT_PRINT_CONFIG } from './prescriptionPrint.types';
  */
 export const normalizePrescriptionData = (rawConsultation = {}, rawDoctor = {}, rawHospital = {}, isSample = false) => {
   const patient = rawConsultation.patientId || {};
-  const rxList = rawConsultation.prescription || rawConsultation.prescriptions || [];
-  const diagnosisList = rawConsultation.diagnosis || [];
+  const rawDiag = rawConsultation.diagnoses || rawConsultation.diagnosis || [];
+  const diagnosisList = Array.isArray(rawDiag)
+    ? rawDiag
+    : (typeof rawDiag === 'string' && rawDiag.includes(',') ? rawDiag.split(',').map(s => s.trim()).filter(Boolean) : (rawDiag ? [rawDiag] : []));
   const adviceList = rawConsultation.advice || [];
   const doctorProfile = rawDoctor.doctorProfile || {};
 
@@ -25,7 +27,24 @@ export const normalizePrescriptionData = (rawConsultation = {}, rawDoctor = {}, 
       gender: patient.gender || (sampleFallback ? 'Male' : ''),
       mobile: patient.contactNumber || patient.mobileNumber || patient.mobile || (sampleFallback ? '+91 99999 00000' : ''),
       bloodGroup: patient.bloodGroup || (sampleFallback ? 'O+' : ''),
-      place: patient.village || patient.place || patient.address?.street || (sampleFallback ? 'City Center' : '')
+      place: patient.village || patient.place || patient.address?.street || (sampleFallback ? 'City Center' : ''),
+      allergies: (() => {
+        const consultAllergies = rawConsultation.allergies && (Array.isArray(rawConsultation.allergies) ? rawConsultation.allergies.length > 0 : String(rawConsultation.allergies).trim())
+          ? rawConsultation.allergies
+          : null;
+        const patientAllergies = patient.allergies && (Array.isArray(patient.allergies) ? patient.allergies.length > 0 : String(patient.allergies).trim())
+          ? patient.allergies
+          : null;
+        const raw = consultAllergies || patientAllergies;
+        if (Array.isArray(raw)) {
+          const list = raw.map(x => String(x || '').trim()).filter(Boolean);
+          return list.length ? list.join(', ') : (sampleFallback ? 'No known drug allergies' : 'None');
+        }
+        if (typeof raw === 'string' && raw.trim()) {
+          return raw.trim();
+        }
+        return sampleFallback ? 'No known drug allergies' : 'None';
+      })()
     },
     visit: {
       date: rawConsultation.date ? new Date(rawConsultation.date).toLocaleDateString('en-GB') : new Date().toLocaleDateString('en-GB'),

@@ -8,13 +8,15 @@ import Modal from '../components/Modal';
 import Table from '../components/Table';
 import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
-import { 
-  getMasterList, saveMasterList, universalClinicalSearch, exportMasterCSV, getDoctorFavorites, toggleDoctorFavorite 
+import {
+  getMasterList, saveMasterList, universalClinicalSearch, exportMasterCSV, getDoctorFavorites, toggleDoctorFavorite
 } from '../utils/clinicalMasters';
-import { 
-  Plus, Trash2, Edit3, Eye, Search, Star, 
-  FileText, Activity, Pill, Settings, Layers, 
-  Sliders, Printer, Save, ChevronDown, 
+import { isFeatureModuleEnabled } from '../utils/featureUtils';
+import { isLikelyRadiology } from '../utils/investigationUtils';
+import {
+  Plus, Trash2, Edit3, Eye, Search, Star,
+  FileText, Activity, Pill, Settings, Layers,
+  Sliders, Printer, Save, ChevronDown,
   MoreVertical, AlertTriangle, Clock, Package, RotateCw, Lightbulb, Microscope,
   FileCode2, Database, Stethoscope
 } from 'lucide-react';
@@ -33,13 +35,13 @@ const getItemText = (item) => {
 const highlightMatch = (text, query) => {
   if (!text) return '';
   if (!query || !query.trim()) return <span>{text}</span>;
-  
+
   const cleanQuery = query.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
   const parts = text.split(new RegExp(`(${cleanQuery})`, 'gi'));
-  
+
   return (
     <span>
-      {parts.map((part, i) => 
+      {parts.map((part, i) =>
         part.toLowerCase() === query.toLowerCase()
           ? <mark key={i} className="bg-yellow-100 text-yellow-950 px-0.5 rounded font-bold">{part}</mark>
           : <span key={i}>{part}</span>
@@ -61,7 +63,7 @@ export const SearchableMultiSelect = ({
   const [filterText, setFilterText] = useState('');
 
   const filteredItems = useMemo(() => {
-    return items.filter(item => 
+    return items.filter(item =>
       getItemText(item).toLowerCase().includes(filterText.toLowerCase())
     );
   }, [items, filterText]);
@@ -110,11 +112,10 @@ export const SearchableMultiSelect = ({
             return (
               <label
                 key={typeof item === 'object' ? (item.id || idx) : idx}
-                className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors ${
-                  isChecked 
-                    ? 'bg-[#3563FF]/10 text-[#3563FF] font-semibold border border-[#3563FF]/20' 
+                className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors ${isChecked
+                    ? 'bg-[#3563FF]/10 text-[#3563FF] font-semibold border border-[#3563FF]/20'
                     : 'hover:bg-slate-100/80 text-[#111827] font-medium'
-                }`}
+                  }`}
               >
                 <div className="flex items-center gap-2.5">
                   <input
@@ -161,7 +162,7 @@ const ChipSelector = ({
 
   const filteredItems = useMemo(() => {
     if (!filterText) return [];
-    return items.filter(item => 
+    return items.filter(item =>
       getItemText(item).toLowerCase().includes(filterText.toLowerCase()) &&
       !selected.includes(getItemText(item))
     );
@@ -189,7 +190,7 @@ const ChipSelector = ({
   const scheme = colors[colorClass] || colors.blue;
 
   return (
-    <div className="space-y-3 p-4 bg-white border border-[#E5E7EB] rounded-xl text-left relative">
+    <div className="space-y-2 sm:space-y-3 p-2.5 sm:p-4 bg-white border border-[#E5E7EB] rounded-xl text-left relative">
       {/* Title & Count Badge */}
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">{title}</span>
@@ -212,10 +213,10 @@ const ChipSelector = ({
               setIsOpen(true);
             }}
             onFocus={() => setIsOpen(true)}
-            className="w-full pl-8 pr-3 py-2 text-xs border border-[#E5E7EB] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#2F63F2]/30 font-medium bg-white"
+            className="w-full pl-8 pr-2.5 py-1.5 sm:py-2 text-xs border border-[#E5E7EB] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#2F63F2]/30 font-medium bg-white"
           />
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-          
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2 sm:top-2.5" />
+
           {/* Dropdown Options */}
           {isOpen && filteredItems.length > 0 && (
             <>
@@ -245,10 +246,10 @@ const ChipSelector = ({
         <button
           type="button"
           onClick={onAddNew}
-          className="px-3 py-2 rounded-xl text-xs font-bold bg-[#2F63F2]/10 text-[#2F63F2] border border-[#2F63F2]/20 hover:bg-[#2F63F2] hover:text-white transition-all flex items-center gap-1.5 whitespace-nowrap"
+          className="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold bg-[#2F63F2]/10 text-[#2F63F2] border border-[#2F63F2]/20 hover:bg-[#2F63F2] hover:text-white transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
         >
-          <Plus className="w-3.5 h-3.5" />
-          {addNewLabel}
+          <Plus className="w-3.5 h-3.5 shrink-0" />
+          <span>{addNewLabel}</span>
         </button>
       </div>
 
@@ -274,15 +275,17 @@ const ChipSelector = ({
       )}
 
       {/* Manage Link */}
-      <div className="flex justify-end pt-1">
-        <button
-          type="button"
-          onClick={manageUrl}
-          className="text-xs font-bold text-[#2F63F2] hover:underline"
-        >
-          {manageLabel} &rarr;
-        </button>
-      </div>
+      {manageLabel && (
+        <div className="flex justify-end pt-1">
+          <button
+            type="button"
+            onClick={manageUrl}
+            className="text-xs font-bold text-[#2F63F2] hover:underline"
+          >
+            {manageLabel} &rarr;
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -294,7 +297,7 @@ const MasterSectionCard = ({ title, subtitle, searchVal, setSearchVal, onAddNew,
   return (
     <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-6 shadow-sm space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E5E7EB] pb-3">
-        <div 
+        <div
           onClick={collapsible ? () => setIsOpen(!isOpen) : undefined}
           className={`flex-1 text-left ${collapsible ? 'cursor-pointer select-none group' : ''}`}
         >
@@ -350,31 +353,31 @@ const DiagnosisTemplateContextMenu = ({ anchor, onClose, onAction }) => {
   const [coords, setCoords] = useState({ top: 0, left: 0 });
   const [isFlipped, setIsFlipped] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
-  
+
   const template = anchor.template;
-  
+
   // Calculate position dynamically including scroll & flips
   const calculatePosition = useCallback(() => {
     if (!anchor || !anchor.target) return;
     const rect = anchor.target.getBoundingClientRect();
     const menuWidth = 220;
     const menuHeight = 175; // exact height for 4 options + 2 dividers
-    
+
     let top = rect.bottom + window.scrollY + 8;
     let flipped = false;
-    
+
     if (rect.bottom + menuHeight > window.innerHeight) {
       top = rect.top + window.scrollY - menuHeight - 8;
       flipped = true;
     }
-    
+
     let left = rect.right + window.scrollX - menuWidth;
     if (left < 8) {
       left = 8;
     } else if (left + menuWidth > window.innerWidth - 8) {
       left = window.innerWidth - menuWidth - 8;
     }
-    
+
     setCoords({ top, left });
     setIsFlipped(flipped);
   }, [anchor]);
@@ -453,16 +456,15 @@ const DiagnosisTemplateContextMenu = ({ anchor, onClose, onAction }) => {
       tabIndex={-1}
     >
       {/* Caret arrow pointing to three-dot trigger */}
-      <div 
-        className={`absolute right-[11px] w-2.5 h-2.5 bg-white border-l border-t border-[#E5E7EB] transform rotate-45 z-10 ${
-          isFlipped ? '-bottom-1.5 border-l-0 border-t-0 border-r border-b' : '-top-1.5'
-        }`} 
+      <div
+        className={`absolute right-[11px] w-2.5 h-2.5 bg-white border-l border-t border-[#E5E7EB] transform rotate-45 z-10 ${isFlipped ? '-bottom-1.5 border-l-0 border-t-0 border-r border-b' : '-top-1.5'
+          }`}
       />
-      
+
       {menuItems.map((item, idx) => {
         const isFocused = idx === focusedIndex;
         const showTopDivider = idx === 2 || idx === 3;
-        
+
         return (
           <React.Fragment key={item.action}>
             {showTopDivider && <hr className="my-1 border-slate-100" />}
@@ -474,11 +476,10 @@ const DiagnosisTemplateContextMenu = ({ anchor, onClose, onAction }) => {
                 onAction(item.action, template);
                 onClose();
               }}
-              className={`w-full px-4 py-2 flex items-center gap-2.5 transition-colors duration-100 relative z-20 ${
-                item.danger
+              className={`w-full px-4 py-2 flex items-center gap-2.5 transition-colors duration-100 relative z-20 ${item.danger
                   ? 'hover:bg-red-50 text-red-650 focus:bg-red-50 focus:text-red-650'
                   : 'hover:bg-[#2F63F2]/5 hover:text-[#2F63F2] focus:bg-[#2F63F2]/5 focus:text-[#2F63F2]'
-              } focus:outline-none`}
+                } focus:outline-none`}
             >
               <span className="text-sm shrink-0 w-3.5 h-3.5 flex items-center justify-center select-none">{item.icon}</span>
               {item.label}
@@ -538,7 +539,7 @@ const DoctorClinicalMasters = () => {
       clearTimeout(touchTimerRef.current);
     }
   };
-  
+
   const isTemplateUsedInConsultations = (template) => {
     if (!template) return false;
     const seedIds = ['1', '2', '3', '4', '5'];
@@ -563,9 +564,9 @@ const DoctorClinicalMasters = () => {
   const handleToggleActiveStatus = (template) => {
     if (!template) return;
     const updatedStatus = template.status === 'Inactive' ? 'Active' : 'Inactive';
-    const updated = dlist.map(item => 
-      (item._id === template._id || item.id === template.id) 
-        ? { ...item, status: updatedStatus } 
+    const updated = dlist.map(item =>
+      (item._id === template._id || item.id === template.id)
+        ? { ...item, status: updatedStatus }
         : item
     );
     saveMaster('dlist', updated);
@@ -660,13 +661,54 @@ const DoctorClinicalMasters = () => {
     }
   }, []);
 
+  // Fetch Investigation services from Hospital Service Catalog based on Laboratory & Radiology feature flags
+  const fetchHospitalInvestigations = useCallback(async () => {
+    try {
+      const isLabEnabled = isFeatureModuleEnabled(user?.hospital || user, 'Laboratory');
+      const isRadEnabled = isFeatureModuleEnabled(user?.hospital || user, 'Radiology');
+
+      const res = await api.get('/admin/services');
+      const services = Array.isArray(res.data?.data) ? res.data.data : [];
+
+      const filtered = services.filter(s => {
+        if (!s || s.status !== 'active') return false;
+        const type = (s.serviceType || s.category || '').toLowerCase();
+        const isLab = type.includes('laboratory') || type.includes('lab');
+        const isRad = type.includes('radiology') || type.includes('imaging') || type.includes('x-ray') || type.includes('scan') || isLikelyRadiology(s.name, s.category, s.serviceType);
+
+        if (isLabEnabled && isRadEnabled) return isLab || isRad;
+        if (isLabEnabled) return isLab;
+        if (isRadEnabled) return isRad;
+        return false;
+      }).map(s => {
+        const isRad = isLikelyRadiology(s.name, s.category, s.serviceType);
+        return {
+          _id: s._id,
+          id: s._id,
+          val: s.name,
+          name: s.name,
+          department: s.serviceType || (isRad ? 'Radiology' : 'Laboratory'),
+          serviceType: s.serviceType,
+          category: s.category,
+          price: s.price,
+          status: s.status || 'active'
+        };
+      });
+
+      setInvestigations(filtered);
+    } catch (err) {
+      console.error('Error fetching hospital investigations from services catalog:', err);
+    }
+  }, [user]);
+
   useEffect(() => {
     fetchDiagMasterList();
     fetchMedicineForms();
     fetchFrequencies();
     fetchDosages();
     fetchFoodInstructions();
-  }, [fetchDiagMasterList, fetchMedicineForms, fetchFrequencies, fetchDosages, fetchFoodInstructions]);
+    fetchHospitalInvestigations();
+  }, [fetchDiagMasterList, fetchMedicineForms, fetchFrequencies, fetchDosages, fetchFoodInstructions, fetchHospitalInvestigations]);
 
   // Medication Configuration, Clinical Library & Diagnosis/ICD Sub-Tab Split Workspace State
   const [medSubTab, setMedSubTab] = useState('med_master'); // 'med_master' | 'med_categories' | 'dosages' | 'frequencies' | 'food_instructions'
@@ -755,7 +797,7 @@ const DoctorClinicalMasters = () => {
     setSlist(getMasterList('slist') || []);
     setMlist(getMasterList('mlist') || []);
     setAdviceList(getMasterList('adviceList') || []);
-    setInvestigations(getMasterList('investigations') || []);
+    fetchHospitalInvestigations();
     setFollowups(getMasterList('followups') || []);
     fetchMedicineForms();
     fetchFrequencies();
@@ -766,7 +808,7 @@ const DoctorClinicalMasters = () => {
     if (savedSettings) {
       try {
         setSettingsForm(JSON.parse(savedSettings));
-      } catch {}
+      } catch { }
     }
   };
 
@@ -800,7 +842,7 @@ const DoctorClinicalMasters = () => {
 
   // Filtered lists for each section
   const filteredTemplates = useMemo(() => filterList(dlist, searchDiagTemplates), [dlist, searchDiagTemplates]);
-  
+
   const templatesPerPage = 7;
   const totalTemplatePages = Math.ceil(filteredTemplates.length / templatesPerPage);
   const paginatedTemplates = useMemo(() => {
@@ -947,6 +989,35 @@ const DoctorClinicalMasters = () => {
     const itemId = typeof item === 'object' ? (item._id || item.id) : null;
     const isValidObjectId = itemId && /^[0-9a-fA-F]{24}$/.test(String(itemId));
 
+    if (key === 'dlist') {
+      if (isValidObjectId) {
+        try {
+          await api.delete(`/operations/clinical-diagnoses/${itemId}`);
+          toast.success('Diagnosis record deleted');
+          await fetchDiagMasterList();
+          return;
+        } catch (err) {
+          console.error('Error deleting diagnosis from DB:', err);
+          toast.error(err.response?.data?.message || 'Failed to delete diagnosis record');
+          return;
+        }
+      } else {
+        const list = getMasterList('dlist') || [];
+        const itemText = getItemText(item).trim().toLowerCase();
+        const updated = list.filter(it => {
+          const itId = typeof it === 'object' ? (it.id || it._id) : null;
+          if (itemId !== null && itemId !== undefined && itId !== null && itId !== undefined) {
+            return String(itId) !== String(itemId);
+          }
+          return getItemText(it).trim().toLowerCase() !== itemText;
+        });
+        saveMaster('dlist', updated);
+        setDiagMasterList(updated);
+        setDlist(updated);
+        toast.success('Diagnosis record deleted');
+        return;
+      }
+    }
     if (key === 'frequencies' && isValidObjectId) {
       try {
         await api.delete(`/operations/medicine-frequencies/${itemId}`);
@@ -997,6 +1068,21 @@ const DoctorClinicalMasters = () => {
     if (key === 'frequencies') fetchFrequencies();
     else if (key === 'dosages') fetchDosages();
     else if (key === 'foodInstructions') fetchFoodInstructions();
+    else if (key === 'dlist') {
+      fetchDiagMasterList();
+      setDiagMasterList(updated);
+      setDlist(updated);
+    } else if (key === 'mlist') {
+      setMlist(updated);
+    } else if (key === 'slist') {
+      setSlist(updated);
+    } else if (key === 'adviceList') {
+      setAdviceList(updated);
+    } else if (key === 'investigations') {
+      setInvestigations(updated);
+    } else if (key === 'followups') {
+      setFollowups(updated);
+    }
 
     toast.success('Record deleted');
   };
@@ -1085,7 +1171,7 @@ const DoctorClinicalMasters = () => {
         const updated = list.map(it => (typeof it === 'object' && (it.id === modalEditingItem.id || String(it.id) === String(modalEditingItem.id)) ? { ...it, ...modalForm } : it));
         saveMaster('mlist', updated);
       } else {
-        const newItem = { id: String(Date.now()), name: modalForm.name.trim(), genericName: modalForm.genericName || '', category: modalForm.category || 'Tablet', status: 'Active' };
+        const newItem = { id: String(Date.now()), name: modalForm.name.trim(), generic: modalForm.genericName || modalForm.generic || '', genericName: modalForm.genericName || modalForm.generic || '', category: modalForm.category || 'Tablet', status: 'Active' };
         saveMaster('mlist', [...list, newItem]);
       }
     } else if (activeModalTarget === 'icdList') {
@@ -1239,16 +1325,16 @@ const DoctorClinicalMasters = () => {
 
   return (
     <div className="space-y-6 text-left px-4 sm:px-6 py-6 bg-[#F8FAFC] min-h-screen">
-      
+
       {/* Page Header */}
-      <div className="flex justify-between items-center pb-2 border-b border-[#E5E7EB] mt-2">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#2F63F2]/10 border border-[#2F63F2]/20 flex items-center justify-center text-[#2F63F2] shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 pb-3 sm:pb-2 border-b border-[#E5E7EB] mt-1 sm:mt-2">
+        <div className="flex items-start sm:items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[#2F63F2]/10 border border-[#2F63F2]/20 flex items-center justify-center text-[#2F63F2] shrink-0 mt-0.5 sm:mt-0">
             <Activity className="w-5 h-5" />
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-800 tracking-tight">Clinical Masters</h1>
-            <p className="text-xs font-medium text-slate-500">Manage protocols, diagnosis templates, medicine catalogs, and consultation presets.</p>
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-xl font-bold text-slate-800 tracking-tight">Clinical Masters</h1>
+            <p className="text-xs font-medium text-slate-500 leading-relaxed mt-0.5">Manage protocols, diagnosis templates, medicine catalogs, and consultation presets.</p>
           </div>
         </div>
 
@@ -1261,10 +1347,10 @@ const DoctorClinicalMasters = () => {
               toast.success('Clinical masters restored to default standard presets!');
             }
           }}
-          className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all flex items-center gap-1.5 cursor-pointer border border-slate-300 shadow-2xs"
+          className="self-start sm:self-auto px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all flex items-center gap-1.5 cursor-pointer border border-slate-300 shadow-2xs whitespace-nowrap shrink-0"
         >
-          <Sliders className="w-3.5 h-3.5 text-slate-600" />
-          Reset Default Masters
+          <Sliders className="w-3.5 h-3.5 text-slate-600 shrink-0" />
+          <span>Reset Default Masters</span>
         </button>
       </div>
 
@@ -1274,7 +1360,7 @@ const DoctorClinicalMasters = () => {
         {mainTabs.map((tab) => {
           const IconComp = tab.icon;
           const isActive = activeTab === tab.key;
-          
+
           const getTabLabel = () => {
             if (tab.key === 'diagnosis') return 'Diagnosis Management';
             if (tab.key === 'medicines') return 'Medication Configuration';
@@ -1287,11 +1373,10 @@ const DoctorClinicalMasters = () => {
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`pb-3 pt-2 text-xs font-bold whitespace-nowrap transition-all border-b-2 flex items-center gap-2 ${
-                isActive
+              className={`pb-3 pt-2 text-xs font-bold whitespace-nowrap transition-all border-b-2 flex items-center gap-2 ${isActive
                   ? 'text-[#2F63F2] border-[#2F63F2]'
                   : 'text-[#6B7280] border-transparent hover:text-[#111827]'
-              }`}
+                }`}
             >
               <IconComp className={`w-4 h-4 ${isActive ? 'text-[#2F63F2]' : 'text-[#6B7280]'}`} />
               <span>{getTabLabel()}</span>
@@ -1306,7 +1391,7 @@ const DoctorClinicalMasters = () => {
           {mainTabs.map((tab) => {
             const IconComp = tab.icon;
             const isActive = activeTab === tab.key;
-            
+
             const getMobileTabLabel = () => {
               if (tab.key === 'diagnosis') return 'Diagnosis';
               if (tab.key === 'medicines') return 'Medicines';
@@ -1320,11 +1405,10 @@ const DoctorClinicalMasters = () => {
                 key={tab.key}
                 type="button"
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex flex-col items-center justify-center py-3 px-1.5 rounded-2xl transition-all duration-150 ${
-                  isActive
+                className={`flex flex-col items-center justify-center py-3 px-1.5 rounded-2xl transition-all duration-150 ${isActive
                     ? 'bg-[#EBF1FF] text-[#2F63F2] font-bold'
                     : 'bg-transparent text-slate-650 hover:text-[#111827] font-medium'
-                }`}
+                  }`}
               >
                 <IconComp className={`w-5 h-5 mb-1.5 ${isActive ? 'text-[#2F63F2]' : 'text-slate-500'}`} />
                 <span className="text-[10px] leading-tight tracking-tight font-semibold">{getMobileTabLabel()}</span>
@@ -1336,19 +1420,19 @@ const DoctorClinicalMasters = () => {
 
       {/* TAB 1: DIAGNOSIS MANAGEMENT (SINGLE UNIFIED WORKSPACE) */}
       {activeTab === 'diagnosis' && (
-        <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-6 shadow-sm space-y-5 text-left font-sans">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E5E7EB] pb-4">
+        <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-3.5 sm:p-6 shadow-sm space-y-5 text-left font-sans">
+          <div className="border-b border-[#E5E7EB] pb-4 space-y-3.5">
             <div>
-              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                <Stethoscope className="w-5 h-5 text-[#2F63F2]" />
-                Diagnosis Management
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2.5">
+                <Stethoscope className="w-5 h-5 text-[#2F63F2] shrink-0" />
+                <span>Diagnosis Management</span>
               </h2>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">
+              <p className="text-xs text-slate-500 font-medium mt-1">
                 Manage reusable diagnoses, ICD-10 codes, categories, frequently used items, and prescription templates in one place.
               </p>
             </div>
-            <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
-              <div className="w-full sm:w-64">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-0.5">
+              <div className="w-full sm:w-80 md:w-96 max-w-md">
                 <Input
                   placeholder="Search diagnosis, ICD-10, category..."
                   value={searchDiagMaster}
@@ -1356,30 +1440,32 @@ const DoctorClinicalMasters = () => {
                   icon={Search}
                 />
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  fetchDiagMasterList();
-                  toast.success('Refreshed Diagnosis Master');
-                }}
-                className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer"
-                title="Refresh list"
-              >
-                <RotateCw className="w-3.5 h-3.5" />
-                <span>Refresh</span>
-              </button>
-              <Button
-                onClick={() => openMasterModal('dlist')}
-                variant="primary"
-                className="h-[38px] px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0"
-                icon={Plus}
-              >
-                Add Diagnosis
-              </Button>
+              <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    fetchDiagMasterList();
+                    toast.success('Refreshed Diagnosis Master');
+                  }}
+                  className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer shadow-xs"
+                  title="Refresh list"
+                >
+                  <RotateCw className="w-3.5 h-3.5" />
+                  <span>Refresh</span>
+                </button>
+                <Button
+                  onClick={() => openMasterModal('dlist')}
+                  variant="primary"
+                  className="h-[38px] px-3.5 sm:px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0 shadow-sm"
+                  icon={Plus}
+                >
+                  Add Diagnosis
+                </Button>
+              </div>
             </div>
           </div>
 
-          <div className="border border-[#E5E7EB] rounded-[16px] overflow-hidden bg-white">
+          <div className="border-0 sm:border border-[#E5E7EB] rounded-none sm:rounded-[16px] overflow-visible sm:overflow-hidden bg-transparent sm:bg-white">
             <Table
               inlineActions={true}
               headers={[
@@ -1490,11 +1576,10 @@ const DoctorClinicalMasters = () => {
                             handleToggleFrequentStatus(row);
                           }
                         }}
-                        className={`p-1.5 rounded-lg border transition-all cursor-pointer flex items-center gap-1 text-xs font-bold ${
-                          isFrequentFlag
+                        className={`p-1.5 rounded-lg border transition-all cursor-pointer flex items-center gap-1 text-xs font-bold ${isFrequentFlag
                             ? 'bg-amber-50 text-amber-600 border-amber-300 hover:bg-amber-100'
                             : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100 hover:text-slate-600'
-                        }`}
+                          }`}
                         title={isFrequentFlag ? 'Frequently Used (Click to unmark)' : 'Click to mark as Frequently Used'}
                       >
                         <Star className={`w-3.5 h-3.5 ${isFrequentFlag ? 'fill-amber-500 text-amber-500' : ''}`} />
@@ -1560,23 +1645,20 @@ const DoctorClinicalMasters = () => {
                     key={item.key}
                     type="button"
                     onClick={() => setMedSubTab(item.key)}
-                    className={`w-full flex items-center justify-between p-3 rounded-xl transition-all duration-150 cursor-pointer text-left ${
-                      isSelected
+                    className={`w-full flex items-center justify-between p-3 rounded-xl transition-all duration-150 cursor-pointer text-left ${isSelected
                         ? 'bg-blue-50/80 border-l-4 border-[#2F63F2] font-bold text-[#2F63F2] shadow-xs'
                         : 'bg-white hover:bg-slate-50 text-slate-700 font-medium hover:text-slate-900 border-l-4 border-transparent'
-                    }`}
+                      }`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
-                        isSelected ? 'bg-white text-[#2F63F2] shadow-2xs' : 'bg-slate-100 text-slate-500'
-                      }`}>
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${isSelected ? 'bg-white text-[#2F63F2] shadow-2xs' : 'bg-slate-100 text-slate-500'
+                        }`}>
                         <Icon className="w-3.5 h-3.5" />
                       </div>
                       <span className="text-xs">{item.label}</span>
                     </div>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      isSelected ? 'bg-blue-100 text-[#2F63F2]' : 'bg-slate-100 text-slate-500'
-                    }`}>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isSelected ? 'bg-blue-100 text-[#2F63F2]' : 'bg-slate-100 text-slate-500'
+                      }`}>
                       {item.count}
                     </span>
                   </button>
@@ -1613,19 +1695,19 @@ const DoctorClinicalMasters = () => {
               >
                 {/* 1. MEDICINE MASTER */}
                 {medSubTab === 'med_master' && (
-                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-6 shadow-sm space-y-5 text-left">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E5E7EB] pb-4">
+                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-3.5 sm:p-6 shadow-sm space-y-5 text-left">
+                    <div className="border-b border-[#E5E7EB] pb-4 space-y-3.5">
                       <div>
-                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                          <Pill className="w-5 h-5 text-[#2F63F2]" />
-                          Medicine Master
+                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2.5">
+                          <Pill className="w-5 h-5 text-[#2F63F2] shrink-0" />
+                          <span>Medicine Master</span>
                         </h2>
-                        <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        <p className="text-xs text-slate-500 font-medium mt-1">
                           Manage medicines available for prescriptions.
                         </p>
                       </div>
-                      <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
-                        <div className="w-full sm:w-64">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-0.5">
+                        <div className="w-full sm:w-80 md:w-96 max-w-md">
                           <Input
                             placeholder="Search medicines..."
                             value={searchMedicines}
@@ -1633,30 +1715,32 @@ const DoctorClinicalMasters = () => {
                             icon={Search}
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMlist(getMasterList('mlist') || []);
-                            toast.success('Refreshed Medicine Master');
-                          }}
-                          className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer"
-                          title="Refresh list"
-                        >
-                          <RotateCw className="w-3.5 h-3.5" />
-                          <span>Refresh</span>
-                        </button>
-                        <Button
-                          onClick={() => openMasterModal('mlist')}
-                          variant="primary"
-                          className="h-[38px] px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0"
-                          icon={Plus}
-                        >
-                          Add Medicine
-                        </Button>
+                        <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMlist(getMasterList('mlist') || []);
+                              toast.success('Refreshed Medicine Master');
+                            }}
+                            className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer shadow-xs"
+                            title="Refresh list"
+                          >
+                            <RotateCw className="w-3.5 h-3.5" />
+                            <span>Refresh</span>
+                          </button>
+                          <Button
+                            onClick={() => openMasterModal('mlist')}
+                            variant="primary"
+                            className="h-[38px] px-3.5 sm:px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0 shadow-sm"
+                            icon={Plus}
+                          >
+                            Add Medicine
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="border border-[#E5E7EB] rounded-[16px] overflow-hidden bg-white">
+                    <div className="border-0 sm:border border-[#E5E7EB] rounded-none sm:rounded-[16px] overflow-visible sm:overflow-hidden bg-transparent sm:bg-white">
                       <Table
                         inlineActions={true}
                         headers={[
@@ -1683,19 +1767,19 @@ const DoctorClinicalMasters = () => {
 
                 {/* 2. MEDICINE FORMATS (DATABASE BACKED) */}
                 {medSubTab === 'med_categories' && (
-                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-6 shadow-sm space-y-5 text-left">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E5E7EB] pb-4">
+                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-3.5 sm:p-6 shadow-sm space-y-5 text-left">
+                    <div className="border-b border-[#E5E7EB] pb-4 space-y-3.5">
                       <div>
-                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                          <Package className="w-5 h-5 text-[#2F63F2]" />
-                          Medicine Formats (DB-Backed)
+                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2.5">
+                          <Package className="w-5 h-5 text-[#2F63F2] shrink-0" />
+                          <span>Medicine Formats (DB-Backed)</span>
                         </h2>
-                        <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        <p className="text-xs text-slate-500 font-medium mt-1">
                           Formulation types (Tablet, Capsule, Syrup, etc.) stored in tenant database.
                         </p>
                       </div>
-                      <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
-                        <div className="w-full sm:w-64">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-0.5">
+                        <div className="w-full sm:w-80 md:w-96 max-w-md">
                           <Input
                             placeholder="Search formats..."
                             value={searchCategories}
@@ -1703,41 +1787,43 @@ const DoctorClinicalMasters = () => {
                             icon={Search}
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            fetchMedicineForms();
-                            toast.success('Refreshed Medicine Formats');
-                          }}
-                          className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer"
-                          title="Refresh list"
-                        >
-                          <RotateCw className="w-3.5 h-3.5" />
-                          <span>Refresh</span>
-                        </button>
-                        <Button
-                          onClick={async () => {
-                            const newFormName = prompt('Enter new Medicine Format name (e.g. Ointment, Gel, Drops):');
-                            if (newFormName && newFormName.trim()) {
-                              try {
-                                await api.post('/operations/medicine-forms', { name: newFormName.trim() });
-                                toast.success('Medicine format saved to database');
-                                fetchMedicineForms();
-                              } catch (err) {
-                                toast.error('Failed to add medicine format');
+                        <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              fetchMedicineForms();
+                              toast.success('Refreshed Medicine Formats');
+                            }}
+                            className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer shadow-xs"
+                            title="Refresh list"
+                          >
+                            <RotateCw className="w-3.5 h-3.5" />
+                            <span>Refresh</span>
+                          </button>
+                          <Button
+                            onClick={async () => {
+                              const newFormName = prompt('Enter new Medicine Format name (e.g. Ointment, Gel, Drops):');
+                              if (newFormName && newFormName.trim()) {
+                                try {
+                                  await api.post('/operations/medicine-forms', { name: newFormName.trim() });
+                                  toast.success('Medicine format saved to database');
+                                  fetchMedicineForms();
+                                } catch (err) {
+                                  toast.error('Failed to add medicine format');
+                                }
                               }
-                            }
-                          }}
-                          variant="primary"
-                          className="h-[38px] px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0"
-                          icon={Plus}
-                        >
-                          Add Format
-                        </Button>
+                            }}
+                            variant="primary"
+                            className="h-[38px] px-3.5 sm:px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0 shadow-sm"
+                            icon={Plus}
+                          >
+                            Add Format
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="border border-[#E5E7EB] rounded-[16px] overflow-hidden bg-white">
+                    <div className="border-0 sm:border border-[#E5E7EB] rounded-none sm:rounded-[16px] overflow-visible sm:overflow-hidden bg-transparent sm:bg-white">
                       <Table
                         inlineActions={true}
                         headers={[
@@ -1772,19 +1858,19 @@ const DoctorClinicalMasters = () => {
 
                 {/* 3. DOSAGE MASTER */}
                 {medSubTab === 'dosages' && (
-                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-6 shadow-sm space-y-5 text-left">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E5E7EB] pb-4">
+                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-3.5 sm:p-6 shadow-sm space-y-5 text-left">
+                    <div className="border-b border-[#E5E7EB] pb-4 space-y-3.5">
                       <div>
-                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                          <Sliders className="w-5 h-5 text-[#2F63F2]" />
-                          Dosage Master
+                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2.5">
+                          <Sliders className="w-5 h-5 text-[#2F63F2] shrink-0" />
+                          <span>Dosage Master</span>
                         </h2>
-                        <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        <p className="text-xs text-slate-500 font-medium mt-1">
                           Configure available dosage values.
                         </p>
                       </div>
-                      <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
-                        <div className="w-full sm:w-64">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-0.5">
+                        <div className="w-full sm:w-80 md:w-96 max-w-md">
                           <Input
                             placeholder="Search dosage..."
                             value={searchDosages}
@@ -1792,30 +1878,32 @@ const DoctorClinicalMasters = () => {
                             icon={Search}
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDosages(getMasterList('dosages') || []);
-                            toast.success('Refreshed Dosage Master');
-                          }}
-                          className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer"
-                          title="Refresh list"
-                        >
-                          <RotateCw className="w-3.5 h-3.5" />
-                          <span>Refresh</span>
-                        </button>
-                        <Button
-                          onClick={() => openMasterModal('dosages')}
-                          variant="primary"
-                          className="h-[38px] px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0"
-                          icon={Plus}
-                        >
-                          Add Dosage
-                        </Button>
+                        <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDosages(getMasterList('dosages') || []);
+                              toast.success('Refreshed Dosage Master');
+                            }}
+                            className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer shadow-xs"
+                            title="Refresh list"
+                          >
+                            <RotateCw className="w-3.5 h-3.5" />
+                            <span>Refresh</span>
+                          </button>
+                          <Button
+                            onClick={() => openMasterModal('dosages')}
+                            variant="primary"
+                            className="h-[38px] px-3.5 sm:px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0 shadow-sm"
+                            icon={Plus}
+                          >
+                            Add Dosage
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="border border-[#E5E7EB] rounded-[16px] overflow-hidden bg-white">
+                    <div className="border-0 sm:border border-[#E5E7EB] rounded-none sm:rounded-[16px] overflow-visible sm:overflow-hidden bg-transparent sm:bg-white">
                       <Table
                         inlineActions={true}
                         headers={[
@@ -1840,19 +1928,19 @@ const DoctorClinicalMasters = () => {
 
                 {/* 4. FREQUENCY MASTER */}
                 {medSubTab === 'frequencies' && (
-                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-6 shadow-sm space-y-5 text-left">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E5E7EB] pb-4">
+                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-3.5 sm:p-6 shadow-sm space-y-5 text-left">
+                    <div className="border-b border-[#E5E7EB] pb-4 space-y-3.5">
                       <div>
-                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                          <Clock className="w-5 h-5 text-[#2F63F2]" />
-                          Frequency Master
+                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2.5">
+                          <Clock className="w-5 h-5 text-[#2F63F2] shrink-0" />
+                          <span>Frequency Master</span>
                         </h2>
-                        <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        <p className="text-xs text-slate-500 font-medium mt-1">
                           Configure prescription frequency options, English names, and dosage explanations.
                         </p>
                       </div>
-                      <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
-                        <div className="w-full sm:w-64">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-0.5">
+                        <div className="w-full sm:w-80 md:w-96 max-w-md">
                           <Input
                             placeholder="Search frequency..."
                             value={searchFrequencies}
@@ -1860,30 +1948,32 @@ const DoctorClinicalMasters = () => {
                             icon={Search}
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            fetchFrequencies();
-                            toast.success('Refreshed Frequency Master');
-                          }}
-                          className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer"
-                          title="Refresh list"
-                        >
-                          <RotateCw className="w-3.5 h-3.5" />
-                          <span>Refresh</span>
-                        </button>
-                        <Button
-                          onClick={() => openMasterModal('frequencies')}
-                          variant="primary"
-                          className="h-[38px] px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0"
-                          icon={Plus}
-                        >
-                          Add Frequency
-                        </Button>
+                        <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              fetchFrequencies();
+                              toast.success('Refreshed Frequency Master');
+                            }}
+                            className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer shadow-xs"
+                            title="Refresh list"
+                          >
+                            <RotateCw className="w-3.5 h-3.5" />
+                            <span>Refresh</span>
+                          </button>
+                          <Button
+                            onClick={() => openMasterModal('frequencies')}
+                            variant="primary"
+                            className="h-[38px] px-3.5 sm:px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0 shadow-sm"
+                            icon={Plus}
+                          >
+                            Add Frequency
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="border border-[#E5E7EB] rounded-[16px] overflow-hidden bg-white">
+                    <div className="border-0 sm:border border-[#E5E7EB] rounded-none sm:rounded-[16px] overflow-visible sm:overflow-hidden bg-transparent sm:bg-white">
                       <Table
                         inlineActions={true}
                         headers={[
@@ -1910,19 +2000,19 @@ const DoctorClinicalMasters = () => {
 
                 {/* 5. FOOD INSTRUCTION MASTER */}
                 {medSubTab === 'food_instructions' && (
-                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-6 shadow-sm space-y-5 text-left">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E5E7EB] pb-4">
+                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-3.5 sm:p-6 shadow-sm space-y-5 text-left">
+                    <div className="border-b border-[#E5E7EB] pb-4 space-y-3.5">
                       <div>
-                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                          <FileText className="w-5 h-5 text-[#2F63F2]" />
-                          Food Instruction Master
+                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2.5">
+                          <FileText className="w-5 h-5 text-[#2F63F2] shrink-0" />
+                          <span>Food Instruction Master</span>
                         </h2>
-                        <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        <p className="text-xs text-slate-500 font-medium mt-1">
                           Configure medicine food timing instructions.
                         </p>
                       </div>
-                      <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
-                        <div className="w-full sm:w-64">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-0.5">
+                        <div className="w-full sm:w-80 md:w-96 max-w-md">
                           <Input
                             placeholder="Search food instructions..."
                             value={searchFood}
@@ -1930,30 +2020,32 @@ const DoctorClinicalMasters = () => {
                             icon={Search}
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            fetchFoodInstructions();
-                            toast.success('Refreshed Food Instructions');
-                          }}
-                          className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer"
-                          title="Refresh list"
-                        >
-                          <RotateCw className="w-3.5 h-3.5" />
-                          <span>Refresh</span>
-                        </button>
-                        <Button
-                          onClick={() => openMasterModal('foodInstructions')}
-                          variant="primary"
-                          className="h-[38px] px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0"
-                          icon={Plus}
-                        >
-                          Add Food Instruction
-                        </Button>
+                        <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              fetchFoodInstructions();
+                              toast.success('Refreshed Food Instructions');
+                            }}
+                            className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer shadow-xs"
+                            title="Refresh list"
+                          >
+                            <RotateCw className="w-3.5 h-3.5" />
+                            <span>Refresh</span>
+                          </button>
+                          <Button
+                            onClick={() => openMasterModal('foodInstructions')}
+                            variant="primary"
+                            className="h-[38px] px-3.5 sm:px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0 shadow-sm"
+                            icon={Plus}
+                          >
+                            Add Food Instruction
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="border border-[#E5E7EB] rounded-[16px] overflow-hidden bg-white">
+                    <div className="border-0 sm:border border-[#E5E7EB] rounded-none sm:rounded-[16px] overflow-visible sm:overflow-hidden bg-transparent sm:bg-white">
                       <Table
                         inlineActions={true}
                         headers={[
@@ -2013,23 +2105,20 @@ const DoctorClinicalMasters = () => {
                     key={item.key}
                     type="button"
                     onClick={() => setConsultSubTab(item.key)}
-                    className={`w-full flex items-center justify-between p-3 rounded-xl transition-all duration-150 cursor-pointer text-left ${
-                      isSelected
+                    className={`w-full flex items-center justify-between p-3 rounded-xl transition-all duration-150 cursor-pointer text-left ${isSelected
                         ? 'bg-blue-50/80 border-l-4 border-[#2F63F2] font-bold text-[#2F63F2] shadow-xs'
                         : 'bg-white hover:bg-slate-50 text-slate-700 font-medium hover:text-slate-900 border-l-4 border-transparent'
-                    }`}
+                      }`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
-                        isSelected ? 'bg-white text-[#2F63F2] shadow-2xs' : 'bg-slate-100 text-slate-500'
-                      }`}>
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${isSelected ? 'bg-white text-[#2F63F2] shadow-2xs' : 'bg-slate-100 text-slate-500'
+                        }`}>
                         <Icon className="w-3.5 h-3.5" />
                       </div>
                       <span className="text-xs">{item.label}</span>
                     </div>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      isSelected ? 'bg-blue-100 text-[#2F63F2]' : 'bg-slate-100 text-slate-500'
-                    }`}>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isSelected ? 'bg-blue-100 text-[#2F63F2]' : 'bg-slate-100 text-slate-500'
+                      }`}>
                       {item.count}
                     </span>
                   </button>
@@ -2064,19 +2153,19 @@ const DoctorClinicalMasters = () => {
               >
                 {/* 1. ADVICE MASTER */}
                 {consultSubTab === 'advice_master' && (
-                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-6 shadow-sm space-y-5 text-left">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E5E7EB] pb-4">
+                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-3.5 sm:p-6 shadow-sm space-y-5 text-left">
+                    <div className="border-b border-[#E5E7EB] pb-4 space-y-3.5">
                       <div>
-                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                          <Lightbulb className="w-5 h-5 text-[#2F63F2]" />
-                          Advice Master
+                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2.5">
+                          <Lightbulb className="w-5 h-5 text-[#2F63F2] shrink-0" />
+                          <span>Advice Master</span>
                         </h2>
-                        <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        <p className="text-xs text-slate-500 font-medium mt-1">
                           Standard clinical advice recommendations for prescription output.
                         </p>
                       </div>
-                      <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
-                        <div className="w-full sm:w-64">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-0.5">
+                        <div className="w-full sm:w-80 md:w-96 max-w-md">
                           <Input
                             placeholder="Search advice..."
                             value={searchAdvice}
@@ -2084,30 +2173,32 @@ const DoctorClinicalMasters = () => {
                             icon={Search}
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAdviceList(getMasterList('adviceList') || []);
-                            toast.success('Refreshed Advice Master');
-                          }}
-                          className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer"
-                          title="Refresh list"
-                        >
-                          <RotateCw className="w-3.5 h-3.5" />
-                          <span>Refresh</span>
-                        </button>
-                        <Button
-                          onClick={() => openMasterModal('adviceList')}
-                          variant="primary"
-                          className="h-[38px] px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0"
-                          icon={Plus}
-                        >
-                          Add Advice
-                        </Button>
+                        <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAdviceList(getMasterList('adviceList') || []);
+                              toast.success('Refreshed Advice Master');
+                            }}
+                            className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer shadow-xs"
+                            title="Refresh list"
+                          >
+                            <RotateCw className="w-3.5 h-3.5" />
+                            <span>Refresh</span>
+                          </button>
+                          <Button
+                            onClick={() => openMasterModal('adviceList')}
+                            variant="primary"
+                            className="h-[38px] px-3.5 sm:px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0 shadow-sm"
+                            icon={Plus}
+                          >
+                            Add Advice
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="border border-[#E5E7EB] rounded-[16px] overflow-hidden bg-white">
+                    <div className="border-0 sm:border border-[#E5E7EB] rounded-none sm:rounded-[16px] overflow-visible sm:overflow-hidden bg-transparent sm:bg-white">
                       <Table
                         inlineActions={true}
                         headers={[
@@ -2132,19 +2223,19 @@ const DoctorClinicalMasters = () => {
 
                 {/* 2. INVESTIGATION MASTER */}
                 {consultSubTab === 'investigation_master' && (
-                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-6 shadow-sm space-y-5 text-left">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E5E7EB] pb-4">
+                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-3.5 sm:p-6 shadow-sm space-y-5 text-left">
+                    <div className="border-b border-[#E5E7EB] pb-4 space-y-3.5">
                       <div>
-                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                          <Microscope className="w-5 h-5 text-[#2F63F2]" />
-                          Investigation Master
+                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2.5">
+                          <Microscope className="w-5 h-5 text-[#2F63F2] shrink-0" />
+                          <span>Investigation Master</span>
                         </h2>
-                        <p className="text-xs text-slate-500 font-medium mt-0.5">
-                          Diagnostic laboratory and radiology test orders master.
+                        <p className="text-xs text-slate-500 font-medium mt-1">
+                          Diagnostic laboratory and radiology test orders configured in Hospital Service Catalog.
                         </p>
                       </div>
-                      <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
-                        <div className="w-full sm:w-64">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-0.5">
+                        <div className="w-full sm:w-80 md:w-96 max-w-md">
                           <Input
                             placeholder="Search investigations..."
                             value={searchInvestigations}
@@ -2152,30 +2243,24 @@ const DoctorClinicalMasters = () => {
                             icon={Search}
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setInvestigations(getMasterList('investigations') || []);
-                            toast.success('Refreshed Investigation Master');
-                          }}
-                          className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer"
-                          title="Refresh list"
-                        >
-                          <RotateCw className="w-3.5 h-3.5" />
-                          <span>Refresh</span>
-                        </button>
-                        <Button
-                          onClick={() => openMasterModal('investigations')}
-                          variant="primary"
-                          className="h-[38px] px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0"
-                          icon={Plus}
-                        >
-                          Add Investigation
-                        </Button>
+                        <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              fetchHospitalInvestigations();
+                              toast.success('Refreshed Investigation Master');
+                            }}
+                            className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer shadow-xs"
+                            title="Refresh list"
+                          >
+                            <RotateCw className="w-3.5 h-3.5" />
+                            <span>Refresh</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="border border-[#E5E7EB] rounded-[16px] overflow-hidden bg-white">
+                    <div className="border-0 sm:border border-[#E5E7EB] rounded-none sm:rounded-[16px] overflow-visible sm:overflow-hidden bg-transparent sm:bg-white">
                       <Table
                         inlineActions={true}
                         headers={[
@@ -2184,15 +2269,13 @@ const DoctorClinicalMasters = () => {
                           { key: 'status', label: 'Status', render: () => <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200">Active</span> }
                         ]}
                         data={filteredInvestigations}
-                        actions={createTableActions(
-                          (row) => setViewingItem({ type: 'Investigation Master', item: row }),
-                          (row) => openMasterModal('investigations', row),
-                          (row) => handleDeleteMasterRow('investigations', row)
-                        )}
+                        actions={[
+                          { label: 'View', icon: Eye, onClick: (row) => setViewingItem({ type: 'Investigation Master', item: row }), variant: 'view' }
+                        ]}
                       />
                       {filteredInvestigations.length === 0 && (
                         <div className="p-10 text-center text-[#6B7280] font-medium text-xs">
-                          📋 No Records Found. Click "Add Investigation" to create the first record.
+                          📋 No Investigation Services Found in Hospital Service Catalog. Check that Laboratory and/or Radiology feature flags are enabled and services are added in Service Catalog.
                         </div>
                       )}
                     </div>
@@ -2201,19 +2284,19 @@ const DoctorClinicalMasters = () => {
 
                 {/* 3. FOLLOW-UP MASTER */}
                 {consultSubTab === 'followup_master' && (
-                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-6 shadow-sm space-y-5 text-left">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E5E7EB] pb-4">
+                  <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-3.5 sm:p-6 shadow-sm space-y-5 text-left">
+                    <div className="border-b border-[#E5E7EB] pb-4 space-y-3.5">
                       <div>
-                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                          <Clock className="w-5 h-5 text-[#2F63F2]" />
-                          Follow-up Master
+                        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2.5">
+                          <Clock className="w-5 h-5 text-[#2F63F2] shrink-0" />
+                          <span>Follow-up Master</span>
                         </h2>
-                        <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        <p className="text-xs text-slate-500 font-medium mt-1">
                           Follow-up duration options (3 Days, 5 Days, 7 Days, etc.).
                         </p>
                       </div>
-                      <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
-                        <div className="w-full sm:w-64">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-0.5">
+                        <div className="w-full sm:w-80 md:w-96 max-w-md">
                           <Input
                             placeholder="Search follow-up options..."
                             value={searchFollowups}
@@ -2221,30 +2304,32 @@ const DoctorClinicalMasters = () => {
                             icon={Search}
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setFollowups(getMasterList('followups') || []);
-                            toast.success('Refreshed Follow-up Master');
-                          }}
-                          className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer"
-                          title="Refresh list"
-                        >
-                          <RotateCw className="w-3.5 h-3.5" />
-                          <span>Refresh</span>
-                        </button>
-                        <Button
-                          onClick={() => openMasterModal('followups')}
-                          variant="primary"
-                          className="h-[38px] px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0"
-                          icon={Plus}
-                        >
-                          Add Follow-up
-                        </Button>
+                        <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFollowups(getMasterList('followups') || []);
+                              toast.success('Refreshed Follow-up Master');
+                            }}
+                            className="h-[38px] px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer shadow-xs"
+                            title="Refresh list"
+                          >
+                            <RotateCw className="w-3.5 h-3.5" />
+                            <span>Refresh</span>
+                          </button>
+                          <Button
+                            onClick={() => openMasterModal('followups')}
+                            variant="primary"
+                            className="h-[38px] px-3.5 sm:px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0 shadow-sm"
+                            icon={Plus}
+                          >
+                            Add Follow-up
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="border border-[#E5E7EB] rounded-[16px] overflow-hidden bg-white">
+                    <div className="border-0 sm:border border-[#E5E7EB] rounded-none sm:rounded-[16px] overflow-visible sm:overflow-hidden bg-transparent sm:bg-white">
                       <Table
                         inlineActions={true}
                         headers={[
@@ -2331,6 +2416,20 @@ const DoctorClinicalMasters = () => {
                     <div>
                       <span className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Follow Up</span>
                       <p className="text-xs font-bold text-slate-700 mt-0.5">{getItemText(viewingItem.item.followup)}</p>
+                    </div>
+                  )}
+
+                  {viewingItem.item.department && (
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Department / Category</span>
+                      <p className="text-xs font-semibold text-slate-700 mt-0.5">{viewingItem.item.department}</p>
+                    </div>
+                  )}
+
+                  {viewingItem.item.price !== undefined && viewingItem.item.price !== null && (
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Standard Rate / Fee</span>
+                      <p className="text-xs font-mono font-bold text-emerald-600 mt-0.5">₹{Number(viewingItem.item.price).toLocaleString('en-IN')}</p>
                     </div>
                   )}
                 </>
@@ -2436,7 +2535,7 @@ const DoctorClinicalMasters = () => {
               onClick={() => setQuickModalType(null)}
               className="h-[38px] px-4 text-xs font-bold"
             >
-              Cancel
+              Close
             </Button>
             <Button
               type="submit"
@@ -2528,13 +2627,13 @@ const DoctorClinicalMasters = () => {
 
           {activeModalTarget === 'dlist' && (
             <div className="space-y-4 text-left font-sans max-h-[70vh] overflow-y-auto pr-1">
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
+              <div className="p-3.5 sm:p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 sm:space-y-4">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-[#2F63F2] flex items-center gap-1.5">
                   <Stethoscope className="w-4 h-4" />
                   Diagnosis Basic Details
                 </h4>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-2.5 sm:gap-4">
                   <Input
                     label="Diagnosis Name *"
                     placeholder="e.g. Acute Viral Bronchitis"
@@ -2550,13 +2649,13 @@ const DoctorClinicalMasters = () => {
                   />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-                  <div className="flex flex-col gap-1.5 w-full">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 items-center">
+                  <div className="flex flex-col gap-1 sm:gap-1.5 w-full">
                     <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider pl-1">
                       Diagnosis Category *
                     </label>
                     <select
-                      className="enterprise-input h-[42px] text-xs font-semibold"
+                      className="enterprise-input h-[38px] sm:h-[42px] text-xs font-semibold"
                       value={modalForm.category || 'General Medicine'}
                       onChange={(e) => setModalForm({ ...modalForm, category: e.target.value })}
                       required
@@ -2567,7 +2666,7 @@ const DoctorClinicalMasters = () => {
                     </select>
                   </div>
 
-                  <div className="flex items-center gap-3 pt-4 pl-1">
+                  <div className="flex items-center gap-3 pt-1 sm:pt-4 pl-1">
                     <label className="flex items-center gap-2 cursor-pointer select-none">
                       <input
                         type="checkbox"
@@ -2585,7 +2684,7 @@ const DoctorClinicalMasters = () => {
               </div>
 
               {/* Prescription Protocol Template Section */}
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
+              <div className="p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5 sm:space-y-4">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-[#2F63F2] flex items-center gap-1.5">
                   <FileText className="w-4 h-4" />
                   Prescription Protocol Template (Optional)
@@ -2631,7 +2730,7 @@ const DoctorClinicalMasters = () => {
                   colorClass="green"
                 />
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
                   <ChipSelector
                     title="Advice"
                     placeholder="Search advice..."
@@ -2671,12 +2770,12 @@ const DoctorClinicalMasters = () => {
                   />
                 </div>
 
-                <div className="flex flex-col gap-1.5 w-full">
+                <div className="flex flex-col gap-1 sm:gap-1.5 w-full">
                   <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider pl-1">
                     Follow-up Duration
                   </label>
                   <select
-                    className="enterprise-input h-[42px] text-xs font-semibold"
+                    className="enterprise-input h-[38px] sm:h-[42px] text-xs font-semibold"
                     value={modalForm.followup || '3 Days'}
                     onChange={(e) => setModalForm({ ...modalForm, followup: e.target.value })}
                   >
@@ -2709,7 +2808,7 @@ const DoctorClinicalMasters = () => {
               onClick={() => setActiveModalTarget(null)}
               className="h-[38px] px-4 text-xs font-bold"
             >
-              Cancel
+              Close
             </Button>
             <Button
               type="submit"
@@ -2723,9 +2822,9 @@ const DoctorClinicalMasters = () => {
       </Modal>
       {/* Custom Delete Confirmation Modal */}
       {deleteTemplateConfirm && (
-        <Modal 
-          isOpen={!!deleteTemplateConfirm} 
-          onClose={() => setDeleteTemplateConfirm(null)} 
+        <Modal
+          isOpen={!!deleteTemplateConfirm}
+          onClose={() => setDeleteTemplateConfirm(null)}
           title={isTemplateUsedInConsultations(deleteTemplateConfirm) ? "Template In Use" : "Delete Diagnosis Template?"}
         >
           {isTemplateUsedInConsultations(deleteTemplateConfirm) ? (
@@ -2748,7 +2847,7 @@ const DoctorClinicalMasters = () => {
                   onClick={() => setDeleteTemplateConfirm(null)}
                   className="px-4 py-2 border border-slate-355 text-slate-700 bg-white hover:bg-slate-50 text-xs font-semibold rounded-xl transition-all"
                 >
-                  Cancel
+                  Close
                 </button>
                 <button
                   type="button"
@@ -2776,7 +2875,7 @@ const DoctorClinicalMasters = () => {
                   onClick={() => setDeleteTemplateConfirm(null)}
                   className="px-4 py-2 border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 text-xs font-semibold rounded-xl transition-all"
                 >
-                  Cancel
+                  Close
                 </button>
                 <button
                   type="button"
@@ -2797,7 +2896,7 @@ const DoctorClinicalMasters = () => {
       )}
       {/* Floating Template Context Menu Portal */}
       {menuAnchor && createPortal(
-        <DiagnosisTemplateContextMenu 
+        <DiagnosisTemplateContextMenu
           anchor={menuAnchor}
           onClose={() => setMenuAnchor(null)}
           onAction={handleMenuAction}

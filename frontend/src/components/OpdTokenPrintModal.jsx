@@ -22,10 +22,9 @@ const OpdTokenPrintModal = ({ isOpen, onClose, appointment, hospitalInfo }) => {
   const patientName = appointment.patientId?.name || appointment.patient?.name || appointment.patientName || 'George K';
 
   // Format Doctor Name
-  let doctorName = appointment.doctorId?.name || appointment.doctor?.name || appointment.doctorName || 'Dr. Nithin';
-  if (doctorName && !doctorName.toLowerCase().startsWith('dr')) {
-    doctorName = `Dr. ${doctorName}`;
-  }
+  const rawDoctorName = appointment.doctorId?.name || appointment.doctor?.name || appointment.doctorName || 'Nithin';
+  const cleanDoc = String(rawDoctorName).replace(/^(Dr\.?\s*)+/i, '').trim();
+  const doctorName = cleanDoc ? `Dr. ${cleanDoc}` : 'Dr. Nithin';
 
   // Format Date (e.g., "31 Jul 2026")
   const dateObj = appointment.date ? new Date(appointment.date) : new Date();

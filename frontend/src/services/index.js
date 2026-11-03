@@ -8,5 +8,7 @@ export { pharmacyService } from './pharmacy/pharmacyService';
 export { clinicalMastersService } from './masters/clinicalMastersService';
 export { adminService } from './admin/adminService';
 export { reportService } from './reports/reportService';
+export { ipdService } from './ipd/ipdService';
 export { eventBus, realtimeService, notificationService } from './realtime';
+
 

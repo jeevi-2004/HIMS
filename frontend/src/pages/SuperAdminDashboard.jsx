@@ -24,6 +24,66 @@ const capitalizeWords = (str) => {
   return str.replace(/\b\w/g, char => char.toUpperCase());
 };
 
+export const CANONICAL_FEATURE_MODULES = [
+  { key: 'OPD', label: 'OPD', default: true },
+  { key: 'Appointments', label: 'Appointments', default: true },
+  { key: 'IPD', label: 'IPD', default: true },
+  { key: 'Billing', label: 'Billing', default: true },
+  { key: 'Pharmacy', label: 'Pharmacy', default: true },
+  { key: 'Branches', label: 'Multi-Branch', default: false },
+  { key: 'digitalPrescription', label: 'Digital Prescription', default: true },
+  { key: 'doctorConsultationDesk', label: 'Doctor Consultation Desk', default: true },
+  { key: 'voiceAnnouncements', label: 'Voice Announcements', default: true },
+  { key: 'Laboratory', label: 'Laboratory', default: false },
+  { key: 'Radiology', label: 'Radiology', default: false },
+  { key: 'Inventory', label: 'Inventory', default: false },
+  { key: 'HRMS', label: 'HRMS', default: false },
+  { key: 'Finance', label: 'Finance', default: false },
+  { key: 'Insurance', label: 'Insurance', default: false },
+  { key: 'PatientPortal', label: 'Patient Portal', default: false }
+];
+
+export const getHospitalFeatureModules = (hosp) => {
+  const rawModules = hosp?.featureModules || {};
+  const rawObj = typeof rawModules.toJSON === 'function'
+    ? rawModules.toJSON()
+    : (rawModules instanceof Map ? Object.fromEntries(rawModules) : rawModules);
+
+  const modules = {};
+
+  CANONICAL_FEATURE_MODULES.forEach((mod) => {
+    const canonicalKey = mod.key;
+    const lowerKey = canonicalKey.toLowerCase();
+
+    let found = false;
+    let isEnabled = false;
+
+    // Check all variations case-insensitively.
+    // If ANY variation is true, we preserve true!
+    for (const [k, v] of Object.entries(rawObj)) {
+      if (k.toLowerCase() === lowerKey) {
+        found = true;
+        if (Boolean(v)) {
+          isEnabled = true;
+          break;
+        }
+      }
+    }
+
+    if (found) {
+      modules[canonicalKey] = isEnabled;
+    } else {
+      if (canonicalKey === 'digitalPrescription' || canonicalKey === 'doctorConsultationDesk') {
+        modules[canonicalKey] = hosp?.opdOperationMode !== 'TOKEN_ONLY';
+      } else {
+        modules[canonicalKey] = mod.default;
+      }
+    }
+  });
+
+  return modules;
+};
+
 const SuperAdminDashboard = () => {
   const { user } = useAuth();
   const location = useLocation();
@@ -103,7 +163,7 @@ const SuperAdminDashboard = () => {
   const [hospitalForm, setHospitalForm] = useState({ 
     name: '', code: '', contactCountryCode: '+91', contactNumber: '', email: '', street: '', city: '', state: '', zip: '', country: 'India',
     hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerCountryCode: '+91', ownerMobile: '', logo: '', subscriptionPlan: '',
-    geoEnabled: false, geoLat: '', geoLng: '', geoRadius: 300
+    geoEnabled: false, geoLat: '', geoLng: '', geoRadius: 300, ipd_requested: false
   });
 
   // Geofence GPS Capture State
@@ -474,7 +534,8 @@ const SuperAdminDashboard = () => {
         ownerMobile: sanitizedOwner,
         logo: hospitalForm.logo,
         opdOperationMode: hospitalForm.opdOperationMode || 'FULL_DIGITAL',
-        planName: hospitalForm.subscriptionPlan || ((hospitalForm.opdOperationMode === 'TOKEN_ONLY') ? 'Plan 1: OPD Token Generation & Queue Suite' : 'Plan 2: Complete Digital OPD Suite')
+        planName: hospitalForm.subscriptionPlan || ((hospitalForm.opdOperationMode === 'TOKEN_ONLY') ? 'Plan 1: OPD Token Generation & Queue Suite' : 'Plan 2: Complete Digital OPD Suite'),
+        ipd_requested: Boolean(hospitalForm.ipd_requested)
       };
 
       let res;
@@ -511,7 +572,7 @@ const SuperAdminDashboard = () => {
       setHospitalForm({ 
         name: '', code: '', contactCountryCode: '+91', contactNumber: '', email: '', street: '', city: '', state: '', zip: '', country: 'India',
         hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerCountryCode: '+91', ownerMobile: '', logo: '', subscriptionPlan: '', opdOperationMode: 'FULL_DIGITAL',
-        geoEnabled: false, geoLat: '', geoLng: '', geoRadius: 300
+        geoEnabled: false, geoLat: '', geoLng: '', geoRadius: 300, ipd_requested: false
       });
       setGeoDetecting(false);
       setGeoSuccess(false);
@@ -569,7 +630,8 @@ const SuperAdminDashboard = () => {
       geoEnabled: geo.enabled === true,
       geoLat: geo.latitude != null ? String(geo.latitude) : '',
       geoLng: geo.longitude != null ? String(geo.longitude) : '',
-      geoRadius: geo.radiusMeters || 300
+      geoRadius: geo.radiusMeters || 300,
+      ipd_requested: Boolean(hosp.ipd_requested)
     });
     setIsHospitalOpen(true);
   };
@@ -582,7 +644,7 @@ const SuperAdminDashboard = () => {
       setHospitalForm({ 
         name: '', code: '', contactCountryCode: '+91', contactNumber: '', email: '', street: '', city: '', state: '', zip: '', country: 'India',
         hospitalType: 'General', registrationNumber: '', gstNumber: '', ownerName: '', ownerCountryCode: '+91', ownerMobile: '', logo: '', subscriptionPlan: '', opdOperationMode: 'FULL_DIGITAL',
-        geoEnabled: false, geoLat: '', geoLng: '', geoRadius: 300
+        geoEnabled: false, geoLat: '', geoLng: '', geoRadius: 300, ipd_requested: false
       });
       setGeoDetecting(false);
       setGeoSuccess(false);
@@ -672,16 +734,16 @@ const SuperAdminDashboard = () => {
   };
 
   // Feature Modules Handler
-  const handleToggleFeatureModule = async (hosp, modName, currentValue) => {
+  const handleToggleFeatureModule = async (hosp, modKey, currentValue) => {
     try {
-      const rawModules = hosp.featureModules || {};
-      const normalizedModules = typeof rawModules.toJSON === 'function' ? rawModules.toJSON() : (rawModules instanceof Map ? Object.fromEntries(rawModules) : rawModules);
+      const currentModules = getHospitalFeatureModules(hosp);
       const updatedModules = {
-        ...normalizedModules,
-        [modName]: !currentValue
+        ...currentModules,
+        [modKey]: !currentValue
       };
       await api.put(`/admin/hospitals/${hosp._id}/features`, { featureModules: updatedModules });
-      const displayLabel = modName === 'Branches' ? 'Multi-Branch' : modName;
+      const modDef = CANONICAL_FEATURE_MODULES.find(m => m.key === modKey);
+      const displayLabel = modDef?.label || modKey;
       toast.success(`${displayLabel} module ${!currentValue ? 'ENABLED' : 'DISABLED'} for ${hosp.name}`);
       fetchData('features');
     } catch (err) {
@@ -1091,29 +1153,7 @@ const SuperAdminDashboard = () => {
         <Card title="Tenant Feature Modules Activation" subtitle="Enable or disable specific system modules dynamically per hospital tenant.">
           <div className="space-y-6 text-left">
             {hospitals.map((hosp) => {
-              const defaultModules = {
-                OPD: true,
-                APPOINTMENTS: true,
-                IPD: true,
-                BILLING: true,
-                PHARMACY: true,
-                Branches: false,
-                LABORATORY: false,
-                RADIOLOGY: false,
-                INVENTORY: false,
-                HRMS: false,
-                FINANCE: false,
-                INSURANCE: false,
-                PATIENTPORTAL: false
-              };
-              const rawModules = hosp.featureModules || {};
-              const normalizedModules = typeof rawModules.toJSON === 'function' ? rawModules.toJSON() : (rawModules instanceof Map ? Object.fromEntries(rawModules) : rawModules);
-              const currentModules = {
-                ...defaultModules,
-                ...normalizedModules
-              };
-              if (normalizedModules.Branches !== undefined) currentModules.Branches = Boolean(normalizedModules.Branches);
-              else if (normalizedModules.branches !== undefined) currentModules.Branches = Boolean(normalizedModules.branches);
+              const currentModules = getHospitalFeatureModules(hosp);
               return (
                 <div key={hosp._id} className="p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
                   <div className="flex justify-between items-center">
@@ -1127,25 +1167,34 @@ const SuperAdminDashboard = () => {
                   </div>
 
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                    {Object.entries(currentModules).map(([modName, enabled]) => (
-                      <label 
-                        key={modName} 
-                        className={`p-2.5 border rounded-xl flex items-center justify-between gap-2 cursor-pointer select-none transition-all ${
-                          enabled 
-                            ? 'bg-blue-50/50 border-blue-200 text-blue-800' 
-                            : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-100'
-                        }`}
-                        title={modName}
-                      >
-                        <span className="text-[11px] font-semibold tracking-wide uppercase truncate block flex-1">{modName === 'Branches' ? 'Multi-Branch' : modName}</span>
-                        <input 
-                          type="checkbox" 
-                          checked={enabled} 
-                          onChange={() => handleToggleFeatureModule(hosp, modName, enabled)}
-                          className="w-3.5 h-3.5 accent-[#2F63F2] cursor-pointer shrink-0"
-                        />
-                      </label>
-                    ))}
+                    {CANONICAL_FEATURE_MODULES.map((mod) => {
+                      const enabled = currentModules[mod.key];
+                      const isDisabled = mod.key === 'IPD' && !hosp.ipd_requested;
+                      return (
+                        <label 
+                          key={mod.key} 
+                          className={`p-2.5 border rounded-xl flex items-center justify-between gap-2 select-none transition-all ${
+                            isDisabled ? 'bg-gray-100 border-gray-200 opacity-60 cursor-not-allowed' : 'cursor-pointer'
+                          } ${
+                            !isDisabled && enabled 
+                              ? 'bg-blue-50/50 border-blue-200 text-blue-800' 
+                              : (!isDisabled ? 'bg-white border-slate-200 text-slate-500 hover:bg-slate-100' : 'text-slate-400')
+                          }`}
+                          title={isDisabled ? "Cannot enable IPD because it was not requested during hospital registration." : mod.label}
+                        >
+                          <span className="text-[11px] font-semibold tracking-wide uppercase truncate block flex-1">
+                            {mod.label}
+                          </span>
+                          <input 
+                            type="checkbox" 
+                            checked={enabled} 
+                            disabled={isDisabled}
+                            onChange={() => handleToggleFeatureModule(hosp, mod.key, enabled)}
+                            className={`w-3.5 h-3.5 accent-[#2F63F2] shrink-0 ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                          />
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -1303,7 +1352,7 @@ const SuperAdminDashboard = () => {
               onClick={() => setIsHospitalOpen(false)}
               className="text-xs font-bold uppercase tracking-wider px-5 h-10"
             >
-              Cancel
+              Close
             </Button>
             <Button 
               type="submit"
@@ -1513,6 +1562,29 @@ const SuperAdminDashboard = () => {
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* Section 5B: In-Patient Department (IPD) - NEW */}
+          <div className="p-5 bg-blue-50/40 border border-blue-100 rounded-2xl space-y-3">
+            <h4 className="text-xs font-bold text-[#2F63F2] uppercase tracking-widest flex items-center gap-2">
+              <Hospital className="w-4 h-4" />
+              Hospital Services & Modules
+            </h4>
+            <p className="text-xs text-slate-500 mb-2">Select the services and modules this hospital will use.</p>
+            <label className="flex items-start gap-3 p-4 bg-white border border-slate-200 rounded-xl cursor-pointer hover:border-blue-300 transition-colors">
+              <input 
+                type="checkbox"
+                checked={hospitalForm.ipd_requested}
+                onChange={(e) => setHospitalForm({ ...hospitalForm, ipd_requested: e.target.checked })}
+                className="w-4 h-4 mt-0.5 rounded text-[#2F63F2] focus:ring-[#2F63F2] cursor-pointer"
+              />
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-[#2F63F2] flex items-center gap-2">
+                  <span className="text-lg">🛏️</span> In-Patient Department (IPD)
+                </span>
+                <span className="text-[11px] text-slate-500 mt-1">Enable inpatient admission, ward management, doctor rounds and discharge workflows for this hospital.</span>
+              </div>
+            </label>
           </div>
 
           {/* Section 6: GPS Geofence Access Control (Receptionist) */}

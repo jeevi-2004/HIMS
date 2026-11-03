@@ -4,16 +4,20 @@ const {
   registerPatient,
   getPatients,
   searchPatients,
+  getPatientById,
   updatePatient,
   bookAppointment,
   checkInAppointment,
+  getAppointmentById,
   getAppointments,
   enterVitals,
   updateQueueStatus,
   createConsultation,
+  getConsultations,
   getPatientHistory,
   createMedicine,
   getMedicines,
+  getPharmacyStats,
   addMedicineBatch,
   getMedicineBatches,
   getPrescriptionQueue,
@@ -27,7 +31,9 @@ const {
   getPharmacyBills,
   payPharmacyBill,
   getOPDReports,
+  getHospitalPerformanceReports,
   getConsultationSnapshot,
+  startFollowupConsultation,
   searchClinicalDiagnoses,
   createClinicalDiagnosis,
   getFrequentDiagnoses,
@@ -91,11 +97,13 @@ router.delete('/clinical-diagnoses/:id', deleteClinicalDiagnosis);
 
 // Reports
 router.get('/reports/opd', getOPDReports);
+router.get('/reports/performance', getHospitalPerformanceReports);
 
 // Patients
 router.post('/patients', requireActiveSubscription, validateMobileNumber, checkUserMobileUniqueness, registerPatient);
 router.get('/patients', getPatients);
 router.get('/patients/search', searchPatients);
+router.get('/patients/:id', getPatientById);
 router.put('/patients/:id', updatePatient);
 router.get('/patients/:patientId/history', getPatientHistory);
 
@@ -103,12 +111,15 @@ router.get('/patients/:patientId/history', getPatientHistory);
 router.post('/appointments', requireActiveSubscription, bookAppointment);
 router.get('/appointments', getAppointments);
 router.get('/appointments/today', getAppointments);
+router.get('/appointments/:id', getAppointmentById);
 router.put('/appointments/:id/check-in', checkInAppointment);
 router.put('/appointments/:id/vitals', enterVitals);
 router.put('/appointments/:id/queue', requireActiveSubscription, updateQueueStatus);
 
 // Consultations & Prescription
 router.post('/consultations', requireActiveSubscription, createConsultation);
+router.post('/consultations/start-followup', requireActiveSubscription, startFollowupConsultation);
+router.get('/consultations', getConsultations);
 router.get('/consultations/:consultationId/snapshot', getConsultationSnapshot);
 
 // Pharmacy Catalog & Dispensing
@@ -124,6 +135,7 @@ router.get('/pharmacy/medicines/:medicineId/batches', getMedicineBatches);
 
 router.get('/pharmacy/prescriptions', getPrescriptionQueue);
 router.get('/pharmacy/queue', getPrescriptionQueue);
+router.get('/pharmacy/stats', getPharmacyStats);
 router.get('/pharmacy/prescriptions/:id', getPrescriptionById);
 router.post('/pharmacy/dispense', dispensePrescription);
 

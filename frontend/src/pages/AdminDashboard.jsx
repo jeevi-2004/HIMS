@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -20,9 +20,12 @@ import {
   GitBranch, ClipboardList, Users, ShieldCheck, ShieldAlert, Plus, Key, Activity, Calendar, 
   FileBarChart2, Settings, Building2, History, UserRound, Pill, 
   CreditCard, Clock, Trash2, Edit, CheckCircle, PlusCircle, Search, Eye, EyeOff, Lock,
-  Ticket, Stethoscope, FileText, Database
+  Ticket, Stethoscope, FileText, Database, ArrowLeft
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import TodayIpdQueueLiveStatus from '../components/dashboard/TodayIpdQueueLiveStatus';
+import TodayBedMaintenanceLiveStatus from '../components/dashboard/TodayBedMaintenanceLiveStatus';
+import { isIpdAvailable, isFeatureModuleEnabled } from '../utils/featureUtils';
 
 const AdminDashboard = () => {
   const { user } = useAuth();
@@ -40,6 +43,8 @@ const AdminDashboard = () => {
     hospitalInfo?.featureModules?.Branches === true ||
     (hospitalInfo?.featureModules && typeof hospitalInfo.featureModules.get === 'function' && hospitalInfo.featureModules.get('Branches') === true)
   );
+
+  const isIpdEnabled = Boolean(isIpdAvailable(hospitalInfo || user?.hospital));
 
   // Synchronize activeTab and branchSubTab with URL route & search params (?tab=...)
   useEffect(() => {
@@ -84,6 +89,18 @@ const AdminDashboard = () => {
   const [todayAppointments, setTodayAppointments] = useState([]);
   const [patients, setPatients] = useState([]);
   const [patientSearchQuery, setPatientSearchQuery] = useState('');
+  const [reportPeriod, setReportPeriod] = useState('today');
+  const [performanceReports, setPerformanceReports] = useState(null);
+
+  // Dynamically computed active doctors roster from hospital staff
+  const activeDoctors = useMemo(() => {
+    return (staff || []).filter(s => {
+      if (!s) return false;
+      const roleName = (typeof s.roleId === 'object' ? s.roleId?.name : s.role) || '';
+      const r = roleName.toString().trim().toUpperCase();
+      return r === 'DOCTOR' || r === 'DOCTOR_ADMIN' || Boolean(s.doctorProfile?.specialization || s.doctorProfile?.qualification);
+    });
+  }, [staff]);
 
   // Modals & Drawers Open States
   const [isBranchOpen, setIsBranchOpen] = useState(false);
@@ -120,8 +137,58 @@ const AdminDashboard = () => {
     name: '', code: '', description: '', branchId: '' 
   });
   const [serviceForm, setServiceForm] = useState({ 
-    name: '', code: '', price: 150, description: '', status: 'active' 
+    serviceType: '', category: '', name: '', code: '', price: 150, description: '', status: 'active' 
   });
+
+  // Helper to capitalize the first letter of each word and disallow numbers
+  const formatWordCapitalizedNoNumbers = (val) => {
+    if (typeof val !== 'string') return '';
+    return val
+      .replace(/[0-9]/g, '')
+      .replace(/(^|[^\w'])([a-z])/g, (_, prefix, char) => prefix + char.toUpperCase());
+  };
+
+  // Dynamically compute available service types based on enabled hospital feature flags
+  const availableServiceTypes = useMemo(() => {
+    const types = [];
+
+    const isLabEnabled = isFeatureModuleEnabled(hospitalInfo, 'Laboratory') || isFeatureModuleEnabled(user, 'Laboratory');
+    const isRadEnabled = isFeatureModuleEnabled(hospitalInfo, 'Radiology') || isFeatureModuleEnabled(user, 'Radiology');
+
+    if (isLabEnabled) {
+      types.push({ id: 'Laboratory', label: 'Laboratory' });
+    }
+
+    if (isRadEnabled) {
+      types.push({ id: 'Radiology', label: 'Radiology' });
+    }
+
+    return types;
+  }, [hospitalInfo, user]);
+
+  const renderedServiceTypes = useMemo(() => {
+    const list = [...availableServiceTypes];
+    if (serviceForm.serviceType && !list.some(t => t.id === serviceForm.serviceType)) {
+      list.push({ id: serviceForm.serviceType, label: serviceForm.serviceType });
+    }
+    return list;
+  }, [availableServiceTypes, serviceForm.serviceType]);
+
+  const serviceNamePlaceholder = useMemo(() => {
+    if (serviceForm.serviceType === 'Laboratory') {
+      return 'e.g. Complete Blood Count (CBC), Blood Sugar, Urine Routine';
+    }
+    if (serviceForm.serviceType === 'Radiology') {
+      return 'e.g. Chest X-Ray, Abdomen Ultrasound, CT Scan';
+    }
+    return 'Enter Service Name';
+  }, [serviceForm.serviceType]);
+
+  const serviceCodePlaceholder = useMemo(() => {
+    if (serviceForm.serviceType === 'Laboratory') return 'e.g. LAB001';
+    if (serviceForm.serviceType === 'Radiology') return 'e.g. RAD001';
+    return 'e.g. SRV001';
+  }, [serviceForm.serviceType]);
   const [staffForm, setStaffForm] = useState({ 
     name: '', countryCode: '+91', mobileNumber: '', pin: '', roleId: '', branchId: '', departmentId: '',
     qualification: '', specialization: '', experience: 0, consultationFee: 500, emergencyFee: 1000,
@@ -226,17 +293,19 @@ const AdminDashboard = () => {
     setLoading(true);
     try {
       if (tab === 'summary') {
-        const [brs, depts, stf, hospitalRes, todayApps] = await Promise.all([
+        const [brs, depts, stf, hospitalRes, todayApps, pts] = await Promise.all([
           api.get('/admin/branches').catch(() => ({ data: { data: [] } })),
           api.get('/admin/departments').catch(() => ({ data: { data: [] } })),
           api.get('/admin/users').catch(() => ({ data: { data: [] } })),
           api.get('/admin/hospitals').catch(() => ({ data: { data: [] } })),
-          api.get('/operations/appointments/today', { params: { date: new Date().toISOString().split('T')[0] } }).catch(() => ({ data: { data: [] } }))
+          api.get('/operations/appointments/today', { params: { date: new Date().toISOString().split('T')[0] } }).catch(() => ({ data: { data: [] } })),
+          api.get('/operations/patients').catch(() => ({ data: { data: [] } }))
         ]);
         setBranches(Array.isArray(brs.data?.data) ? brs.data.data : []);
         setDepartments(Array.isArray(depts.data?.data) ? depts.data.data : []);
-        setStaff(Array.isArray(stf.data?.data) ? stf.data.data : []);
+        setStaff(Array.isArray(stf.data?.data) ? stf.data.data : (Array.isArray(stf.data) ? stf.data : []));
         setTodayAppointments(Array.isArray(todayApps.data?.data) ? todayApps.data.data : (Array.isArray(todayApps.data) ? todayApps.data : []));
+        setPatients(Array.isArray(pts.data?.data) ? pts.data.data : (Array.isArray(pts.data) ? pts.data : []));
         if (hospitalRes.data?.data?.length > 0) {
           setHospitalInfo(hospitalRes.data.data[0]);
         }
@@ -248,8 +317,14 @@ const AdminDashboard = () => {
         setBranches(Array.isArray(brs.data?.data) ? brs.data.data : []);
         setDepartments(Array.isArray(depts.data?.data) ? depts.data.data : []);
       } else if (tab === 'services') {
-        const res = await api.get('/admin/services').catch(() => ({ data: { data: [] } }));
+        const [res, hospitalRes] = await Promise.all([
+          api.get('/admin/services').catch(() => ({ data: { data: [] } })),
+          !hospitalInfo ? api.get('/admin/hospitals').catch(() => ({ data: { data: [] } })) : Promise.resolve(null)
+        ]);
         setServices(Array.isArray(res.data?.data) ? res.data.data : []);
+        if (hospitalRes?.data?.data?.length > 0) {
+          setHospitalInfo(hospitalRes.data.data[0]);
+        }
       } else if (tab === 'workforce' || tab === 'doctors' || tab === 'staff' || tab === 'users') {
         const [stf, rls, brs, depts] = await Promise.all([
           api.get('/admin/users').catch(() => ({ data: { data: [] } })),
@@ -265,14 +340,18 @@ const AdminDashboard = () => {
         const res = await api.get('/operations/patients').catch(() => ({ data: { data: [] } }));
         setPatients(Array.isArray(res.data?.data) ? res.data.data : []);
       } else if (tab === 'reports' || tab === 'audit-logs') {
-        const [depts, stf, todayApps] = await Promise.all([
+        const [depts, stf, todayApps, perfRes] = await Promise.all([
           api.get('/admin/departments').catch(() => ({ data: { data: [] } })),
           api.get('/admin/users').catch(() => ({ data: { data: [] } })),
-          api.get('/operations/appointments/today', { params: { date: new Date().toISOString().split('T')[0] } }).catch(() => ({ data: { data: [] } }))
+          api.get('/operations/appointments/today', { params: { date: new Date().toISOString().split('T')[0] } }).catch(() => ({ data: { data: [] } })),
+          api.get('/operations/reports/performance', { params: { period: reportPeriod } }).catch(() => ({ data: { data: null } }))
         ]);
         setDepartments(Array.isArray(depts.data?.data) ? depts.data.data : []);
         setStaff(Array.isArray(stf.data?.data) ? stf.data.data : []);
         setTodayAppointments(Array.isArray(todayApps.data?.data) ? todayApps.data.data : (Array.isArray(todayApps.data) ? todayApps.data : []));
+        if (perfRes?.data?.data) {
+          setPerformanceReports(perfRes.data.data);
+        }
       } else if (tab === 'hospital-profile') {
         const res = await api.get('/admin/hospitals').catch(() => ({ data: { data: [] } }));
         if (res.data?.data?.length > 0) {
@@ -304,6 +383,18 @@ const AdminDashboard = () => {
   useEffect(() => {
     fetchData(activeTab);
   }, [activeTab]);
+
+  const handlePeriodChange = async (newPeriod) => {
+    setReportPeriod(newPeriod);
+    try {
+      const res = await api.get('/operations/reports/performance', { params: { period: newPeriod } });
+      if (res.data?.data) {
+        setPerformanceReports(res.data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching performance reports for period:', err);
+    }
+  };
 
   // --------------------------------------------------------
   // RECEPTIONIST & BILLING MUTATIONS
@@ -523,17 +614,21 @@ const AdminDashboard = () => {
   const handleSaveService = async (e) => {
     e.preventDefault();
     try {
+      const payload = {
+        ...serviceForm,
+        category: serviceForm.category || serviceForm.serviceType || 'General'
+      };
       if (selectedService) {
-        await api.put(`/admin/services/${selectedService._id}`, serviceForm);
+        await api.put(`/admin/services/${selectedService._id}`, payload);
         toast.success('Service configuration updated');
       } else {
-        await api.post('/admin/services', serviceForm);
+        await api.post('/admin/services', payload);
         serviceDraft.clearDraft();
-        toast.success('Diagnostic/Clinical service added');
+        toast.success('Service item added');
       }
       setIsServiceOpen(false);
       setSelectedService(null);
-      setServiceForm({ name: '', code: '', price: 150, description: '', status: 'active' });
+      setServiceForm({ serviceType: '', category: '', name: '', code: '', price: 150, description: '', status: 'active' });
       fetchData('services');
     } catch (err) {
       toast.error('Service save failed');
@@ -543,11 +638,13 @@ const AdminDashboard = () => {
   const handleEditService = (srv) => {
     setSelectedService(srv);
     setServiceForm({
-      name: srv.name,
+      name: formatWordCapitalizedNoNumbers(srv.name || ''),
       code: srv.code,
+      serviceType: srv.serviceType || '',
+      category: srv.category || srv.serviceType || 'General',
       price: srv.price || 150,
-      description: srv.description || '',
-      status: srv.status
+      description: formatWordCapitalizedNoNumbers(srv.description || ''),
+      status: srv.status || 'active'
     });
     setIsServiceOpen(true);
   };
@@ -681,9 +778,19 @@ const AdminDashboard = () => {
     }
   };
 
-  const handleEditStaff = (row) => {
+  const handleEditStaff = async (row) => {
     setSelectedStaff(row);
     setIsStaffViewOnly(false);
+    if (roles.length === 0 || departments.length === 0 || !roles.some(r => r.name === 'ADMIN')) {
+      try {
+        const [rls, depts] = await Promise.all([
+          api.get('/admin/roles').catch(() => ({ data: { data: [] } })),
+          api.get('/admin/departments').catch(() => ({ data: { data: [] } }))
+        ]);
+        if (rls.data?.data) setRoles(Array.isArray(rls.data.data) ? rls.data.data : []);
+        if (depts.data?.data) setDepartments(Array.isArray(depts.data.data) ? depts.data.data : []);
+      } catch (err) {}
+    }
     setStaffForm({
       name: row.name || '',
       countryCode: row.countryCode || '+91',
@@ -713,10 +820,11 @@ const AdminDashboard = () => {
   const handleOpenAddStaff = async () => {
     setSelectedStaff(null);
     setIsStaffViewOnly(false);
+    setShowStaffPin(false);
     setStaffErrors({});
     
-    // Fetch roles and departments if they are empty
-    if (roles.length === 0 || departments.length === 0) {
+    // Fetch roles and departments if they are empty or if ADMIN role is missing
+    if (roles.length === 0 || departments.length === 0 || !roles.some(r => r.name === 'ADMIN')) {
       try {
         const [rls, depts] = await Promise.all([
           api.get('/admin/roles').catch(() => ({ data: { data: [] } })),
@@ -773,12 +881,7 @@ const AdminDashboard = () => {
     setSelectedStaff(row);
     setIsStaffViewOnly(true);
     setShowStaffPin(false);
-    const isSuperAdmin = row.roleId?.name === 'SUPER_ADMIN';
-    const resolvedPin = isSuperAdmin
-      ? '123456'
-      : (row.rawPin && String(row.rawPin).length === 6 && row.rawPin !== '123456')
-        ? String(row.rawPin)
-        : (row.mobileNumber && row.mobileNumber.length >= 6 ? row.mobileNumber.slice(-6) : (row.rawPin || ''));
+    const resolvedPin = row.rawPin ? String(row.rawPin) : '';
     setStaffForm({
       name: row.name || '',
       countryCode: row.countryCode || '+91',
@@ -1022,7 +1125,7 @@ const AdminDashboard = () => {
           {/* Top Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-left">
             {(() => {
-              const doctorCount = staff.filter(s => s.roleId?.name === 'DOCTOR' || s.roleId?.name === 'DOCTOR_ADMIN').length;
+              const doctorCount = activeDoctors.length;
               const paidApps = todayAppointments.filter(a => {
                 const ps = a.billingStatus || a.paymentStatus || a?.workflow?.paymentState;
                 return ps === 'Paid' || ps === 'PAID';
@@ -1048,135 +1151,169 @@ const AdminDashboard = () => {
             ))}
           </div>
 
-          {/* 2-Column Live Operational Breakdown */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            
-            {/* Left Column: Today's Live OPD Consultation Queue Status */}
-            <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-5 shadow-card-soft space-y-4">
-              <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-                <div>
-                  <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-[#2F63F2]" />
-                    Today's OPD Queue Live Status
-                  </h3>
-                  <p className="text-[11px] text-[#6B7280]">Real-time outpatient consultation progress</p>
-                </div>
-                <span className="text-xs font-mono font-bold text-[#2F63F2] bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-lg">
-                  {todayAppointments.length} Total Visits
-                </span>
-              </div>
-
-              {/* Status Breakdown Bar */}
-              {(() => {
-                const waiting = todayAppointments.filter(a => ['Waiting', 'Scheduled'].includes(a.status || a.queueStatus)).length;
-                const inConsultation = todayAppointments.filter(a => ['In-Progress', 'In Consultation'].includes(a.status || a.queueStatus)).length;
-                const completed = todayAppointments.filter(a => a.status === 'Completed').length;
-                return (
-                  <div className="grid grid-cols-3 gap-3 font-mono text-center text-xs">
-                    <div className="p-3 bg-amber-50/70 border border-amber-100 rounded-xl space-y-0.5">
-                      <div className="text-[10px] font-bold text-amber-700 uppercase">Waiting</div>
-                      <div className="text-xl font-extrabold text-amber-900">{waiting}</div>
-                    </div>
-                    <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-xl space-y-0.5">
-                      <div className="text-[10px] font-bold text-blue-700 uppercase">In Progress</div>
-                      <div className="text-xl font-extrabold text-blue-900">{inConsultation}</div>
-                    </div>
-                    <div className="p-3 bg-emerald-50/70 border border-emerald-100 rounded-xl space-y-0.5">
-                      <div className="text-[10px] font-bold text-emerald-700 uppercase">Completed</div>
-                      <div className="text-xl font-extrabold text-emerald-900">{completed}</div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Recent Appointments Preview List */}
-              <div className="space-y-2 pt-1">
-                <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Recent Outpatient Entries</h4>
-                {todayAppointments.slice(0, 4).map((app, idx) => (
-                  <div key={app._id || idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+          {/* ========================================================
+              Live Operational Status Cards
+              - Non-IPD / IPD Un-enabled: 1 row, 2 columns (OPD Queue | Doctors & Clinical Roster)
+              - IPD Enabled: Row 1 (OPD Queue | IPD Queue), Row 2 (Bed Maintenance | Doctors & Clinical Roster)
+              ======================================================== */}
+          {(() => {
+            const opdQueueCard = (
+              <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-5 shadow-card-soft space-y-4 text-left flex flex-col justify-between h-full">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-100">
                     <div>
-                      <div className="font-bold text-slate-800">{app.patientId?.name || 'Patient'}</div>
-                      <div className="text-[10px] text-slate-500 font-mono">UHID: {app.patientId?.uhid || 'N/A'} | Doctor: {app.doctorId?.name || 'Assigned'}</div>
+                      <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-[#2F63F2]" />
+                        Today's OPD Queue Live Status
+                      </h3>
+                      <p className="text-[11px] text-[#6B7280]">Real-time outpatient consultation progress</p>
                     </div>
-                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border ${
-                      app.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
-                      app.status === 'In-Progress' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-100 text-slate-600 border-slate-200'
-                    }`}>
-                      {app.status || 'Scheduled'}
+                    <span className="text-xs font-mono font-bold text-[#2F63F2] bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-lg">
+                      {todayAppointments.length} Total Visits
                     </span>
                   </div>
-                ))}
-                {todayAppointments.length === 0 && (
-                  <div className="p-6 text-center text-slate-400 text-xs font-mono bg-slate-50 border border-dashed rounded-xl">
-                    No outpatient tokens generated for today yet.
-                  </div>
-                )}
-              </div>
-            </div>
 
-            {/* Right Column: Hospital Roster & Staff Overview */}
-            <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-5 shadow-card-soft space-y-4">
-              <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-                <div>
-                  <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2">
-                    <Stethoscope className="w-4 h-4 text-[#2F63F2]" />
-                    On-Duty Doctors & Clinical Roster
-                  </h3>
-                  <p className="text-[11px] text-[#6B7280]">Registered clinicians and workforce staff</p>
-                </div>
-                <Button onClick={() => setActiveTab('staff')} variant="outline" className="text-xs py-1 px-2.5 h-[30px]">
-                  View All ({staff.length})
-                </Button>
-              </div>
-
-              {/* Doctors Roster List */}
-              <div className="space-y-2">
-                {staff
-                  .filter(s => ['DOCTOR', 'DOCTOR_ADMIN'].includes(s.roleId?.name))
-                  .slice(0, 4)
-                  .map((doc, idx) => (
-                    <div key={doc._id || idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-teal-100 text-teal-700 font-bold flex items-center justify-center">
-                          {doc.name ? doc.name.charAt(0) : 'D'}
+                  {/* Status Breakdown Bar */}
+                  {(() => {
+                    const waiting = todayAppointments.filter(a => ['Waiting', 'Scheduled'].includes(a.status || a.queueStatus)).length;
+                    const inConsultation = todayAppointments.filter(a => ['In-Progress', 'In Consultation'].includes(a.status || a.queueStatus)).length;
+                    const completed = todayAppointments.filter(a => a.status === 'Completed').length;
+                    return (
+                      <div className="grid grid-cols-3 gap-3 font-mono text-center text-xs">
+                        <div className="p-3 bg-amber-50/70 border border-amber-100 rounded-xl space-y-0.5">
+                          <div className="text-[10px] font-bold text-amber-700 uppercase">Waiting</div>
+                          <div className="text-xl font-extrabold text-amber-900">{waiting}</div>
                         </div>
-                        <div>
-                          <div className="font-bold text-slate-800">{doc.name}</div>
-                          <div className="text-[10px] text-slate-500 font-mono">{doc.doctorProfile?.specialization || 'Consultant Doctor'}</div>
+                        <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-xl space-y-0.5">
+                          <div className="text-[10px] font-bold text-blue-700 uppercase">In Progress</div>
+                          <div className="text-xl font-extrabold text-blue-900">{inConsultation}</div>
+                        </div>
+                        <div className="p-3 bg-emerald-50/70 border border-emerald-100 rounded-xl space-y-0.5">
+                          <div className="text-[10px] font-bold text-emerald-700 uppercase">Completed</div>
+                          <div className="text-xl font-extrabold text-emerald-900">{completed}</div>
                         </div>
                       </div>
-                      <span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-100 px-2 py-0.5 rounded-lg flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse"></span>
-                        Active Doctor
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })()}
 
-                {staff.filter(s => ['DOCTOR', 'DOCTOR_ADMIN'].includes(s.roleId?.name)).length === 0 && (
-                  <div className="p-6 text-center text-slate-400 text-xs font-mono bg-slate-50 border border-dashed rounded-xl">
-                    No doctor staff members registered yet.
+                  {/* Recent Appointments Preview List */}
+                  <div className="space-y-2 pt-1">
+                    <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Recent Outpatient Entries</h4>
+                    {todayAppointments.slice(0, 2).map((app, idx) => (
+                      <div key={app._id || idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+                        <div>
+                          <div className="font-bold text-slate-800">{app.patientId?.name || 'Patient'}</div>
+                          <div className="text-[10px] text-slate-500 font-mono">UHID: {app.patientId?.uhid || 'N/A'} | Doctor: {app.doctorId?.name || 'Assigned'}</div>
+                        </div>
+                        <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border ${
+                          app.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                          app.status === 'In-Progress' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-100 text-slate-600 border-slate-200'
+                        }`}>
+                          {app.status || 'Scheduled'}
+                        </span>
+                      </div>
+                    ))}
+                    {todayAppointments.length === 0 && (
+                      <div className="p-6 text-center text-slate-400 text-xs font-mono bg-slate-50 border border-dashed rounded-xl">
+                        No outpatient tokens generated for today yet.
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-
-              {/* Total Registered Patients Banner */}
-              <div className="p-3.5 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-xl text-white flex items-center justify-between shadow-xs">
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-blue-100">Registered Patient Base</div>
-                  <div className="text-xl font-extrabold font-mono mt-0.5">{patients.length} Total Patients</div>
                 </div>
-                <Button 
-                  onClick={() => setActiveTab('patients')} 
-                  variant="secondary" 
-                  className="text-xs py-1.5 px-3 bg-white text-blue-700 hover:bg-blue-50 border-none font-bold"
-                >
-                  Manage Registry
-                </Button>
               </div>
+            );
 
-            </div>
+            const onDutyDoctorsCard = (
+              <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-5 shadow-card-soft space-y-4 text-left flex flex-col justify-between h-full">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center pb-2.5 border-b border-slate-100">
+                    <div>
+                      <h3 className="text-sm font-bold text-[#111827] flex items-center gap-2">
+                        <Stethoscope className="w-4 h-4 text-[#2F63F2]" />
+                        On-Duty Doctors & Clinical Roster
+                      </h3>
+                      <p className="text-[11px] text-[#6B7280] mt-0.5">Registered clinicians and workforce staff</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('staff')}
+                      className="text-xs font-bold text-[#111827] hover:text-[#2F63F2] uppercase tracking-wider transition-colors cursor-pointer"
+                    >
+                      VIEW ALL ({staff.length})
+                    </button>
+                  </div>
 
-          </div>
+                  {/* Doctors Roster List (first assigned doctor inside card, remaining seen via VIEW ALL button) */}
+                  <div className="space-y-2">
+                    {activeDoctors.slice(0, 1).map((doc, idx) => (
+                      <div key={doc._id || idx} className="p-3 bg-white border border-slate-200/90 rounded-2xl flex items-center justify-between text-xs transition-colors hover:bg-slate-50/50">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-[#ccfbf1] text-[#0f766e] font-bold flex items-center justify-center text-sm shrink-0">
+                            {doc.name ? doc.name.charAt(0) : 'D'}
+                          </div>
+                          <div className="space-y-0.5">
+                            <div className="font-bold text-slate-900 text-sm">{doc.name}</div>
+                            <div className="text-xs text-slate-400 font-normal">{doc.doctorProfile?.specialization || 'Consultant Doctor'}</div>
+                          </div>
+                        </div>
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-[#059669] bg-[#ecfdf5] border border-[#a7f3d0] shadow-2xs shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#10b981]"></span>
+                          Active Doctor
+                        </span>
+                      </div>
+                    ))}
+
+                    {activeDoctors.length === 0 && (
+                      <div className="p-4 text-center text-slate-400 text-xs font-mono bg-slate-50 border border-dashed rounded-xl">
+                        No doctor staff members registered yet.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Total Registered Patients Banner inside card */}
+                <div className="p-4 bg-gradient-to-r from-[#2F63F2] to-[#3B82F6] rounded-2xl text-white flex items-center justify-between gap-4 shadow-sm mt-3">
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-blue-100">REGISTERED PATIENT BASE</div>
+                    <div className="text-xl sm:text-2xl font-bold font-mono text-white mt-0.5">{patients.length} Total Patients</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('patients')}
+                    className="px-4 py-2 bg-white text-[#2F63F2] hover:bg-blue-50 font-bold text-xs uppercase tracking-wider rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
+                  >
+                    MANAGE REGISTRY
+                  </button>
+                </div>
+              </div>
+            );
+
+            if (isIpdEnabled) {
+              return (
+                <div className="space-y-5">
+                  {/* Row 1: Today's OPD Queue Live Status | Today's IPD Queue Live Status */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    {opdQueueCard}
+                    <TodayIpdQueueLiveStatus hospitalInfo={hospitalInfo || user?.hospital} isEnabled={isIpdEnabled} />
+                  </div>
+
+                  {/* Row 2: Today's Bed Maintenance Live Status | On-Duty Doctors & Clinical Roster */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    <TodayBedMaintenanceLiveStatus isEnabled={isIpdEnabled} />
+                    {onDutyDoctorsCard}
+                  </div>
+                </div>
+              );
+            }
+
+            {/* When IPD is un-enabled: 1 Row and 2 Columns with OPD Queue & Doctors Roster */}
+            return (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {opdQueueCard}
+                {onDutyDoctorsCard}
+              </div>
+            );
+          })()}
 
           {/* Quick Administrative Shortcuts */}
           <div className="bg-white border border-[#E5E7EB] rounded-[20px] p-5 shadow-card-soft space-y-3">
@@ -1287,11 +1424,11 @@ const AdminDashboard = () => {
           )}
 
           {/* Horizontal Sub-Tab Header */}
-          <div className="flex items-center gap-2 border-b border-[#E5E7EB] pb-2">
+          <div className="flex items-center gap-2 border-b border-[#E5E7EB] pb-2 overflow-x-auto scrollbar-none -mx-2 px-2 sm:mx-0 sm:px-0 pr-4 sm:pr-0">
             {isMultiBranchEnabled && (
               <button
                 onClick={() => setBranchSubTab('branches')}
-                className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-200 border flex items-center gap-2 ${
+                className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-200 border flex items-center gap-1.5 sm:gap-2 shrink-0 ${
                   branchSubTab === 'branches'
                     ? 'bg-[#2F63F2] text-white border-[#2F63F2] shadow-xs'
                     : 'bg-white text-[#6B7280] border-[#E5E7EB] hover:bg-slate-50 hover:text-[#111827]'
@@ -1303,7 +1440,7 @@ const AdminDashboard = () => {
             )}
             <button
               onClick={() => setBranchSubTab('departments')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-200 border flex items-center gap-2 ${
+              className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all duration-200 border flex items-center gap-1.5 sm:gap-2 shrink-0 mr-3 sm:mr-0 ${
                 branchSubTab === 'departments' || !isMultiBranchEnabled
                   ? 'bg-[#2F63F2] text-white border-[#2F63F2] shadow-xs'
                   : 'bg-white text-[#6B7280] border-[#E5E7EB] hover:bg-slate-50 hover:text-[#111827]'
@@ -1324,6 +1461,7 @@ const AdminDashboard = () => {
                   onClick={() => { setSelectedBranch(null); setIsBranchOpen(true); }} 
                   variant="primary" 
                   icon={Plus}
+                  className="w-full sm:w-auto justify-center"
                 >
                   Add Branch Location
                 </Button>
@@ -1356,6 +1494,7 @@ const AdminDashboard = () => {
                   onClick={() => { setSelectedDept(null); setIsDeptOpen(true); }} 
                   variant="primary" 
                   icon={Plus}
+                  className="w-full sm:w-auto justify-center"
                 >
                   Create Department Module
                 </Button>
@@ -1387,9 +1526,22 @@ const AdminDashboard = () => {
           subtitle="Configure charges for ECG, Lab tests, Ward check-ins, or diagnostic procedures"
           action={
             <Button 
-              onClick={() => { setSelectedService(null); setIsServiceOpen(true); }} 
+              onClick={() => { 
+                setSelectedService(null); 
+                setServiceForm({ 
+                  serviceType: '', 
+                  category: '', 
+                  name: '', 
+                  code: '', 
+                  price: 150, 
+                  description: '', 
+                  status: 'active' 
+                }); 
+                setIsServiceOpen(true); 
+              }} 
               variant="primary" 
               icon={Plus}
+              className="w-full sm:w-auto justify-center"
             >
               Add Service Item
             </Button>
@@ -1397,10 +1549,40 @@ const AdminDashboard = () => {
         >
           <Table
             headers={[
+              { 
+                key: 'serviceType', 
+                label: 'Service Type', 
+                render: (row) => {
+                  const type = row.serviceType || 'General';
+                  const cat = row.category;
+                  const lower = type.toLowerCase();
+                  const isLab = lower.includes('lab');
+                  const isRad = lower.includes('radio');
+                  const isIpd = lower.includes('ipd');
+                  const badgeColor = isLab 
+                    ? 'bg-purple-50 text-purple-700 border-purple-200' 
+                    : isRad 
+                    ? 'bg-amber-50 text-amber-700 border-amber-200' 
+                    : isIpd 
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                    : 'bg-blue-50 text-blue-700 border-blue-200';
+                  return (
+                    <div className="flex flex-col items-start gap-0.5">
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold border ${badgeColor}`}>
+                        {type}
+                      </span>
+                      {cat && cat !== 'General' && cat !== type && (
+                        <span className="text-[10px] text-slate-500 font-medium pl-0.5">
+                          {cat}
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
+              },
               { key: 'name', label: 'Service Name', sortable: true },
               { key: 'code', label: 'Service Code', render: (row) => <strong className="text-blue-600 font-mono">{row.code}</strong> },
               { key: 'price', label: 'Standard Price', render: (row) => <span className="font-mono font-bold">₹{row.price}</span> },
-              { key: 'description', label: 'Description' },
               { key: 'status', label: 'Status', isStatus: true }
             ]}
             data={services}
@@ -1408,6 +1590,7 @@ const AdminDashboard = () => {
               { label: 'Edit', icon: Edit, onClick: (row) => handleEditService(row) },
               { label: 'Delete', icon: Trash2, onClick: (row) => handleDeleteService(row) }
             ]}
+            actionsAlign="center"
             loading={loading}
           />
         </Card>
@@ -1455,7 +1638,7 @@ const AdminDashboard = () => {
           action={
             <Button 
               onClick={handleOpenAddStaff} 
-              variant="primary" 
+              variant="secondary" 
               icon={Plus} 
             >
               Add Staff Member
@@ -1466,13 +1649,14 @@ const AdminDashboard = () => {
           <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-4 border-b border-[#E5E7EB] no-scrollbar">
             {[
               { id: 'ALL', label: 'All Staff' },
+              { id: 'ADMIN', label: 'Admins' },
               { id: 'DOCTOR', label: 'Doctors' },
+              { id: 'DOCTOR_ADMIN', label: 'Doctor Admins' },
               { id: 'RECEPTIONIST', label: 'Receptionists' },
               { id: 'PHARMACIST', label: 'Pharmacists' },
               { id: 'NURSE', label: 'Nurses' },
               { id: 'LABORATORY', label: 'Lab Techs' },
-              { id: 'BILLING', label: 'Billing Cashiers' },
-              { id: 'DOCTOR_ADMIN', label: 'Admins' }
+              { id: 'BILLING', label: 'Billing Cashiers' }
             ].map(tabItem => (
               <button
                 key={tabItem.id}
@@ -1488,8 +1672,8 @@ const AdminDashboard = () => {
             ))}
           </div>
 
-          <div className="bg-white border border-[#E5E7EB] rounded-2xl p-4 flex flex-wrap items-center gap-4 shadow-xs mb-4">
-            <div className="flex-1 min-w-[200px] relative">
+          <div className="bg-white border border-[#E5E7EB] rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-4 shadow-xs mb-4">
+            <div className="w-full sm:flex-1 sm:min-w-[200px] relative">
               <input
                 type="text"
                 placeholder="Search by employee name, code, or mobile..."
@@ -1499,22 +1683,44 @@ const AdminDashboard = () => {
               />
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             </div>
-            <div className="min-w-[140px]">
-              <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="enterprise-input w-full py-2 text-xs">
-                <option value="">All Statuses</option>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
-            {branches.length > 0 && (
-              <div className="min-w-[140px]">
-                <select value={filterBranch} onChange={(e) => setFilterBranch(e.target.value)} className="enterprise-input w-full py-2 text-xs">
-                  <option value="">All Branches</option>
-                  {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+
+            {/* 1 Row, 3 Columns in Mobile View (All Statuses, All Branches, Clear Filters) */}
+            <div className={`grid ${branches.length > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-2 w-full sm:flex sm:items-center sm:gap-3 sm:w-auto`}>
+              <div className="w-full sm:w-[140px]">
+                <select 
+                  value={filterStatus} 
+                  onChange={(e) => setFilterStatus(e.target.value)} 
+                  className="enterprise-input w-full h-[38px] py-1.5 px-2 text-[11px] sm:text-xs bg-white text-slate-800 cursor-pointer font-medium"
+                >
+                  <option value="">All Statuses</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
                 </select>
               </div>
-            )}
-            <Button onClick={handleClearFilters} variant="secondary" className="py-2 px-4 !text-[11px]">Clear Filters</Button>
+
+              {branches.length > 0 && (
+                <div className="w-full sm:w-[140px]">
+                  <select 
+                    value={filterBranch} 
+                    onChange={(e) => setFilterBranch(e.target.value)} 
+                    className="enterprise-input w-full h-[38px] py-1.5 px-2 text-[11px] sm:text-xs bg-white text-slate-800 cursor-pointer font-medium truncate"
+                  >
+                    <option value="">All Branches</option>
+                    {branches.map(b => (
+                      <option key={b._id} value={b._id}>{b.name === 'Main Facility' ? defaultBranchDisplayName : b.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <Button 
+                onClick={handleClearFilters} 
+                variant="secondary" 
+                className="w-full sm:w-auto h-[38px] py-1.5 px-1.5 sm:px-4 !text-[10px] sm:!text-[11px] font-bold uppercase tracking-wider flex items-center justify-center whitespace-nowrap cursor-pointer shadow-xs"
+              >
+                Clear Filters
+              </Button>
+            </div>
           </div>
 
           <Table
@@ -1523,6 +1729,7 @@ const AdminDashboard = () => {
               { key: 'name', label: 'Member Name', sortable: true },
               { key: 'roleId.name', label: 'Role / Designation', render: (row) => (
                 <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
+                  row.roleId?.name === 'ADMIN' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
                   ['DOCTOR', 'DOCTOR_ADMIN'].includes(row.roleId?.name) ? 'bg-blue-50 text-blue-700 border border-blue-200' :
                   row.roleId?.name === 'RECEPTIONIST' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
                   row.roleId?.name === 'PHARMACIST' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
@@ -1530,7 +1737,7 @@ const AdminDashboard = () => {
                   row.roleId?.name === 'LABORATORY' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
                   'bg-slate-100 text-slate-700 border border-slate-200'
                 }`}>
-                  {row.roleId?.name?.replace('_', ' ')}
+                  {row.roleId?.name?.replace('_', ' ').toUpperCase()}
                 </span>
               )},
               { key: 'branchId.name', label: 'Branch / Dept', render: (row) => `${row.branchId?.name || 'Main'} ${row.departmentId?.name ? `/ ${row.departmentId.name}` : ''}` },
@@ -1600,7 +1807,26 @@ const AdminDashboard = () => {
               },
               { key: 'name', label: 'Patient Name', sortable: true },
               { key: 'mobileNumber', label: 'Mobile Number', render: (row) => <span>{row.countryCode || '+91'} {row.mobileNumber}</span> },
-              { key: 'age', label: 'Age / Gender', render: (row) => <span>{row.age} Yrs / {row.gender}</span> },
+              { 
+                key: 'age', 
+                label: 'Age / Gender', 
+                render: (row) => {
+                  const genderLetter = row.gender ? (row.gender.length === 1 ? row.gender.toUpperCase() : row.gender.charAt(0).toUpperCase()) : '';
+                  const ageGenderText = row.age ? `${row.age} yrs / ${genderLetter || row.gender}` : (genderLetter || '—');
+                  return (
+                    <div className="flex flex-col items-start gap-0.5 whitespace-nowrap">
+                      <span className="font-semibold text-slate-700 text-xs">{ageGenderText}</span>
+                      {row.bloodGroup && row.bloodGroup !== 'Unknown' && row.bloodGroup !== 'N/A' && row.bloodGroup !== '—' ? (
+                        <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight shadow-2xs">
+                          {row.bloodGroup}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 text-[10px] font-medium leading-tight">—</span>
+                      )}
+                    </div>
+                  );
+                }
+              },
               { key: 'bloodGroup', label: 'Blood Group', render: (row) => <span className="font-mono font-bold text-rose-600">{row.bloodGroup || 'O+'}</span> },
               { key: 'address', label: 'Place / Address', render: (row) => <span>{typeof row.address === 'string' ? row.address : (row.addresses?.[0]?.city || row.addresses?.[0]?.street || 'N/A')}</span> },
               { key: 'createdAt', label: 'Registration Date', render: (row) => <span className="font-mono text-slate-500">{new Date(row.createdAt || Date.now()).toLocaleDateString('en-GB')}</span> }
@@ -1641,6 +1867,19 @@ const AdminDashboard = () => {
         <Card 
           title="Staff Workforce Directory" 
           subtitle="Roster and login setups for Receptionists, Nurses, Pharmacy, Lab technicians, and Billing cashiers"
+          action={
+            <Button
+              onClick={() => {
+                setActiveTab('summary');
+                navigate('/admin/dashboard');
+              }}
+              variant="primary"
+              icon={ArrowLeft}
+              className="py-2 px-4 !text-xs font-bold tracking-wider shadow-sm"
+            >
+              DASHBOARD
+            </Button>
+          }
         >
           <div className="bg-white border border-[#E5E7EB] rounded-2xl p-4 flex flex-wrap items-center gap-4 shadow-xs mb-4">
             <div className="flex-1 min-w-[200px] relative">
@@ -1675,7 +1914,7 @@ const AdminDashboard = () => {
             headers={[
               { key: 'employeeCode', label: 'Employee Code', render: (row) => <span className="font-mono font-bold text-[#2F63F2]">{row.employeeCode}</span>, sortable: true },
               { key: 'name', label: 'Employee Name', sortable: true },
-              { key: 'roleId.name', label: 'Designation', render: (row) => row.roleId?.name?.replace('_', ' ') },
+              { key: 'roleId.name', label: 'Designation', render: (row) => row.roleId?.name?.replace('_', ' ').toUpperCase() },
               { key: 'branchId.name', label: 'Branch', render: (row) => (row.branchId?.name === 'Main Facility' || !row.branchId?.name || row.branchId?.name === 'Main') ? defaultBranchDisplayName : row.branchId.name },
               { key: 'mobileNumber', label: 'Mobile Phone', render: (row) => <span>{row.countryCode || '+91'} {row.mobileNumber}</span> },
               { key: 'status', label: 'Status', isStatus: true }
@@ -1705,8 +1944,8 @@ const AdminDashboard = () => {
           title="Staff & User Management" 
           subtitle="Complete roster of all hospital users — Doctors, Receptionists, Pharmacists, Nurses, Lab technicians, and Billing staff"
         >
-          <div className="bg-white border border-[#E5E7EB] rounded-2xl p-4 flex flex-wrap items-center gap-4 shadow-xs mb-4">
-            <div className="flex-1 min-w-[200px] relative">
+          <div className="bg-white border border-[#E5E7EB] rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-4 shadow-xs mb-4">
+            <div className="w-full sm:flex-1 sm:min-w-[200px] relative">
               <input
                 type="text"
                 placeholder="Search users by name, code or mobile..."
@@ -1716,27 +1955,48 @@ const AdminDashboard = () => {
               />
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             </div>
-            <div className="min-w-[140px]">
-              <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="enterprise-input w-full py-2 text-xs">
-                <option value="">All Statuses</option>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
+
+            {/* 1 Row, 3 Columns in Mobile View (All Statuses, All Branches, Clear Filters) */}
+            <div className={`grid ${branches.length > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-2 w-full sm:flex sm:items-center sm:gap-3 sm:w-auto`}>
+              <div className="w-full sm:w-[140px]">
+                <select 
+                  value={filterStatus} 
+                  onChange={(e) => setFilterStatus(e.target.value)} 
+                  className="enterprise-input w-full h-[38px] py-1.5 px-2 text-[11px] sm:text-xs bg-white text-slate-800 cursor-pointer font-medium"
+                >
+                  <option value="">All Statuses</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </div>
+
+              <div className="w-full sm:w-[140px]">
+                <select 
+                  value={filterBranch} 
+                  onChange={(e) => setFilterBranch(e.target.value)} 
+                  className="enterprise-input w-full h-[38px] py-1.5 px-2 text-[11px] sm:text-xs bg-white text-slate-800 cursor-pointer font-medium truncate"
+                >
+                  <option value="">All Branches</option>
+                  {branches.map(br => (
+                    <option key={br._id} value={br._id}>{br.name === 'Main Facility' ? defaultBranchDisplayName : br.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <Button 
+                onClick={handleClearFilters} 
+                variant="secondary" 
+                className="w-full sm:w-auto h-[38px] py-1.5 px-1.5 sm:px-4 !text-[10px] sm:!text-[11px] font-bold uppercase tracking-wider flex items-center justify-center whitespace-nowrap cursor-pointer shadow-xs"
+              >
+                Clear Filters
+              </Button>
             </div>
-            <div className="min-w-[140px]">
-              <select value={filterBranch} onChange={(e) => setFilterBranch(e.target.value)} className="enterprise-input w-full py-2 text-xs">
-                <option value="">All Branches</option>
-                {branches.map(br => (
-                  <option key={br._id} value={br._id}>{br.name === 'Main Facility' ? defaultBranchDisplayName : br.name}</option>
-                ))}
-              </select>
-            </div>
-            <Button onClick={handleClearFilters} variant="secondary" className="py-2 px-4 !text-[11px]">Clear Filters</Button>
+
             <Button 
               onClick={handleOpenAddStaff} 
               variant="primary" 
               icon={Plus} 
-              className="ml-auto py-2 px-4 !text-[11px]"
+              className="w-full sm:w-auto sm:ml-auto h-[38px] py-1.5 px-4 !text-[11px] justify-center"
             >
               Add Staff
             </Button>
@@ -1746,7 +2006,7 @@ const AdminDashboard = () => {
             headers={[
               { key: 'employeeCode', label: 'Employee Code', render: (row) => <span className="font-mono font-bold text-[#2F63F2]">{row.employeeCode}</span>, sortable: true },
               { key: 'name', label: 'Full Name', sortable: true },
-              { key: 'roleId.name', label: 'Role / Designation', render: (row) => row.roleId?.name?.replace('_', ' ') || 'N/A' },
+              { key: 'roleId.name', label: 'Role / Designation', render: (row) => row.roleId?.name?.replace('_', ' ').toUpperCase() || 'N/A' },
               { key: 'branchId.name', label: 'Branch', render: (row) => (row.branchId?.name === 'Main Facility' || !row.branchId?.name || row.branchId?.name === 'Main') ? defaultBranchDisplayName : row.branchId.name },
               { key: 'departmentId.name', label: 'Department', render: (row) => row.departmentId?.name || '—' },
               { key: 'mobileNumber', label: 'Mobile', render: (row) => <span>{row.countryCode || '+91'} {row.mobileNumber}</span> },
@@ -1773,65 +2033,235 @@ const AdminDashboard = () => {
           8. REPORTS WORKSPACE
           -------------------------------------------------------- */}
       {activeTab === 'reports' && (
-        <div className="space-y-6 text-left">
-          <div className="pb-3 border-b border-slate-200 text-left">
-            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <FileBarChart2 className="w-5 h-5 text-[#2F63F2]" />
-              Hospital Performance Reports & Analytics
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">Overview of monthly revenue channels, doctor consultancy counts, department performance, and operational trends.</p>
+        <div className="w-full space-y-6 text-left">
+          <div className="pb-3 border-b border-slate-200 text-left flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <FileBarChart2 className="w-5 h-5 text-[#2F63F2]" />
+                Hospital Performance Reports & Analytics
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">Overview of monthly revenue channels, doctor consultancy counts, department performance, and operational trends.</p>
+            </div>
+
+            {/* Common Date Filter */}
+            <div className="inline-flex items-center p-1 bg-slate-100/90 border border-slate-200/80 rounded-xl shadow-xs shrink-0 self-start sm:self-auto">
+              {[
+                { label: 'Today', value: 'today' },
+                { label: 'This Week', value: 'week' },
+                { label: 'This Month', value: 'month' },
+                { label: 'This Year', value: 'year' },
+              ].map(filter => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => handlePeriodChange(filter.value)}
+                  className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150 cursor-pointer ${
+                    reportPeriod === filter.value
+                      ? 'bg-[#2F63F2] text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
-            <Card title="Today's Performance Metrics">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-3xl text-left auto-rows-fr">
+            {/* 1. Performance Metrics */}
+            <Card 
+              className="w-full h-[270px] p-5 flex flex-col justify-start"
+              bodyClassName="flex-1 flex flex-col justify-start"
+              title={{
+                today: "Today's Performance Metrics",
+                week: "This Week's Performance Metrics",
+                month: "This Month's Performance Metrics",
+                year: "This Year's Performance Metrics"
+              }[reportPeriod] || "Performance Metrics"}
+            >
               {(() => {
-                const totalRegs = todayAppointments.length;
-                const dispensedCount = todayAppointments.filter(a => (a.prescriptions && a.prescriptions.length > 0) || a.pharmacyStatus === 'SENT' || a.pharmacyStatus === 'DISPENSING' || a.status === 'Sent to Pharmacy' || a.status === 'Completed').length;
-                const paidApps = todayAppointments.filter(a => {
-                  const st = a.billingStatus || a.paymentStatus || a.workflow?.paymentState;
-                  return st === 'Paid' || st === 'PAID';
-                });
-                const totalRevenue = paidApps.reduce((sum, a) => sum + (parseFloat(a.consultationFee) || 0), 0);
+                const metrics = performanceReports?.metrics || {
+                  totalRegs: todayAppointments.length,
+                  dispensedCount: todayAppointments.filter(a => (a.prescriptions && a.prescriptions.length > 0) || a.pharmacyStatus === 'SENT' || a.pharmacyStatus === 'DISPENSING' || a.status === 'Sent to Pharmacy' || a.status === 'Completed').length,
+                  invoicedRevenue: todayAppointments.filter(a => {
+                    const st = a.billingStatus || a.paymentStatus || a.workflow?.paymentState;
+                    return st === 'Paid' || st === 'PAID';
+                  }).reduce((sum, a) => sum + (parseFloat(a.consultationFee) || 0), 0),
+                  ipdCount: 0,
+                  completedConsultationsCount: todayAppointments.filter(a => 
+                    a.status === 'Completed' || 
+                    a.queueStatus === 'Completed' || 
+                    a.workflow?.consultationState === 'COMPLETED' || 
+                    a.workflow?.queueState === 'COMPLETED' ||
+                    Boolean(a.workflow?.timestamps?.completedAt)
+                  ).length,
+                  hasIpdModule: isIpdEnabled
+                };
+
+                const showIpd = Boolean(isIpdEnabled);
 
                 return (
-                  <div className="space-y-3 font-sans text-xs">
-                    <div className="flex justify-between py-2 border-b">
+                  <div className="space-y-1.5 font-sans text-xs flex-1 flex flex-col justify-start">
+                    <div className="flex items-center justify-between py-1 border-b border-slate-100">
                       <span className="font-semibold text-slate-500">OPD Registrations</span>
-                      <span className="font-mono font-bold text-slate-850">{totalRegs} Patient{totalRegs === 1 ? '' : 's'}</span>
+                      <span className="font-mono font-bold text-slate-850">
+                        {metrics.totalRegs || 0} Patient{(metrics.totalRegs || 0) === 1 ? '' : 's'}
+                      </span>
                     </div>
-                    <div className="flex justify-between py-2 border-b">
+                    <div className="flex items-center justify-between py-1 border-b border-slate-100">
                       <span className="font-semibold text-slate-500">Dispensed Prescriptions</span>
-                      <span className="font-mono font-bold text-slate-850">{dispensedCount} Form{dispensedCount === 1 ? '' : 's'}</span>
+                      <span className="font-mono font-bold text-slate-850">
+                        {metrics.dispensedCount || 0} Form{(metrics.dispensedCount || 0) === 1 ? '' : 's'}
+                      </span>
                     </div>
-                    <div className="flex justify-between py-2 border-b">
+                    <div className="flex items-center justify-between py-1 border-b border-slate-100">
                       <span className="font-semibold text-slate-500">Invoiced Revenue</span>
-                      <span className="font-mono font-bold text-emerald-600">₹{totalRevenue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      <span className="font-mono font-bold text-emerald-600">
+                        ₹{(metrics.invoicedRevenue || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    {showIpd && (
+                      <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                        <span className="font-semibold text-slate-500">IPD Admissions</span>
+                        <span className="font-mono font-bold text-slate-850">
+                          {metrics.ipdCount || 0} Patient{(metrics.ipdCount || 0) === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                      <span className="font-semibold text-slate-500">Completed Consultations</span>
+                      <span className="font-mono font-bold text-slate-850">
+                        {metrics.completedConsultationsCount || 0} Consultation{(metrics.completedConsultationsCount || 0) === 1 ? '' : 's'}
+                      </span>
                     </div>
                   </div>
                 );
               })()}
             </Card>
 
-            <Card title="Top Performing Departments">
-              <div className="space-y-3 font-sans text-xs">
-                {departments.map(d => (
-                  <div key={d._id} className="flex justify-between py-2 border-b">
-                    <span className="font-semibold text-slate-700">{d.name} ({d.code})</span>
-                    <span className="font-mono font-bold text-indigo-600">₹{d.consultationFee || 200} base fee</span>
-                  </div>
-                ))}
+            {/* 2. Department Performance */}
+            <Card 
+              className="w-full h-[270px] p-5 flex flex-col justify-start"
+              bodyClassName="flex-1 flex flex-col justify-start"
+              title="Top Performing Departments"
+            >
+              <div className="space-y-1.5 font-sans text-xs flex-1 flex flex-col max-h-[175px] overflow-y-auto pr-1">
+                {(() => {
+                  const rawList = (performanceReports?.departmentStats && performanceReports.departmentStats.length > 0)
+                    ? performanceReports.departmentStats
+                    : (departments && departments.length > 0)
+                    ? departments.map(d => {
+                        const stat = (performanceReports?.departmentStats || []).find(s => String(s._id) === String(d._id) || (s.code && d.code && s.code === d.code));
+                        return {
+                          _id: d._id,
+                          name: d.name,
+                          code: d.code,
+                          totalPatients: stat ? stat.totalPatients : 0
+                        };
+                      })
+                    : (performanceReports?.departmentStats || []);
+
+                  const list = [...rawList].sort((a, b) => (b.totalPatients || 0) - (a.totalPatients || 0));
+
+                  if (list.length === 0) {
+                    return <div className="py-2 text-slate-400 italic">No department records found</div>;
+                  }
+
+                  return list.map(d => (
+                    <div key={d._id} className="flex items-center justify-between py-1 border-b border-slate-100">
+                      <span className="font-semibold text-slate-700">{d.name} {d.code ? `(${d.code})` : ''}</span>
+                      <span className="font-mono font-bold text-slate-850">
+                        {d.totalPatients || 0} Patient{(d.totalPatients || 0) === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                  ));
+                })()}
               </div>
             </Card>
 
-            <Card title="Doctor Consultations Summary">
-              <div className="space-y-3 font-sans text-xs">
-                {staff.filter(s => ['DOCTOR', 'DOCTOR_ADMIN'].includes(s.roleId?.name)).map(doc => (
-                  <div key={doc._id} className="flex justify-between py-2 border-b">
-                    <span className="font-semibold text-slate-700">{doc.name}</span>
-                    <span className="font-mono font-bold text-[#2F63F2]">₹{doc.doctorProfile?.consultationFee || 300} / consult</span>
-                  </div>
-                ))}
+            {/* 3. Doctor Consultations Summary */}
+            <Card 
+              className="w-full h-[270px] p-5 flex flex-col justify-start"
+              bodyClassName="flex-1 flex flex-col justify-start"
+              title="Doctor Consultations Summary"
+            >
+              <div className="space-y-1.5 font-sans text-xs flex-1 flex flex-col max-h-[175px] overflow-y-auto pr-1">
+                {(() => {
+                  const rawList = (performanceReports?.doctorStats && performanceReports.doctorStats.length > 0)
+                    ? performanceReports.doctorStats
+                    : (staff && staff.length > 0)
+                    ? staff.filter(s => {
+                        const roleName = (typeof s.roleId === 'object' ? s.roleId?.name : s.role) || '';
+                        return ['DOCTOR', 'DOCTOR_ADMIN'].includes(roleName.toUpperCase()) || Boolean(s.doctorProfile?.specialization || s.doctorProfile?.qualification);
+                      }).map(doc => {
+                        const stat = (performanceReports?.doctorStats || []).find(s => String(s._id) === String(doc._id) || (s.name && doc.name && s.name.trim().toLowerCase() === doc.name.trim().toLowerCase()));
+                        const fallbackCount = todayAppointments.filter(a => {
+                          const docIdMatch = String(a.doctorId?._id || a.doctorId) === String(doc._id);
+                          const isComp = a.status === 'Completed' || a.queueStatus === 'Completed' || a.workflow?.consultationState === 'COMPLETED' || Boolean(a.workflow?.timestamps?.completedAt);
+                          return docIdMatch && isComp;
+                        }).length;
+                        return {
+                          _id: doc._id,
+                          name: doc.name,
+                          totalConsultations: stat ? stat.totalConsultations : fallbackCount
+                        };
+                      })
+                    : (performanceReports?.doctorStats || []);
+
+                  const list = [...rawList].sort((a, b) => (b.totalConsultations || 0) - (a.totalConsultations || 0));
+
+                  if (list.length === 0) {
+                    return <div className="py-2 text-slate-400 italic">No doctor records found</div>;
+                  }
+
+                  return list.map(doc => (
+                    <div key={doc._id} className="flex items-center justify-between py-1 border-b border-slate-100">
+                      <span className="font-semibold text-slate-700">{doc.name}</span>
+                      <span className="font-mono font-bold text-[#2F63F2]">
+                        {doc.totalConsultations || 0} Consultation{(doc.totalConsultations || 0) === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                  ));
+                })()}
               </div>
+            </Card>
+
+            {/* 4. Hospital Revenue Overview */}
+            <Card 
+              className="w-full h-[270px] p-5 flex flex-col justify-start"
+              bodyClassName="flex-1 flex flex-col justify-start"
+              title="Hospital Revenue Overview"
+            >
+              {(() => {
+                const revenue = performanceReports?.revenue || {
+                  totalBilled: 0,
+                  totalCollected: 0,
+                  pendingAmount: 0
+                };
+
+                return (
+                  <div className="space-y-1.5 font-sans text-xs flex-1 flex flex-col justify-start">
+                    <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                      <span className="font-semibold text-slate-500">Total Billed</span>
+                      <span className="font-mono font-bold text-slate-850">
+                        ₹{(revenue.totalBilled || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                      <span className="font-semibold text-slate-500">Total Collected</span>
+                      <span className="font-mono font-bold text-emerald-600">
+                        ₹{(revenue.totalCollected || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                      <span className="font-semibold text-slate-500">Pending Amount</span>
+                      <span className="font-mono font-bold text-amber-600">
+                        ₹{(revenue.pendingAmount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
             </Card>
           </div>
         </div>
@@ -2000,11 +2430,83 @@ const AdminDashboard = () => {
       {/* Add Service Modal */}
       <Modal isOpen={isServiceOpen} onClose={() => setIsServiceOpen(false)} title={selectedService ? "Modify Service Item" : "Add Service Item"}>
         <form onSubmit={handleSaveService} className="space-y-4 text-left">
-          <Input label="Service Name" placeholder="e.g. Pathological blood analysis" value={serviceForm.name} onChange={(e) => setServiceForm({ ...serviceForm, name: e.target.value })} required />
-          <Input label="Service Code" placeholder="e.g. LAB" value={serviceForm.code} onChange={(e) => setServiceForm({ ...serviceForm, code: e.target.value })} required />
-          <Input label="Standard Price (INR)" type="number" placeholder="150" value={serviceForm.price} onChange={(e) => setServiceForm({ ...serviceForm, price: parseFloat(e.target.value) || 150 })} required />
-          <Input label="Description" placeholder="Optional notes" value={serviceForm.description} onChange={(e) => setServiceForm({ ...serviceForm, description: e.target.value })} />
-          <Button type="submit" variant="primary" className="w-full">
+          {/* 1. Service Type First */}
+          <div className="flex flex-col gap-1.5 w-full">
+            <label className="text-[10px] font-semibold text-[#6B7280] uppercase tracking-wider pl-1">
+              Service Type <span className="text-[#EF4444]">*</span>
+            </label>
+            <select
+              className="enterprise-input w-full bg-white text-slate-800 cursor-pointer font-medium"
+              value={serviceForm.serviceType}
+              onChange={(e) => {
+                const newType = e.target.value;
+                setServiceForm({ ...serviceForm, serviceType: newType, category: newType });
+              }}
+              required
+            >
+              <option value="">{renderedServiceTypes.length === 0 ? "No Service Modules Enabled in Feature Flags" : "Select Service Type"}</option>
+              {renderedServiceTypes.map(t => (
+                <option key={t.id} value={t.id}>{t.label}</option>
+              ))}
+            </select>
+            {renderedServiceTypes.length === 0 && (
+              <p className="text-[10px] text-amber-600 bg-amber-50 p-2 rounded-lg border border-amber-200 mt-1">
+                ⚠️ Neither Laboratory nor Radiology is enabled for this hospital. Enable them under Super Admin → Feature Flags.
+              </p>
+            )}
+          </div>
+
+          {/* 2. Service Name Second */}
+          <Input 
+            label="Service Name" 
+            placeholder={serviceForm.serviceType ? serviceNamePlaceholder : "Select Service Type first"} 
+            value={serviceForm.name} 
+            onKeyDown={(e) => {
+              if (/^[0-9]$/.test(e.key)) {
+                e.preventDefault();
+              }
+            }}
+            onChange={(e) => setServiceForm({ ...serviceForm, name: formatWordCapitalizedNoNumbers(e.target.value) })} 
+            disabled={!serviceForm.serviceType}
+            required 
+          />
+
+          {/* 3. Service Code Third */}
+          <Input 
+            label="Service Code" 
+            placeholder={serviceCodePlaceholder} 
+            value={serviceForm.code} 
+            onChange={(e) => setServiceForm({ ...serviceForm, code: e.target.value.toUpperCase() })} 
+            required 
+          />
+
+          {/* 4. Price (₹) Fourth */}
+          <Input 
+            label="Price (₹)" 
+            type="number" 
+            placeholder="Enter Service Price" 
+            value={serviceForm.price} 
+            onChange={(e) => setServiceForm({ ...serviceForm, price: parseFloat(e.target.value) || 0 })} 
+            required 
+          />
+
+          {/* 5. Availability Status Fifth */}
+          <div className="flex flex-col gap-1.5 w-full">
+            <label className="text-[10px] font-semibold text-[#6B7280] uppercase tracking-wider pl-1">
+              Availability Status <span className="text-[#EF4444]">*</span>
+            </label>
+            <select
+              className="enterprise-input w-full bg-white text-slate-800 cursor-pointer font-medium"
+              value={serviceForm.status || 'active'}
+              onChange={(e) => setServiceForm({ ...serviceForm, status: e.target.value })}
+              required
+            >
+              <option value="active">Active (Available in Doctor Consultation)</option>
+              <option value="inactive">Inactive (Disabled / Hidden)</option>
+            </select>
+          </div>
+
+          <Button type="submit" variant="primary" className="w-full uppercase font-bold tracking-wider">
             {selectedService ? "Save Changes" : "Add Service"}
           </Button>
         </form>
@@ -2012,7 +2514,7 @@ const AdminDashboard = () => {
 
       {/* Register / Edit / View Staff Modal */}
       <Modal isOpen={isStaffOpen} onClose={() => setIsStaffOpen(false)} title={isStaffViewOnly ? "View Staff Employee Details" : selectedStaff ? "Modify Staff Employee Details" : "Register Hospital Employee"} size="lg">
-        <form onSubmit={handleSaveStaff} className="space-y-4 text-left">
+        <form onSubmit={handleSaveStaff} className="space-y-4 text-left" autoComplete="off">
           <Input 
             label="Employee Full Name" 
             placeholder="Dr. Rajesh Patel" 
@@ -2027,51 +2529,62 @@ const AdminDashboard = () => {
             disabled={isStaffViewOnly}
             error={staffErrors.name} 
           />
-          <div className="grid grid-cols-2 gap-4">
-            <MobileNumber 
-              label="Mobile Number" 
-              placeholder="10 digit number" 
-              countryValue={staffForm.countryCode || '+91'}
-              onCountryChange={(cc) => setStaffForm({ ...staffForm, countryCode: cc })}
-              numberValue={staffForm.mobileNumber}
-              onNumberChange={(num) => {
-                setStaffForm({ ...staffForm, mobileNumber: num });
-                if (staffErrors.mobileNumber) setStaffErrors(prev => ({ ...prev, mobileNumber: undefined }));
-              }}
-              required
-              disabled={isStaffViewOnly}
-              error={staffErrors.mobileNumber || staffMobileVal.error}
-            />
-            <div className="flex flex-col gap-1.5 text-left">
+          <div className="grid grid-cols-2 gap-4 items-stretch">
+            <div className="flex flex-col justify-between h-full">
+              <MobileNumber 
+                label="Mobile Number" 
+                placeholder="10 digit number" 
+                countryValue={staffForm.countryCode || '+91'}
+                onCountryChange={(cc) => setStaffForm({ ...staffForm, countryCode: cc })}
+                numberValue={staffForm.mobileNumber}
+                onNumberChange={(num) => {
+                  setStaffForm({ ...staffForm, mobileNumber: num });
+                  if (staffErrors.mobileNumber) setStaffErrors(prev => ({ ...prev, mobileNumber: undefined }));
+                }}
+                required
+                disabled={isStaffViewOnly}
+                error={staffErrors.mobileNumber || staffMobileVal.error}
+                className="h-full flex flex-col justify-between"
+              />
+            </div>
+            <div className="flex flex-col justify-between h-full text-left">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1 flex items-center gap-1.5">
-                  <Lock className="w-3.5 h-3.5 text-[#2F63F2]" />
+                <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1 flex items-center gap-1">
+                  <Lock className="w-3 h-3 text-[#2F63F2]" />
                   <span>Security PIN (6 Digits)</span>
                 </label>
                 <button
                   type="button"
                   onClick={() => setShowStaffPin(!showStaffPin)}
-                  className="text-[11px] font-semibold text-slate-500 hover:text-[#2F63F2] flex items-center gap-1 transition-colors cursor-pointer pr-1"
+                  className="text-[10px] sm:text-[11px] font-semibold text-slate-500 hover:text-[#2F63F2] flex items-center gap-1 transition-colors cursor-pointer pr-1 shrink-0"
                 >
                   {showStaffPin ? (
                     <>
                       <EyeOff className="w-3.5 h-3.5 text-slate-400" />
-                      <span>Hide PIN</span>
+                      <span className="hidden min-[380px]:inline">Hide PIN</span>
                     </>
                   ) : (
                     <>
                       <Eye className="w-3.5 h-3.5 text-slate-400" />
-                      <span>Show PIN</span>
+                      <span className="hidden min-[380px]:inline">Show PIN</span>
                     </>
                   )}
                 </button>
               </div>
-              <div className="relative">
+              <div className="relative mt-auto">
                 <input
                   type={showStaffPin ? 'text' : 'password'}
+                  name="staff_security_pin"
+                  id="staff_security_pin"
+                  autoComplete="new-password"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck="false"
+                  data-lpignore="true"
+                  data-form-type="other"
                   placeholder="e.g. 123456"
                   maxLength={6}
-                  value={isStaffViewOnly ? (showStaffPin ? (staffForm.pin || '—') : (staffForm.pin || '••••••')) : staffForm.pin}
+                  value={isStaffViewOnly ? (showStaffPin ? (staffForm.pin || '—') : (staffForm.pin ? '••••••' : '—')) : (staffForm.pin || '')}
                   onChange={(e) => {
                     if (!selectedStaff || !isStaffViewOnly) {
                       const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
@@ -2080,18 +2593,18 @@ const AdminDashboard = () => {
                     }
                   }}
                   disabled={isStaffViewOnly || (!!selectedStaff && !isStaffViewOnly)}
-                  className={`enterprise-input w-full font-mono tracking-wider ${staffErrors.pin ? 'border-[#EF4444] focus:ring-[#EF4444]/10 focus:border-[#EF4444]' : ''} ${isStaffViewOnly ? 'bg-slate-50 text-slate-700' : ''}`}
+                  className={`enterprise-input h-[42px] w-full font-mono tracking-wider ${staffErrors.pin ? 'border-[#EF4444] focus:ring-[#EF4444]/10 focus:border-[#EF4444]' : ''} ${isStaffViewOnly ? 'bg-slate-50 text-slate-700' : ''}`}
                 />
               </div>
               {staffErrors.pin && <span className="text-xs text-[#EF4444] pl-1 mt-0.5">{staffErrors.pin}</span>}
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Role <span className="text-[#EF4444]">*</span></label>
+          <div className="grid grid-cols-3 gap-4 items-stretch">
+            <div className="flex flex-col justify-between h-full">
+              <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Role <span className="text-[#EF4444]">*</span></label>
               <select 
-                className={`enterprise-input ${staffErrors.roleId ? 'border-[#EF4444] focus:ring-[#EF4444]/10 focus:border-[#EF4444]' : ''}`}
+                className={`enterprise-input h-[42px] mt-auto ${staffErrors.roleId ? 'border-[#EF4444] focus:ring-[#EF4444]/10 focus:border-[#EF4444]' : ''}`}
                 value={staffForm.roleId} 
                 onChange={(e) => {
                   setStaffForm({ ...staffForm, roleId: e.target.value });
@@ -2101,22 +2614,31 @@ const AdminDashboard = () => {
                 disabled={isStaffViewOnly}
               >
                 <option value="">Select Role</option>
-                {roles.filter(r => r.name !== 'SUPER_ADMIN').map(r => (
-                  <option key={r._id} value={r._id}>{r.name?.replace('_', ' ')}</option>
-                ))}
+                {roles
+                  .filter(r => r.name !== 'SUPER_ADMIN')
+                  .sort((a, b) => {
+                    const nameA = (a.name || '').replace('_', ' ').toUpperCase();
+                    const nameB = (b.name || '').replace('_', ' ').toUpperCase();
+                    return nameA.localeCompare(nameB);
+                  })
+                  .map(r => (
+                    <option key={r._id} value={r._id}>
+                      {r.name?.replace('_', ' ').toUpperCase()}
+                    </option>
+                  ))}
               </select>
               {staffErrors.roleId && <span className="text-xs text-[#EF4444] pl-1 mt-0.5">{staffErrors.roleId}</span>}
             </div>
             
             {isMultiBranchEnabled ? (
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col justify-between h-full">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Branch Location <span className="text-[#EF4444]">*</span></label>
+                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Branch Location <span className="text-[#EF4444]">*</span></label>
                   {!isStaffViewOnly && (
                     <button
                       type="button"
                       onClick={handleOpenQuickAddBranch}
-                      className="p-1 bg-blue-50 hover:bg-blue-100 text-[#2F63F2] rounded-md flex items-center justify-center transition-colors cursor-pointer"
+                      className="p-1 bg-blue-50 hover:bg-blue-100 text-[#2F63F2] rounded-md flex items-center justify-center transition-colors cursor-pointer shrink-0"
                       title="Add Branch"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -2124,7 +2646,7 @@ const AdminDashboard = () => {
                   )}
                 </div>
                 <select 
-                  className={`enterprise-input ${staffErrors.branchId ? 'border-[#EF4444] focus:ring-[#EF4444]/10 focus:border-[#EF4444]' : ''}`}
+                  className={`enterprise-input h-[42px] mt-auto ${staffErrors.branchId ? 'border-[#EF4444] focus:ring-[#EF4444]/10 focus:border-[#EF4444]' : ''}`}
                   value={staffForm.branchId} 
                   onChange={(e) => {
                     setStaffForm({ ...staffForm, branchId: e.target.value });
@@ -2139,27 +2661,27 @@ const AdminDashboard = () => {
                 {staffErrors.branchId && <span className="text-xs text-[#EF4444] pl-1 mt-0.5">{staffErrors.branchId}</span>}
               </div>
             ) : (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Branch Location</label>
-                <input type="text" className="enterprise-input bg-slate-50 text-slate-700 font-semibold" value={defaultBranchDisplayName} disabled />
+              <div className="flex flex-col justify-between h-full">
+                <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Branch Location</label>
+                <input type="text" className="enterprise-input h-[42px] mt-auto bg-slate-50 text-slate-700 font-semibold" value={defaultBranchDisplayName} disabled />
               </div>
             )}
 
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col justify-between h-full">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Department</label>
+                <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Department</label>
                 {!isStaffViewOnly && (
                   <button
                     type="button"
                     onClick={handleOpenQuickAddDept}
-                    className="p-1 bg-blue-50 hover:bg-blue-100 text-[#2F63F2] rounded-md flex items-center justify-center transition-colors cursor-pointer"
+                    className="p-1 bg-blue-50 hover:bg-blue-100 text-[#2F63F2] rounded-md flex items-center justify-center transition-colors cursor-pointer shrink-0"
                     title="Add Department"
                   >
                     <Plus className="w-3.5 h-3.5" />
                   </button>
                 )}
               </div>
-              <select className="enterprise-input" value={staffForm.departmentId} onChange={(e) => setStaffForm({ ...staffForm, departmentId: e.target.value })} disabled={isStaffViewOnly}>
+              <select className="enterprise-input h-[42px] mt-auto" value={staffForm.departmentId} onChange={(e) => setStaffForm({ ...staffForm, departmentId: e.target.value })} disabled={isStaffViewOnly}>
                 <option value="">Select Department (Optional)</option>
                 {departments.map(d => (
                   <option key={d._id} value={d._id}>{d.name}</option>
@@ -2292,8 +2814,16 @@ const AdminDashboard = () => {
 
       {/* Reset Security PIN Modal */}
       <Modal isOpen={isResetPinOpen} onClose={() => setIsResetPinOpen(false)} title={`Reset Security PIN: ${selectedStaff?.name}`}>
-        <form onSubmit={handleResetPin} className="space-y-4 text-left">
-          <Input label="New 4-Digit Security PIN" placeholder="e.g. 4321" maxLength={4} value={resetPinValue} onChange={(e) => setResetPinValue(e.target.value.replace(/[^0-9]/g, ''))} required />
+        <form onSubmit={handleResetPin} className="space-y-4 text-left" autoComplete="off">
+          <Input 
+            label="New 6-Digit Security PIN" 
+            placeholder="e.g. 123456" 
+            maxLength={6} 
+            value={resetPinValue} 
+            onChange={(e) => setResetPinValue(e.target.value.replace(/[^0-9]/g, ''))} 
+            autoComplete="new-password"
+            required 
+          />
           <Button type="submit" variant="danger" className="w-full">Reset PIN</Button>
         </form>
       </Modal>
@@ -2414,16 +2944,30 @@ const AdminDashboard = () => {
       <Modal isOpen={isBookOpen} onClose={() => setIsBookOpen(false)} title="Schedule Consultation Appointment" size="lg">
         <form onSubmit={handleBookingSubmit} className="space-y-4 text-left">
           {selectedPatientForBooking && (
-            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between shadow-xs">
-              <div className="space-y-0.5">
-                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Patient Details</div>
-                <div className="text-sm font-bold text-slate-800">{selectedPatientForBooking.name}</div>
-                <div className="text-xs text-slate-500 font-mono">
-                  UHID: <span className="text-[#2F63F2] font-semibold">{selectedPatientForBooking.uhid}</span>
-                  {selectedPatientForBooking.mobileNumber && ` • Phone: ${selectedPatientForBooking.countryCode || '+91'} ${selectedPatientForBooking.mobileNumber}`}
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl shadow-xs sm:flex sm:items-center sm:justify-between">
+              <div className="space-y-1 sm:space-y-0.5 flex-1 min-w-0">
+                <div className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">Patient Details</div>
+                <div className="flex items-center justify-between gap-2 sm:block">
+                  <div className="text-sm font-bold text-slate-800 truncate" title={selectedPatientForBooking.name}>
+                    {selectedPatientForBooking.name}
+                  </div>
+                  <span className="sm:hidden px-2.5 py-1 text-xs font-semibold bg-blue-50 text-blue-700 rounded-lg border border-blue-100 whitespace-nowrap shrink-0">
+                    {selectedPatientForBooking.gender || 'N/A'} {selectedPatientForBooking.age ? `/ ${selectedPatientForBooking.age} Yrs` : ''}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-500 font-mono flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span className="whitespace-nowrap">
+                    UHID: <span className="text-[#2F63F2] font-semibold">{selectedPatientForBooking.uhid}</span>
+                  </span>
+                  {selectedPatientForBooking.mobileNumber && (
+                    <span className="whitespace-nowrap flex items-center gap-1.5">
+                      <span className="text-slate-300">•</span>
+                      <span>Phone: <span className="text-slate-700 font-medium">{selectedPatientForBooking.countryCode || '+91'} {selectedPatientForBooking.mobileNumber}</span></span>
+                    </span>
+                  )}
                 </div>
               </div>
-              <span className="px-3 py-1.5 text-xs font-semibold bg-blue-50 text-blue-700 rounded-lg border border-blue-100">
+              <span className="hidden sm:inline-flex px-3 py-1.5 text-xs font-semibold bg-blue-50 text-blue-700 rounded-lg border border-blue-100 whitespace-nowrap shrink-0 ml-3">
                 {selectedPatientForBooking.gender || 'N/A'} {selectedPatientForBooking.age ? `/ ${selectedPatientForBooking.age} Yrs` : ''}
               </span>
             </div>

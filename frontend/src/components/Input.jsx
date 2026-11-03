@@ -85,7 +85,7 @@ const Input = forwardRef(({
           {typeof label === 'string' ? label.replace(/\s*\*+$/, '') : label} {required && <span className="text-[#EF4444]">*</span>}
         </label>
       )}
-      <div className="relative flex items-center">
+      <div className="relative flex items-center mt-auto">
         {Icon && (
           <div className="absolute left-3.5 text-[#6B7280] pointer-events-none">
             {React.isValidElement(Icon) ? Icon : <Icon className="w-5 h-5" />}

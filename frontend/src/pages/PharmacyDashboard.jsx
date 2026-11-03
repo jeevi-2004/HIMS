@@ -1,3 +1,101 @@
+
+export const normalizeFoodTiming = (val) => {
+  if (!val) return 'After Food';
+  const str = String(val).trim().toLowerCase();
+  if (str.includes('before') || str === 'bf' || str.startsWith('bf') || str === 'ac' || str.includes('empty') || str.includes('fasting')) {
+    return 'Before Food';
+  }
+  if (str.includes('with') || str === 'wf' || str.startsWith('wf') || str === 'cc' || str.includes('during')) {
+    return 'With Food';
+  }
+  if (str.includes('after') || str === 'af' || str.startsWith('af') || str === 'pc') {
+    return 'After Food';
+  }
+  return 'After Food';
+};
+
+
+export const formatIpdOrderForWorkspace = (order, currentUser) => {
+  if (!order) return null;
+  const patient = order.patientId && typeof order.patientId === 'object' ? order.patientId : {};
+  const prescriptions = Array.isArray(order.prescriptions) ? order.prescriptions : [];
+
+  const items = prescriptions.map((p, idx) => {
+    const doseStr = p.dose || p.dosage || '';
+    const parts = doseStr.split('-');
+    const m = parts[0] || (p.morning !== undefined && p.morning !== null ? String(p.morning) : '1');
+    const a = parts[1] || (p.afternoon !== undefined && p.afternoon !== null ? String(p.afternoon) : '0');
+    const n = parts[2] || (p.night !== undefined && p.night !== null ? String(p.night) : '1');
+
+    return {
+      _id: p._id || `ipd_item_${idx}`,
+      medicineName: p.medicineName || p.name || 'Medicine',
+      name: p.medicineName || p.name || 'Medicine',
+      dosage: doseStr || `${m}-${a}-${n}`,
+      morning: m,
+      afternoon: a,
+      night: n,
+      foodTiming: normalizeFoodTiming(p.instructions || p.foodTiming),
+      duration: p.duration || 'N/A',
+      quantity: p.quantity !== undefined ? p.quantity : 1,
+      substituteMedicine: p.substituteMedicine || '',
+      pharmacistNotes: p.pharmacistNotes || '',
+      dispensingStatus: p.pharmacyStatus === 'Dispensed' ? 'Dispensed' : 'Pending',
+      rawIpdMed: p
+    };
+  });
+
+  const rawSentDate = order.reviewDate || order.createdAt || order.admissionDate;
+
+  return {
+    _id: order._id,
+    isIpd: true,
+    admissionId: order.admissionId,
+    reviewId: order.reviewId,
+    tokenNumber: order.admissionNumber || order.ipdNo || 'N/A',
+    status: order.status || (prescriptions.every(p => p.pharmacyStatus === 'Dispensed') ? 'Dispensed' : 'Pending'),
+    createdAt: rawSentDate,
+    date: rawSentDate,
+    patientId: {
+      _id: patient._id || order.patientId,
+      name: patient.name || order.patientName || 'N/A',
+      uhid: patient.uhid || order.uhid || 'N/A',
+      age: patient.age || order.age,
+      gender: patient.gender || order.gender,
+      bloodGroup: patient.bloodGroup || order.bloodGroup || '',
+      mobileNumber: patient.mobileNumber || order.mobileNumber || 'N/A',
+      allergies: patient.allergies || []
+    },
+    doctorId: {
+      _id: order.doctorId,
+      name: order.doctorName || 'Attending Physician'
+    },
+    consultationId: {
+      _id: order.reviewId || order.admissionId,
+      diagnosis: order.diagnosis || order.chiefComplaints || 'Inpatient Clinical Care',
+      clinicalNotes: order.treatmentPlan || order.chiefComplaints || '',
+      tokenNumber: order.admissionNumber || order.ipdNo || 'N/A',
+      createdAt: rawSentDate
+    },
+    items,
+    generalRemarks: order.pharmacistNotes || '',
+    deliveredBy: currentUser?.name || 'Pharmacist',
+    counselingChecklist: {
+      dosageExplained: false,
+      foodTimingExplained: false,
+      durationExplained: false
+    },
+    rawOrder: order
+  };
+};
+
+export const formatFoodTimingDisplay = (val) => {
+  const norm = normalizeFoodTiming(val);
+  if (norm === 'Before Food') return 'BF - Before Food';
+  if (norm === 'With Food') return 'WF - With Food';
+  return 'AF - After Food';
+};
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, useParams, useNavigate, useLocation } from 'react-router-dom';
@@ -13,8 +111,14 @@ import {
   Pill, Printer, ClipboardList, FileText, Eye, 
   AlertTriangle, ArrowLeft, Clock, Search, Filter, 
   RotateCcw, PackageCheck, Archive, Plus, Building2,
-  FileBarChart2, Settings, ShoppingCart
+  FileBarChart2, Settings, ShoppingCart, Receipt,
+  Bed, Bell, LayoutGrid, CheckCircle2
 } from 'lucide-react';
+import { ROUTES } from '../constants/routes';
+import ipdService from '../services/ipd/ipdService';
+import workflowRealtimeService from '../services/workflowRealtimeService';
+import { isFeatureModuleEnabled } from '../utils/featureUtils';
+import BillingSummaryModal from '../components/BillingSummaryModal';
 
 const PharmacyDashboard = () => {
   const queryClient = useQueryClient();
@@ -22,6 +126,8 @@ const PharmacyDashboard = () => {
   const location = useLocation();
   const { user } = useAuth();
   const isPharmacist = user?.role === 'PHARMACIST' || user?.role === 'SUPER_ADMIN' || user?.role === 'DOCTOR_ADMIN';
+  const isBillingEnabled = Boolean(isFeatureModuleEnabled(user?.hospital || user, 'Billing'));
+  const [selectedBillingPrescription, setSelectedBillingPrescription] = useState(null);
 
   const { prescriptionId: routePrescriptionId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -31,6 +137,8 @@ const PharmacyDashboard = () => {
   const activeTab = useMemo(() => {
     if (queryTab) return queryTab;
     const path = location.pathname;
+    if (path === '/pharmacy/ipd-dispense' || path.includes('/pharmacy/ipd-dispense/queue')) return 'ipd-queue';
+    if (path.includes('/pharmacy/ipd-dispense/history')) return 'ipd-history';
     if (path.includes('/pharmacy/dispense/history')) return 'history';
     if (path.includes('/pharmacy/dispense/queue') || path === '/pharmacy/dispense') return 'queue';
     if (path.includes('/pharmacy/medicine-master')) return 'medicines';
@@ -48,8 +156,16 @@ const PharmacyDashboard = () => {
 
   const prescriptionId = routePrescriptionId || queryPrescriptionId;
 
-  // Dispensing workflow status check
+  // Dispensing workflow status checks
   const isDispensingModule = activeTab === 'queue' || activeTab === 'history';
+  const isIpdDispenseModule = activeTab === 'ipd-queue' || activeTab === 'ipd-history';
+
+  // Dashboard OPD / IPD Mode Switcher
+  const [dashboardMode, setDashboardMode] = useState('opd'); // 'opd' | 'ipd'
+  const [selectedIpdOrder, setSelectedIpdOrder] = useState(null);
+  const [ipdPharmacistNotes, setIpdPharmacistNotes] = useState('');
+  const [isIpdDispensing, setIsIpdDispensing] = useState(false);
+  const [selectedWardFilter, setSelectedWardFilter] = useState('');
 
   const [loadingPrescriptionId, setLoadingPrescriptionId] = useState(null);
 
@@ -74,7 +190,7 @@ const PharmacyDashboard = () => {
   const [isMedModalOpen, setIsMedModalOpen] = useState(false);
   const [medForm, setMedForm] = useState({ name: '', category: 'Analgesics', unitPrice: '', rackNo: '' });
 
-  // 1. Fetch Prescriptions Queue / History
+  // 1. Fetch Prescriptions Queue / History (OPD)
   const { data: prescriptions, isLoading: prescriptionsLoading } = useQuery({
     queryKey: ['prescriptions', activeTab],
     queryFn: async () => {
@@ -85,16 +201,116 @@ const PharmacyDashboard = () => {
     enabled: activeTab === 'queue' || activeTab === 'history' || activeTab === 'dashboard'
   });
 
-  // 2. Fetch Single Prescription Details (When in Dispensing Workspace)
+  // 1A. Fetch OPD Pharmacy Real-Time Stats (Pending, Dispensing, Dispensed Today)
+  const { data: opdStats, refetch: refetchOpdStats } = useQuery({
+    queryKey: ['opdPharmacyStats'],
+    queryFn: async () => {
+      const now = new Date();
+      const localDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const res = await api.get(`/operations/pharmacy/stats?today=${localDateStr}&timezoneOffset=${now.getTimezoneOffset()}`);
+      return res.data?.data || null;
+    },
+    refetchInterval: 15000,
+    staleTime: 5000
+  });
+
+  // 1B. Fetch IPD Prescriptions Queue / History
+  const { data: ipdPrescriptions = [], isLoading: ipdPrescriptionsLoading, refetch: refetchIpdPrescriptions } = useQuery({
+    queryKey: ['ipdPrescriptions', activeTab, dashboardMode],
+    queryFn: async () => {
+      const filterParam = activeTab === 'ipd-history' ? 'history' : 'queue';
+      const res = await ipdService.getPrescriptionQueue({ filter: filterParam });
+      return res.data || [];
+    },
+    enabled: activeTab === 'ipd-queue' || activeTab === 'ipd-history' || activeTab === 'dashboard'
+  });
+
+  // 1C. Active IPD Pending summary count for notification button
+  const { data: ipdPendingList = [] } = useQuery({
+    queryKey: ['ipdPendingListNotification'],
+    queryFn: async () => {
+      const res = await ipdService.getPrescriptionQueue({ filter: 'queue' });
+      return res.data || [];
+    },
+    refetchInterval: 5000
+  });
+
+  // 1D. IPD History for dispensedToday count
+  const { data: ipdHistoryList = [] } = useQuery({
+    queryKey: ['ipdHistoryListSummary'],
+    queryFn: async () => {
+      const res = await ipdService.getPrescriptionQueue({ filter: 'history' });
+      return res.data || [];
+    },
+    refetchInterval: 10000,
+    enabled: true
+  });
+
+  // Subscribe to real-time workflow events for instant IPD prescription updates
+  useEffect(() => {
+    const unsubscribe = workflowRealtimeService.subscribe((evt) => {
+      queryClient.invalidateQueries(['ipdPendingListNotification']);
+      queryClient.invalidateQueries(['ipdHistoryListSummary']);
+      queryClient.invalidateQueries(['ipdPrescriptionQueue']);
+    });
+    return () => unsubscribe();
+  }, [queryClient]);
+
+  // 2. Fetch Single Prescription Details (When in Dispensing Workspace for OPD or IPD)
+  const isIpdPrescription = searchParams.get('type') === 'ipd' || (prescriptionId && String(prescriptionId).includes('_'));
+
   const { data: prescriptionDetail, isLoading: prescriptionDetailLoading } = useQuery({
-    queryKey: ['prescriptionDetail', prescriptionId],
+    queryKey: ['prescriptionDetail', prescriptionId, isIpdPrescription],
     queryFn: async () => {
       if (!prescriptionId) return null;
+      if (isIpdPrescription) {
+        if (selectedIpdOrder && (selectedIpdOrder._id === prescriptionId || selectedIpdOrder.reviewId === prescriptionId || `${selectedIpdOrder.admissionId}_${selectedIpdOrder.reviewId}` === prescriptionId)) {
+          return formatIpdOrderForWorkspace(selectedIpdOrder, user);
+        }
+        try {
+          const res = await ipdService.getPrescriptionQueue({ filter: 'all' });
+          const orders = res.data || [];
+          const found = orders.find(o => o._id === prescriptionId || o.reviewId === prescriptionId || `${o.admissionId}_${o.reviewId}` === prescriptionId);
+          if (found) {
+            return formatIpdOrderForWorkspace(found, user);
+          }
+        } catch (e) {
+          console.error('Error fetching IPD order for workspace:', e);
+        }
+        if (selectedIpdOrder) return formatIpdOrderForWorkspace(selectedIpdOrder, user);
+        return null;
+      }
       const res = await api.get(`/operations/pharmacy/prescriptions/${prescriptionId}`);
       return res.data.data;
     },
     enabled: !!prescriptionId
   });
+
+  const handleStartIpdDispense = (row, action = 'dispense') => {
+    setSelectedIpdOrder(row);
+    setSearchParams({ prescriptionId: row._id, type: 'ipd', action });
+  };
+
+  const handleBackFromWorkspace = () => {
+    const isIpd = prescriptionDetail?.isIpd || searchParams.get('type') === 'ipd';
+    setSearchParams({});
+    setSelectedIpdOrder(null);
+    if (isIpd) {
+      if (activeTab === 'ipd-history') {
+        navigate('/pharmacy/ipd-dispense/history');
+      } else if (activeTab === 'ipd-queue') {
+        navigate('/pharmacy/ipd-dispense');
+      } else {
+        setDashboardMode('ipd');
+      }
+    } else {
+      if (activeTab === 'history') {
+        handleTabSwitch('history');
+      } else {
+        handleTabSwitch('queue');
+      }
+    }
+  };
 
   // 3. Fetch Medicines Master Catalog
   const { data: medicines, isLoading: medicinesLoading, refetch: refetchMedicines } = useQuery({
@@ -126,15 +342,16 @@ const PharmacyDashboard = () => {
       if (prescriptionDetail.items) {
         const initialState = {};
         prescriptionDetail.items.forEach(item => {
+          const doseParts = (item.dosage || '').split('-');
           initialState[item._id] = {
             dispensingStatus: item.dispensingStatus || 'Dispensed',
             pharmacistNotes: item.pharmacistNotes || '',
             substituteMedicine: item.substituteMedicine || '',
             quantity: item.quantity !== undefined ? item.quantity : 1,
-            morning: item.morning !== undefined ? item.morning : '0',
-            afternoon: item.afternoon !== undefined ? item.afternoon : '0',
-            night: item.night !== undefined ? item.night : '0',
-            foodTiming: item.foodTiming || item.instructions || 'After Food',
+            morning: item.morning !== undefined && String(item.morning).trim() !== '' ? String(item.morning) : (doseParts[0] || '0'),
+            afternoon: item.afternoon !== undefined && String(item.afternoon).trim() !== '' ? String(item.afternoon) : (doseParts[1] || '0'),
+            night: item.night !== undefined && String(item.night).trim() !== '' ? String(item.night) : (doseParts[2] || '0'),
+            foodTiming: normalizeFoodTiming(item.foodTiming || item.instructions || item.food),
             duration: item.duration || 'N/A'
           };
         });
@@ -151,6 +368,8 @@ const PharmacyDashboard = () => {
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries(['prescriptions']);
+      queryClient.invalidateQueries(['opdPharmacyStats']);
+      if (typeof refetchOpdStats === 'function') refetchOpdStats();
       if (variables.status === 'Dispensed') {
         toast.success('Medicines dispensed successfully! Moved to Dispensed History.');
         if (routePrescriptionId) {
@@ -196,6 +415,9 @@ const PharmacyDashboard = () => {
         prescriptionId: id,
         status: 'Dispensing'
       });
+      queryClient.invalidateQueries(['prescriptions']);
+      queryClient.invalidateQueries(['opdPharmacyStats']);
+      if (typeof refetchOpdStats === 'function') refetchOpdStats();
       navigate(`/pharmacy/dispense/${id}`);
     } catch (err) {
       toast.error('Failed to start dispensing');
@@ -209,7 +431,7 @@ const PharmacyDashboard = () => {
       ...prev,
       [itemId]: {
         ...prev[itemId],
-        [field]: value
+        [field]: field === 'foodTiming' ? normalizeFoodTiming(value) : value
       }
     }));
   };
@@ -223,21 +445,139 @@ const PharmacyDashboard = () => {
     setDateTo('');
   };
 
-  // Compact Summary Stat Calculations
+  // OPD Summary Stat Calculations (Accurate Real-Time Stats for Today)
   const summaryCounts = useMemo(() => {
-    const pList = prescriptions || [];
-    const mList = medicines || [];
-    const pending = pList.filter(p => (p.status || 'Pending') === 'Pending').length;
-    const dispensing = pList.filter(p => p.status === 'Dispensing').length;
-    const dispensedToday = pList.filter(p => p.status === 'Dispensed').length;
-    const lowStock = mList.filter(m => (m.stock || 0) < 50).length;
-    return { pending, dispensing, dispensedToday, lowStock, totalPrescriptions: pList.length };
-  }, [prescriptions, medicines]);
+    if (opdStats) {
+      return {
+        pending: Number(opdStats.pending) || 0,
+        dispensing: Number(opdStats.dispensing) || 0,
+        dispensedToday: Number(opdStats.dispensedToday) || 0,
+        totalPrescriptions: Number(opdStats.totalPrescriptions) || 0
+      };
+    }
 
-  // Client-Side Filtered Prescriptions
+    const pList = prescriptions || [];
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0).getTime();
+    const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1, 0, 0, 0, 0).getTime();
+
+    const isToday = (dateVal) => {
+      if (!dateVal) return false;
+      const d = new Date(dateVal).getTime();
+      return !isNaN(d) && d >= todayStart && d < todayEnd;
+    };
+
+    const pending = pList.filter(p => (p.status || 'Pending').toLowerCase() === 'pending').length;
+    const dispensing = pList.filter(p => (p.status || '').toLowerCase() === 'dispensing').length;
+    const dispensedToday = pList.filter(p => (p.status || '').toLowerCase() === 'dispensed' && isToday(p.dispensedAt || p.updatedAt || p.createdAt)).length;
+    return { pending, dispensing, dispensedToday, totalPrescriptions: pList.length };
+  }, [opdStats, prescriptions]);
+
+  // IPD Summary Stat Calculations (Accurate Real-Time Stats for Today)
+  const ipdSummaryCounts = useMemo(() => {
+    const pending = (ipdPendingList || []).filter(item => {
+      const st = (item.status || '').toLowerCase();
+      return st !== 'dispensed' && st !== 'completed';
+    }).length;
+
+    const dispensing = (ipdPendingList || []).filter(item => {
+      const st = (item.status || '').toLowerCase();
+      return st === 'dispensing' || st === 'in progress';
+    }).length;
+
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0).getTime();
+    const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1, 0, 0, 0, 0).getTime();
+
+    const isToday = (dateVal) => {
+      if (!dateVal) return false;
+      const d = new Date(dateVal).getTime();
+      return !isNaN(d) && d >= todayStart && d < todayEnd;
+    };
+
+    const dispensedToday = (ipdHistoryList || []).filter(item => {
+      const dateToCheck = item.dispensedAt || item.updatedAt || item.reviewDate || item.createdAt;
+      return isToday(dateToCheck);
+    }).length;
+
+    return {
+      pending,
+      dispensing,
+      dispensedToday
+    };
+  }, [ipdPendingList, ipdHistoryList]);
+
+  // Client-Side Filtered IPD Prescriptions (sorted by dispensed date, newest first)
+  const filteredIpdPrescriptions = useMemo(() => {
+    if (!ipdPrescriptions) return [];
+    const filtered = ipdPrescriptions.filter(item => {
+      if (searchPatient.trim()) {
+        const q = searchPatient.toLowerCase().trim();
+        const nameMatch = (item.patientName || item.patientId?.name || '').toLowerCase().includes(q);
+        const uhidMatch = (item.uhid || item.patientId?.uhid || '').toLowerCase().includes(q);
+        const mobileMatch = (item.mobileNumber || item.patientId?.mobileNumber || '').includes(q);
+        const admMatch = (item.admissionNumber || '').toLowerCase().includes(q);
+        if (!nameMatch && !uhidMatch && !mobileMatch && !admMatch) return false;
+      }
+      if (selectedWardFilter) {
+        const w = selectedWardFilter.toLowerCase();
+        const matchWard = (item.wardName || '').toLowerCase().includes(w) || (item.bedNumber || '').toLowerCase().includes(w);
+        if (!matchWard) return false;
+      }
+      if (selectedDoctor) {
+        if (item.doctorId !== selectedDoctor && !(item.doctorName || '').toLowerCase().includes(selectedDoctor.toLowerCase())) {
+          return false;
+        }
+      }
+      if (dateFrom) {
+        const itemDate = new Date(item.createdAt || item.reviewDate).setHours(0,0,0,0);
+        const fromDate = new Date(dateFrom).setHours(0,0,0,0);
+        if (itemDate < fromDate) return false;
+      }
+      if (dateTo) {
+        const itemDate = new Date(item.createdAt || item.reviewDate).setHours(0,0,0,0);
+        const toDate = new Date(dateTo).setHours(23,59,59,999);
+        if (itemDate > toDate) return false;
+      }
+      return true;
+    });
+    // Sort by prescription sent date: newest prescription sent date first
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.prescriptionSentDate || a.reviewDate || a.createdAt || 0).getTime();
+      const dateB = new Date(b.prescriptionSentDate || b.reviewDate || b.createdAt || 0).getTime();
+      return dateB - dateA;
+    });
+    return filtered;
+  }, [ipdPrescriptions, searchPatient, selectedWardFilter, selectedDoctor, dateFrom, dateTo]);
+
+  // IPD Dispense Confirmation Handler
+  const handleConfirmIpdDispense = async () => {
+    if (!selectedIpdOrder) return;
+    try {
+      setIsIpdDispensing(true);
+      await ipdService.dispensePrescription({
+        admissionId: selectedIpdOrder.admissionId,
+        reviewId: selectedIpdOrder.reviewId,
+        prescriptionIds: (selectedIpdOrder.prescriptions || []).map(p => p._id),
+        pharmacistNotes: ipdPharmacistNotes
+      });
+      toast.success('IPD ward medications dispensed successfully!');
+      setSelectedIpdOrder(null);
+      setIpdPharmacistNotes('');
+      refetchIpdPrescriptions();
+      queryClient.invalidateQueries(['ipdPendingListNotification']);
+      queryClient.invalidateQueries(['ipdHistoryListSummary']);
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.message || 'Failed to dispense IPD medications');
+    } finally {
+      setIsIpdDispensing(false);
+    }
+  };
+
+  // Client-Side Filtered Prescriptions (sorted by dispensed date, newest first)
   const filteredPrescriptions = useMemo(() => {
     if (!prescriptions) return [];
-    return prescriptions.filter(item => {
+    const filtered = prescriptions.filter(item => {
       // Patient Search
       if (searchPatient.trim()) {
         const q = searchPatient.toLowerCase().trim();
@@ -268,6 +608,13 @@ const PharmacyDashboard = () => {
       }
       return true;
     });
+    // Sort by date: newest dispensed/created first
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.dispensedAt || a.createdAt || a.updatedAt || 0).getTime();
+      const dateB = new Date(b.dispensedAt || b.createdAt || b.updatedAt || 0).getTime();
+      return dateB - dateA;
+    });
+    return filtered;
   }, [prescriptions, searchPatient, selectedDoctor, selectedStatus, dateFrom, dateTo]);
 
   // Client-Side Filtered Medicines
@@ -302,6 +649,39 @@ const PharmacyDashboard = () => {
     return (
       <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border ${badgeStyle}`}>
         {st}
+      </span>
+    );
+  };
+
+  // Strictly renders one of: Pending, Dispensing, Dispensed for IPD Dispense Desk
+  const renderIpdStatusBadge = (status, isHistory = false) => {
+    const raw = String(status || '').trim().toLowerCase();
+    let norm = 'Pending';
+    if (raw.includes('partially') || raw === 'dispensing' || raw === 'in progress' || raw === 'in_progress') {
+      norm = 'Dispensing';
+    } else if (raw === 'dispensed' || raw === 'completed' || isHistory) {
+      norm = 'Dispensed';
+    } else {
+      norm = 'Pending';
+    }
+
+    if (norm === 'Dispensing') {
+      return (
+        <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border bg-blue-50 text-blue-600 border-blue-200 animate-pulse">
+          Dispensing
+        </span>
+      );
+    }
+    if (norm === 'Dispensed') {
+      return (
+        <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border bg-emerald-50 text-emerald-600 border-emerald-200">
+          Dispensed
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border bg-amber-50 text-amber-600 border-amber-200">
+        Pending
       </span>
     );
   };
@@ -378,7 +758,7 @@ const PharmacyDashboard = () => {
                   <td style="text-align: center;">${item.morning || '0'}</td>
                   <td style="text-align: center;">${item.afternoon || '0'}</td>
                   <td style="text-align: center;">${item.night || '0'}</td>
-                  <td>${item.foodTiming || item.instructions || 'After Food'}</td>
+                  <td>${normalizeFoodTiming(item.foodTiming || item.instructions || item.food)}</td>
                   <td>${item.duration || 'N/A'}</td>
                   <td style="text-align: center;"><strong>${item.quantity || 1}</strong></td>
                 </tr>
@@ -429,7 +809,7 @@ const PharmacyDashboard = () => {
         </head>
         <body>
           ${rx?.items?.map(item => {
-            const food = item.foodTiming || item.instructions || 'After Food';
+            const food = normalizeFoodTiming(item.foodTiming || item.instructions || item.food);
             const dur = item.duration || 'N/A';
             const substituteName = item.substituteMedicine || item.medicineName;
 
@@ -464,7 +844,15 @@ const PharmacyDashboard = () => {
 
   // Switch Tab / Route Helper
   const handleTabSwitch = (targetTab) => {
-    if (targetTab === 'medicines') {
+    if (targetTab === 'ipd-queue') {
+      navigate(ROUTES.PHARMACY.IPD_DISPENSE);
+    } else if (targetTab === 'ipd-history') {
+      navigate('/pharmacy/ipd-dispense?tab=ipd-history');
+    } else if (targetTab === 'queue') {
+      navigate(ROUTES.PHARMACY.DISPENSE);
+    } else if (targetTab === 'history') {
+      navigate('/pharmacy/dispense?tab=history');
+    } else if (targetTab === 'medicines') {
       navigate('/pharmacy/medicine-master');
     } else if (targetTab === 'stock') {
       navigate('/pharmacy/stock');
@@ -488,6 +876,16 @@ const PharmacyDashboard = () => {
         return {
           title: '📜 Dispensed History',
           subtitle: 'Audit log of completed OPD medicine dispensations.'
+        };
+      case 'ipd-queue':
+        return {
+          title: 'Digital Prescription Queue',
+          subtitle: "Review doctor's digital prescriptions waiting for dispensing."
+        };
+      case 'ipd-history':
+        return {
+          title: 'IPD Dispensed History',
+          subtitle: 'Audit log of completed inpatient medicine dispensations.'
         };
       case 'medicines':
         return {
@@ -568,16 +966,32 @@ const PharmacyDashboard = () => {
 
     const { patientId: patient, doctorId: doctor, consultationId: consultation } = prescriptionDetail;
 
-    const handleDispenseAction = (actionType) => {
+    const rawSentDate = prescriptionDetail.createdAt || prescriptionDetail.date || consultation?.createdAt || consultation?.date;
+    const formatDateTime = (val) => {
+      if (!val) return 'N/A';
+      try {
+        const d = new Date(val);
+        if (isNaN(d.getTime())) return 'N/A';
+        const datePart = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        const timePart = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+        return `${datePart}, ${timePart}`;
+      } catch {
+        return 'N/A';
+      }
+    };
+    const prescriptionSentDateStr = formatDateTime(rawSentDate);
+
+    const handleDispenseAction = async (actionType) => {
       if (!isPharmacist) {
         toast.error("Access Denied: Only pharmacists or administrators can edit and dispense prescriptions.");
         return;
       }
 
-      const itemsPayload = prescriptionDetail.items.map(item => {
+      const itemsPayload = (prescriptionDetail.items || []).map(item => {
         const state = dispenseState[item._id] || {};
         return {
           _id: item._id,
+          medicineName: item.medicineName || item.name,
           dispensingStatus: state.dispensingStatus || 'Dispensed',
           pharmacistNotes: state.pharmacistNotes || '',
           substituteMedicine: state.substituteMedicine || item.substituteMedicine || '',
@@ -585,10 +999,48 @@ const PharmacyDashboard = () => {
           morning: state.morning !== undefined ? state.morning : item.morning || '0',
           afternoon: state.afternoon !== undefined ? state.afternoon : item.afternoon || '0',
           night: state.night !== undefined ? state.night : item.night || '0',
-          foodTiming: state.foodTiming || item.foodTiming || item.instructions || 'After Food',
+          foodTiming: normalizeFoodTiming(state.foodTiming || item.foodTiming || item.instructions),
           duration: state.duration || item.duration || 'N/A'
         };
       });
+
+      if (prescriptionDetail.isIpd) {
+        if (actionType === 'draft') {
+          toast.success('IPD prescription draft saved successfully');
+          return;
+        }
+
+        try {
+          setIsIpdDispensing(true);
+          const admissionId = prescriptionDetail.admissionId;
+          const reviewId = prescriptionDetail.reviewId;
+          const prescriptionIds = itemsPayload
+            .map(it => it._id)
+            .filter(id => !String(id).startsWith('ipd_item_'));
+
+          await ipdService.dispensePrescription({
+            admissionId,
+            reviewId,
+            prescriptionIds,
+            items: itemsPayload,
+            pharmacistNotes: generalRemarks || ''
+          });
+
+          toast.success('IPD ward medications dispensed successfully!');
+          queryClient.invalidateQueries(['ipdPrescriptionQueue']);
+          queryClient.invalidateQueries(['ipdPendingListNotification']);
+          queryClient.invalidateQueries(['ipdHistoryListSummary']);
+          refetchIpdPrescriptions();
+
+          handleBackFromWorkspace();
+        } catch (err) {
+          console.error('IPD Dispense error:', err);
+          toast.error(err.response?.data?.message || err.message || 'Failed to dispense IPD medicines');
+        } finally {
+          setIsIpdDispensing(false);
+        }
+        return;
+      }
 
       if (actionType === 'draft') {
         dispenseMutation.mutate({
@@ -622,8 +1074,11 @@ const PharmacyDashboard = () => {
         <div className="flex items-center justify-between pb-3 border-b border-[#E5E7EB]">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => handleTabSwitch('queue')}
-              className="p-2 rounded-xl hover:bg-slate-100 border border-[#E5E7EB] transition-colors text-[#6B7280] hover:text-[#111827]"
+              type="button"
+              onClick={handleBackFromWorkspace}
+              className="p-2 rounded-xl hover:bg-slate-100 border border-[#E5E7EB] transition-colors text-[#6B7280] hover:text-[#111827] cursor-pointer"
+              title="Go back"
+              aria-label="Go back"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
@@ -631,14 +1086,38 @@ const PharmacyDashboard = () => {
               <h2 className="text-lg font-bold text-[#111827] flex items-center gap-2">
                 {isDispenseMode ? '💊 Pharmacy Dispensing Desk' : '👁️ View Prescription Details'}
               </h2>
-              <p className="text-xs text-[#6B7280] mt-0.5 font-medium">Medicine verification and dispensing for OPD clinics.</p>
+              <p className="text-xs text-[#6B7280] mt-0.5 font-medium">
+                {prescriptionDetail.isIpd 
+                  ? 'Medicine verification and dispensing for Inpatient (IPD) Ward.' 
+                  : 'Medicine verification and dispensing for OPD clinics.'}
+              </p>
             </div>
           </div>
-          {renderBadge(prescriptionDetail.status)}
+          {prescriptionDetail.isIpd ? (
+            isDispenseMode && (prescriptionDetail.status === 'Pending' || !prescriptionDetail.status) ? (
+              <span className="inline-flex items-center px-3.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-blue-50 text-[#2F63F2] border border-blue-200">
+                DISPENSING
+              </span>
+            ) : renderBadge(prescriptionDetail.status || 'Dispensed')
+          ) : (
+            renderBadge(prescriptionDetail.status)
+          )}
         </div>
 
         {/* 1. Patient & Doctor Details Card */}
-        <Card title="👤 Patient Demographics & Doctor Info" subtitle="Patient and clinical metadata verification.">
+        <Card
+          title="👤 Patient Demographics & Doctor Info"
+          subtitle="Patient and clinical metadata verification."
+          action={prescriptionDetail.isIpd ? (() => {
+            const roundNum = prescriptionDetail.roundNumber || prescriptionDetail.dayNumber ||
+              selectedIpdOrder?.roundNumber || selectedIpdOrder?.dayNumber || 1;
+            return (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200">
+                Round {roundNum}
+              </span>
+            );
+          })() : undefined}
+        >
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3.5 p-1 text-xs">
             <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Patient ID</span>
@@ -650,26 +1129,39 @@ const PharmacyDashboard = () => {
             </div>
             <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Age / Gender</span>
-              <span className="font-bold text-slate-700">{patient?.age ? `${patient.age} Yrs` : 'N/A'} / {patient?.gender || 'N/A'}</span>
+              <span className="font-bold text-slate-700">{patient?.age ? `${patient.age} yrs` : 'N/A'} / {patient?.gender ? (patient.gender.length === 1 ? patient.gender.toUpperCase() : patient.gender.charAt(0).toUpperCase()) : 'N/A'}</span>
+              {patient?.bloodGroup && patient.bloodGroup !== 'Unknown' && patient.bloodGroup !== 'N/A' && patient.bloodGroup !== '—' && (
+                <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight w-max shadow-2xs">
+                  {patient.bloodGroup}
+                </span>
+              )}
             </div>
             <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Mobile Number</span>
               <span className="font-bold font-mono text-slate-700">{patient?.mobileNumber || 'N/A'}</span>
             </div>
             <div className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Token Number</span>
+              <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">
+                {prescriptionDetail.isIpd ? 'Token / IPD Number' : 'Token Number'}
+              </span>
               <span className="font-bold text-[#2F63F2] text-xs font-mono bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-0.5 w-max">
-                #{consultation?.appointmentId?.tokenNumber || 'N/A'}
+                #{prescriptionDetail?.tokenNumber || consultation?.appointmentId?.tokenNumber || 'N/A'}
               </span>
             </div>
             <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Doctor Name</span>
               <span className="font-bold text-[#111827]">Dr. {doctor?.name || 'N/A'}</span>
             </div>
-            <div className="flex flex-col gap-0.5 md:col-span-2">
+            <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Diagnosis & Clinical Notes</span>
-              <span className="font-bold text-[#111827] bg-slate-50 border border-[#E5E7EB] rounded-xl px-3 py-1 text-xs block">
+              <span className="font-bold text-[#111827] bg-slate-50 border border-[#E5E7EB] rounded-xl px-3 py-1.5 text-xs block truncate" title={consultation?.diagnosis || 'General OPD Consultation'}>
                 {consultation?.diagnosis || 'General OPD Consultation'}
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Prescription Sent Date</span>
+              <span className="font-bold text-slate-800 bg-slate-50 border border-[#E5E7EB] rounded-xl px-3 py-1.5 text-xs block truncate" title={prescriptionSentDateStr}>
+                {prescriptionSentDateStr}
               </span>
             </div>
           </div>
@@ -681,28 +1173,29 @@ const PharmacyDashboard = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-[#E5E7EB] text-[#6B7280] text-[10px] font-bold uppercase tracking-wider">
-                  <th className="p-3.5">Medicine Name</th>
-                  <th className="p-3.5 text-center">Morning</th>
-                  <th className="p-3.5 text-center">Afternoon</th>
-                  <th className="p-3.5 text-center">Night</th>
-                  <th className="p-3.5">Food Timing</th>
-                  <th className="p-3.5">Duration</th>
-                  <th className="p-3.5 w-32">Quantity</th>
-                  <th className="p-3.5">Substitute Medicine</th>
-                  <th className="p-3.5 w-52">Pharmacist Notes</th>
+                  <th className="p-3.5 min-w-[150px]">Medicine Name</th>
+                  <th className="p-3.5 text-center w-16">Morning</th>
+                  <th className="p-3.5 text-center w-16">Afternoon</th>
+                  <th className="p-3.5 text-center w-16">Night</th>
+                  <th className="p-3.5 min-w-[160px] w-44">Food Timing</th>
+                  <th className="p-3.5 min-w-[90px] w-24">Duration</th>
+                  <th className="p-3.5 min-w-[90px] w-24 text-center">Quantity</th>
+                  <th className="p-3.5 min-w-[140px]">Substitute Medicine</th>
+                  <th className="p-3.5 min-w-[160px] w-48">Pharmacist Notes</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E5E7EB] text-xs text-[#111827] font-medium">
                 {prescriptionDetail.items?.map((item) => {
+                  const doseParts = (item.dosage || '').split('-');
                   const itemState = dispenseState[item._id] || { 
                     dispensingStatus: 'Dispensed', 
                     pharmacistNotes: '', 
                     substituteMedicine: '', 
                     quantity: item.quantity,
-                    morning: item.morning || '0',
-                    afternoon: item.afternoon || '0',
-                    night: item.night || '0',
-                    foodTiming: item.foodTiming || item.instructions || 'After Food',
+                    morning: item.morning !== undefined && String(item.morning).trim() !== '' ? String(item.morning) : (doseParts[0] || '0'),
+                    afternoon: item.afternoon !== undefined && String(item.afternoon).trim() !== '' ? String(item.afternoon) : (doseParts[1] || '0'),
+                    night: item.night !== undefined && String(item.night).trim() !== '' ? String(item.night) : (doseParts[2] || '0'),
+                    foodTiming: normalizeFoodTiming(item.foodTiming || item.instructions || item.food),
                     duration: item.duration || 'N/A'
                   };
 
@@ -717,52 +1210,54 @@ const PharmacyDashboard = () => {
                         {isDispenseMode ? (
                           <input
                             type="text"
-                            className="enterprise-input text-center py-1 px-1 text-xs w-12 h-[36px]"
+                            className="bg-slate-50 border border-slate-200 rounded-xl text-center py-1 px-1 text-xs w-12 h-[36px] font-bold text-slate-800 focus:outline-none focus:border-[#2F63F2]"
                             value={itemState.morning}
                             onChange={(e) => updateItemState(item._id, 'morning', e.target.value)}
                           />
                         ) : (
-                          <span>{itemState.morning}</span>
+                          <span className="font-bold text-slate-700">{itemState.morning}</span>
                         )}
                       </td>
                       <td className="p-3.5 text-center align-top">
                         {isDispenseMode ? (
                           <input
                             type="text"
-                            className="enterprise-input text-center py-1 px-1 text-xs w-12 h-[36px]"
+                            className="bg-slate-50 border border-slate-200 rounded-xl text-center py-1 px-1 text-xs w-12 h-[36px] font-bold text-slate-800 focus:outline-none focus:border-[#2F63F2]"
                             value={itemState.afternoon}
                             onChange={(e) => updateItemState(item._id, 'afternoon', e.target.value)}
                           />
                         ) : (
-                          <span>{itemState.afternoon}</span>
+                          <span className="font-bold text-slate-700">{itemState.afternoon}</span>
                         )}
                       </td>
                       <td className="p-3.5 text-center align-top">
                         {isDispenseMode ? (
                           <input
                             type="text"
-                            className="enterprise-input text-center py-1 px-1 text-xs w-12 h-[36px]"
+                            className="bg-slate-50 border border-slate-200 rounded-xl text-center py-1 px-1 text-xs w-12 h-[36px] font-bold text-slate-800 focus:outline-none focus:border-[#2F63F2]"
                             value={itemState.night}
                             onChange={(e) => updateItemState(item._id, 'night', e.target.value)}
                           />
                         ) : (
-                          <span>{itemState.night}</span>
+                          <span className="font-bold text-slate-700">{itemState.night}</span>
                         )}
                       </td>
 
-                      <td className="p-3.5 align-top">
+                      <td className="p-3.5 align-top min-w-[160px]">
                         {isDispenseMode ? (
                           <select
-                            className="enterprise-input py-1 px-2 text-xs h-[36px]"
-                            value={itemState.foodTiming}
-                            onChange={(e) => updateItemState(item._id, 'foodTiming', e.target.value)}
+                            className="w-full min-w-[150px] bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800 rounded-xl px-2.5 py-1.5 h-[36px] focus:outline-none focus:ring-2 focus:ring-[#2F63F2]/20 focus:border-[#2F63F2] cursor-pointer shadow-2xs"
+                            value={normalizeFoodTiming(itemState.foodTiming)}
+                            onChange={(e) => updateItemState(item._id, 'foodTiming', normalizeFoodTiming(e.target.value))}
                           >
-                            <option value="After Food">After Food</option>
-                            <option value="Before Food">Before Food</option>
-                            <option value="With Food">With Food</option>
+                            <option value="After Food">AF - After Food</option>
+                            <option value="Before Food">BF - Before Food</option>
+                            <option value="With Food">WF - With Food</option>
                           </select>
                         ) : (
-                          <span>{itemState.foodTiming}</span>
+                          <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700">
+                            {formatFoodTimingDisplay(itemState.foodTiming)}
+                          </span>
                         )}
                       </td>
 
@@ -903,9 +1398,9 @@ const PharmacyDashboard = () => {
           <div>
             <Button
               type="button"
-              onClick={() => handleTabSwitch('queue')}
+              onClick={handleBackFromWorkspace}
               variant="secondary"
-              className="text-xs font-bold uppercase tracking-wider px-5 h-[40px]"
+              className="text-xs font-bold uppercase tracking-wider px-5 h-[40px] cursor-pointer"
             >
               Back
             </Button>
@@ -917,8 +1412,8 @@ const PharmacyDashboard = () => {
                   type="button"
                   onClick={() => handleDispenseAction('draft')}
                   variant="secondary"
-                  className="text-xs font-bold uppercase tracking-wider px-5 h-[40px] border-[#E5E7EB] text-[#111827]"
-                  loading={dispenseMutation.isPending}
+                  className="text-xs font-bold uppercase tracking-wider px-5 h-[40px] border-[#E5E7EB] text-[#111827] cursor-pointer"
+                  loading={prescriptionDetail.isIpd ? isIpdDispensing : dispenseMutation.isPending}
                 >
                   Save Draft
                 </Button>
@@ -926,8 +1421,8 @@ const PharmacyDashboard = () => {
                   type="button"
                   onClick={() => handleDispenseAction('complete')}
                   variant="primary"
-                  className="text-xs font-bold uppercase tracking-wider px-6 h-[40px] bg-[#2F63F2] hover:bg-blue-700 text-white shadow-sm"
-                  loading={dispenseMutation.isPending}
+                  className="text-xs font-bold uppercase tracking-wider px-6 h-[40px] bg-[#2F63F2] hover:bg-blue-700 text-white shadow-sm cursor-pointer"
+                  loading={prescriptionDetail.isIpd ? isIpdDispensing : dispenseMutation.isPending}
                 >
                   Dispense Medicines
                 </Button>
@@ -950,11 +1445,13 @@ const PharmacyDashboard = () => {
     <div className="space-y-4 sm:space-y-5 text-left px-4 sm:px-5 md:px-6 lg:px-7 py-4 sm:py-5 md:py-6 bg-[#F8FAFC] min-h-screen">
       
       {/* 1. Header Section */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-[#E5E7EB]">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E5E7EB]">
         <div>
           <h1 className="text-xl font-bold text-[#111827] flex items-center gap-2.5">
             <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#2F63F2]/10 border border-[#2F63F2]/20 flex items-center justify-center text-[#2F63F2]">
+              {activeTab === 'dashboard' && <LayoutGrid className="w-4.5 h-4.5 sm:w-5 sm:h-5" />}
               {isDispensingModule && <Pill className="w-4.5 h-4.5 sm:w-5 sm:h-5" />}
+              {isIpdDispenseModule && <Bed className="w-4.5 h-4.5 sm:w-5 sm:h-5" />}
               {activeTab === 'medicines' && <Pill className="w-4.5 h-4.5 sm:w-5 sm:h-5" />}
               {activeTab === 'stock' && <Archive className="w-4.5 h-4.5 sm:w-5 sm:h-5" />}
               {activeTab === 'purchase' && <ShoppingCart className="w-4.5 h-4.5 sm:w-5 sm:h-5" />}
@@ -962,19 +1459,82 @@ const PharmacyDashboard = () => {
               {activeTab === 'reports' && <FileBarChart2 className="w-4.5 h-4.5 sm:w-5 sm:h-5" />}
               {activeTab === 'settings' && <Settings className="w-4.5 h-4.5 sm:w-5 sm:h-5" />}
             </div>
-            {isDispensingModule ? 'OPD Pharmacy & Dispensing' : cardTitle}
+            {activeTab === 'dashboard' 
+              ? 'Pharmacy Overview & Operations Dashboard' 
+              : isDispensingModule 
+                ? 'OPD Pharmacy & Dispensing' 
+                : isIpdDispenseModule 
+                  ? 'IPD Pharmacy & Dispensing' 
+                  : cardTitle}
           </h1>
           <p className="text-xs text-[#6B7280] mt-0.5 font-medium">
-            {isDispensingModule ? 'Manage digital prescription queue and medicine dispensing history.' : cardSubtitle}
+            {activeTab === 'dashboard'
+              ? 'Real-time overview of prescription queues, dispensing metrics, and inventory alerts.'
+              : isDispensingModule 
+                ? 'Manage digital prescription queue and medicine dispensing history.' 
+                : isIpdDispenseModule 
+                  ? 'Review doctor\'s daily review and admission medications for admitted ward patients.' 
+                  : cardSubtitle}
           </p>
         </div>
 
-        {/* CONDITIONALLY RENDER TAB NAVIGATION ONLY FOR DISPENSING WORKFLOW */}
+        {/* DASHBOARD MODE SWITCHER + NOTIFICATION BUTTON (Shown when activeTab === 'dashboard') */}
+        {activeTab === 'dashboard' && (
+          <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
+            {/* Live Notification Bell (Borderless Icon Only, exclusively for IPD prescription queue) */}
+            <button
+              type="button"
+              onClick={() => {
+                setDashboardMode('ipd');
+              }}
+              className="relative p-2 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+              title={ipdPendingList.length > 0 ? `${ipdPendingList.length} IPD Patient${ipdPendingList.length > 1 ? 's' : ''} in Prescription Queue` : 'No IPD Prescriptions in Queue'}
+              aria-label="IPD Prescriptions Notification"
+            >
+              <Bell className={`w-5 h-5 ${ipdPendingList.length > 0 ? 'text-amber-500' : 'text-slate-400'}`} />
+              {ipdPendingList.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white shadow-xs">
+                  {ipdPendingList.length}
+                </span>
+              )}
+            </button>
+
+            {/* Segmented Switcher Pill: OPD Dashboard | IPD Dashboard */}
+            <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 gap-1 h-10">
+              <button
+                type="button"
+                onClick={() => setDashboardMode('opd')}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer h-full whitespace-nowrap ${
+                  dashboardMode === 'opd'
+                    ? 'bg-white text-[#2F63F2] font-bold shadow-xs border border-slate-200'
+                    : 'text-slate-600 hover:text-slate-900 font-medium'
+                }`}
+              >
+                <Pill className="w-3.5 h-3.5" />
+                <span>OPD Dashboard</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDashboardMode('ipd')}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer h-full whitespace-nowrap ${
+                  dashboardMode === 'ipd'
+                    ? 'bg-white text-[#2F63F2] font-bold shadow-xs border border-slate-200'
+                    : 'text-slate-600 hover:text-slate-900 font-medium'
+                }`}
+              >
+                <Bed className="w-3.5 h-3.5" />
+                <span>IPD Dashboard</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* OPD DISPENSING WORKFLOW TABS */}
         {isDispensingModule && (
           <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-[#E5E7EB] self-start lg:self-auto">
             <button
               onClick={() => handleTabSwitch('queue')}
-              className={`flex items-center gap-2 px-4.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 whitespace-nowrap ${
+              className={`flex items-center gap-2 px-4.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
                 activeTab === 'queue' 
                   ? 'bg-white text-[#2F63F2] shadow-sm border border-[#E5E7EB]' 
                   : 'text-[#6B7280] hover:text-[#111827] hover:bg-slate-200/60'
@@ -985,8 +1545,36 @@ const PharmacyDashboard = () => {
             </button>
             <button
               onClick={() => handleTabSwitch('history')}
-              className={`flex items-center gap-2 px-4.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 whitespace-nowrap ${
+              className={`flex items-center gap-2 px-4.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
                 activeTab === 'history' 
+                  ? 'bg-white text-[#2F63F2] shadow-sm border border-[#E5E7EB]' 
+                  : 'text-[#6B7280] hover:text-[#111827] hover:bg-slate-200/60'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              Dispensed History
+            </button>
+          </div>
+        )}
+
+        {/* IPD DISPENSING WORKFLOW TABS */}
+        {isIpdDispenseModule && (
+          <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-[#E5E7EB] self-start lg:self-auto">
+            <button
+              onClick={() => handleTabSwitch('ipd-queue')}
+              className={`flex items-center gap-2 px-4.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
+                activeTab === 'ipd-queue' 
+                  ? 'bg-white text-[#2F63F2] shadow-sm border border-[#E5E7EB]' 
+                  : 'text-[#6B7280] hover:text-[#111827] hover:bg-slate-200/60'
+              }`}
+            >
+              <ClipboardList className="w-4 h-4" />
+              Prescription Queue
+            </button>
+            <button
+              onClick={() => handleTabSwitch('ipd-history')}
+              className={`flex items-center gap-2 px-4.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
+                activeTab === 'ipd-history' 
                   ? 'bg-white text-[#2F63F2] shadow-sm border border-[#E5E7EB]' 
                   : 'text-[#6B7280] hover:text-[#111827] hover:bg-slate-200/60'
               }`}
@@ -998,51 +1586,53 @@ const PharmacyDashboard = () => {
         )}
       </div>
 
-      {/* 2. Compact Statistics Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
-        <div className="bg-white border border-[#E5E7EB] rounded-[16px] px-4 py-3 shadow-card-soft hover:shadow-md transition-all duration-200 flex items-center justify-between">
+      {/* 2. Compact Statistics Cards Grid: Exactly 3 cards across Dashboard & Dispensing Desks */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 sm:gap-4">
+        <div className="bg-white border border-[#E5E7EB] rounded-[16px] px-5 py-4 shadow-card-soft hover:shadow-md transition-all duration-200 flex items-center justify-between">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Pending Prescriptions</p>
-            <h3 className="text-xl font-bold text-[#111827] mt-0.5">{summaryCounts.pending}</h3>
+            <h3 className="text-2xl font-bold text-[#111827] mt-1">
+              {activeTab === 'dashboard'
+                ? (dashboardMode === 'opd' ? summaryCounts.pending : ipdSummaryCounts.pending)
+                : (isIpdDispenseModule ? ipdSummaryCounts.pending : summaryCounts.pending)}
+            </h3>
           </div>
-          <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600">
-            <Clock className="w-4.5 h-4.5" />
+          <div className="w-10 h-10 rounded-full border border-amber-200 bg-amber-50 flex items-center justify-center text-amber-600 shadow-2xs">
+            <Clock className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="bg-white border border-[#E5E7EB] rounded-[16px] px-4 py-3 shadow-card-soft hover:shadow-md transition-all duration-200 flex items-center justify-between">
+        <div className="bg-white border border-[#E5E7EB] rounded-[16px] px-5 py-4 shadow-card-soft hover:shadow-md transition-all duration-200 flex items-center justify-between">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Dispensing</p>
-            <h3 className="text-xl font-bold text-[#111827] mt-0.5">{summaryCounts.dispensing}</h3>
+            <h3 className="text-2xl font-bold text-[#111827] mt-1">
+              {activeTab === 'dashboard'
+                ? (dashboardMode === 'opd' ? summaryCounts.dispensing : ipdSummaryCounts.dispensing)
+                : (isIpdDispenseModule ? ipdSummaryCounts.dispensing : summaryCounts.dispensing)}
+            </h3>
           </div>
-          <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-[#2F63F2]">
-            <Pill className="w-4.5 h-4.5" />
+          <div className="w-10 h-10 rounded-full border border-blue-200 bg-blue-50 flex items-center justify-center text-[#2F63F2] shadow-2xs">
+            <Pill className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="bg-white border border-[#E5E7EB] rounded-[16px] px-4 py-3 shadow-card-soft hover:shadow-md transition-all duration-200 flex items-center justify-between">
+        <div className="bg-white border border-[#E5E7EB] rounded-[16px] px-5 py-4 shadow-card-soft hover:shadow-md transition-all duration-200 flex items-center justify-between">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Dispensed Today</p>
-            <h3 className="text-xl font-bold text-[#111827] mt-0.5">{summaryCounts.dispensedToday}</h3>
+            <h3 className="text-2xl font-bold text-[#111827] mt-1">
+              {activeTab === 'dashboard'
+                ? (dashboardMode === 'opd' ? summaryCounts.dispensedToday : ipdSummaryCounts.dispensedToday)
+                : (isIpdDispenseModule ? ipdSummaryCounts.dispensedToday : summaryCounts.dispensedToday)}
+            </h3>
           </div>
-          <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
-            <PackageCheck className="w-4.5 h-4.5" />
-          </div>
-        </div>
-
-        <div className="bg-white border border-[#E5E7EB] rounded-[16px] px-4 py-3 shadow-card-soft hover:shadow-md transition-all duration-200 flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Low Stock Medicines</p>
-            <h3 className="text-xl font-bold text-[#111827] mt-0.5">{summaryCounts.lowStock}</h3>
-          </div>
-          <div className="w-9 h-9 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600">
-            <AlertTriangle className="w-4.5 h-4.5" />
+          <div className="w-10 h-10 rounded-full border border-emerald-200 bg-emerald-50 flex items-center justify-center text-emerald-600 shadow-2xs">
+            <PackageCheck className="w-5 h-5" />
           </div>
         </div>
       </div>
 
-      {/* 3. Section Title & Subtitle (Shown inside dispensing module for Queue/History) */}
-      {isDispensingModule && (
+      {/* 3. Section Title & Subtitle (Shown inside dispensing modules for Queue/History) */}
+      {(isDispensingModule || isIpdDispenseModule) && (
         <div className="pt-1 pb-0.5">
           <h2 className="text-base sm:text-lg font-bold text-[#111827] flex items-center gap-2">
             {cardTitle}
@@ -1059,97 +1649,197 @@ const PharmacyDashboard = () => {
         {/* ROUTE 0: MAIN PHARMACY OVERVIEW DASHBOARD */}
         {/* ========================================================================= */}
         {activeTab === 'dashboard' && (
-          <div className="space-y-5">
-            {/* Quick Actions Shortcuts Bar */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <button
-                type="button"
-                onClick={() => navigate(ROUTES.PHARMACY.DISPENSE)}
-                className="p-3.5 bg-blue-50/70 border border-blue-200/80 rounded-2xl hover:bg-blue-100/70 transition-all text-left group cursor-pointer"
-              >
-                <div className="w-8 h-8 rounded-xl bg-[#2F63F2] text-white flex items-center justify-center mb-2 shadow-xs group-hover:scale-105 transition-transform">
-                  <Pill className="w-4 h-4" />
-                </div>
-                <h4 className="text-xs font-bold text-[#111827]">Dispense Desk</h4>
-                <p className="text-[10px] text-slate-500 font-medium mt-0.5">Serve pending prescriptions</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => navigate('/pharmacy/medicine-master')}
-                className="p-3.5 bg-emerald-50/70 border border-emerald-200/80 rounded-2xl hover:bg-emerald-100/70 transition-all text-left group cursor-pointer"
-              >
-                <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center mb-2 shadow-xs group-hover:scale-105 transition-transform">
-                  <Archive className="w-4 h-4" />
-                </div>
-                <h4 className="text-xs font-bold text-[#111827]">Medicine Catalog</h4>
-                <p className="text-[10px] text-slate-500 font-medium mt-0.5">Manage rates & stock levels</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => navigate('/pharmacy/purchase')}
-                className="p-3.5 bg-amber-50/70 border border-amber-200/80 rounded-2xl hover:bg-amber-100/70 transition-all text-left group cursor-pointer"
-              >
-                <div className="w-8 h-8 rounded-xl bg-amber-600 text-white flex items-center justify-center mb-2 shadow-xs group-hover:scale-105 transition-transform">
-                  <ShoppingCart className="w-4 h-4" />
-                </div>
-                <h4 className="text-xs font-bold text-[#111827]">Stock Purchase Entry</h4>
-                <p className="text-[10px] text-slate-500 font-medium mt-0.5">Record incoming stock</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => navigate(ROUTES.PHARMACY.REPORTS)}
-                className="p-3.5 bg-purple-50/70 border border-purple-200/80 rounded-2xl hover:bg-purple-100/70 transition-all text-left group cursor-pointer"
-              >
-                <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center mb-2 shadow-xs group-hover:scale-105 transition-transform">
-                  <FileBarChart2 className="w-4 h-4" />
-                </div>
-                <h4 className="text-xs font-bold text-[#111827]">Pharmacy Reports</h4>
-                <p className="text-[10px] text-slate-500 font-medium mt-0.5">Sales & dispensing audit</p>
-              </button>
-            </div>
-
-            {/* Live Queue Overview Table */}
+          <div className="space-y-4">
+            {/* Active Prescription Queue Summary Card */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-[#111827]">⏳ Active Prescription Queue Summary</h3>
+                <h3 className="text-sm font-bold text-[#111827] flex items-center gap-1.5">
+                  <span>⏳</span>
+                  <span>Active {dashboardMode === 'opd' ? 'OPD' : 'IPD'} Prescription Queue Summary</span>
+                </h3>
                 <button
                   type="button"
-                  onClick={() => navigate(ROUTES.PHARMACY.DISPENSE)}
-                  className="text-xs font-extrabold text-[#2F63F2] hover:underline"
+                  onClick={() => navigate(dashboardMode === 'opd' ? ROUTES.PHARMACY.DISPENSE : ROUTES.PHARMACY.IPD_DISPENSE)}
+                  className="text-xs font-extrabold text-[#2F63F2] hover:underline cursor-pointer flex items-center gap-1"
                 >
-                  View Full Dispense Desk →
+                  View Full {dashboardMode === 'opd' ? 'OPD Dispense Desk' : 'IPD Dispense Desk'} →
                 </button>
               </div>
 
+              {/* Dynamic Queue Table based on dashboardMode */}
               <div className="border border-[#E5E7EB] rounded-[14px] overflow-hidden bg-white">
-                <Table
-                  headers={[
-                    { key: 'patientId.uhid', label: 'Patient ID', render: (row) => <span className="font-bold text-[#2F63F2] font-mono">{row.patientId?.uhid || 'N/A'}</span> },
-                    { key: 'patientId.name', label: 'Patient Name', render: (row) => <span className="font-bold text-[#111827]">{row.patientId?.name || 'N/A'}</span> },
-                    { key: 'doctorId.name', label: 'Doctor', render: (row) => <span className="font-semibold text-slate-700">Dr. {row.doctorId?.name || 'N/A'}</span> },
-                    { key: 'createdAt', label: 'Consultation Time', render: (row) => <span className="font-mono text-slate-600">{new Date(row.createdAt).toLocaleString()}</span> },
-                    { key: 'status', label: 'Status', render: (row) => renderBadge(row.status || 'Pending') },
-                    {
-                      key: 'actionButton',
-                      label: 'Action',
-                      render: (row) => (
-                        <button
-                          type="button"
-                          onClick={() => navigate(`${ROUTES.PHARMACY.DISPENSE}/${row._id}`)}
-                          className="h-[34px] px-3 rounded-lg text-xs font-bold bg-[#2F63F2] text-white hover:bg-blue-700 transition-all flex items-center justify-center gap-1 cursor-pointer"
-                        >
-                          <Pill className="w-3.5 h-3.5" />
-                          Serve
-                        </button>
-                      )
-                    }
-                  ]}
-                  data={prescriptions?.slice(0, 5) || []}
-                  loading={prescriptionsLoading}
-                />
+                {dashboardMode === 'opd' ? (
+                  <Table
+                    actionsAlign="center"
+                    headers={[
+                      { 
+                        key: 'tokenNumber', 
+                        label: 'TOKEN', 
+                        render: (row) => {
+                          const tokenVal = row.tokenNumber || row.consultationId?.appointmentId?.tokenNumber || 'OP001';
+                          const formattedToken = String(tokenVal).startsWith('#') ? tokenVal : `#${tokenVal}`;
+                          return (
+                            <span className="px-2.5 py-1 bg-blue-50 border border-blue-200 text-[#2F63F2] font-mono font-bold text-xs rounded-lg inline-block">
+                              {formattedToken}
+                            </span>
+                          );
+                        } 
+                      },
+                      { 
+                        key: 'patientId.uhid', 
+                        label: 'PATIENT ID', 
+                        render: (row) => <span className="font-bold text-[#2F63F2] font-mono">{row.patientId?.uhid || 'N/A'}</span> 
+                      },
+                      { 
+                        key: 'patientId.name', 
+                        label: 'PATIENT NAME', 
+                        render: (row) => <span className="font-bold text-[#111827]">{row.patientId?.name || 'N/A'}</span> 
+                      },
+                      { 
+                        key: 'doctorId.name', 
+                        label: 'DOCTOR', 
+                        render: (row) => <span className="font-semibold text-slate-700">Dr. {row.doctorId?.name || 'N/A'}</span> 
+                      },
+                      { 
+                        key: 'createdAt', 
+                        label: 'CONSULTATION TIME', 
+                        render: (row) => {
+                          if (!row.createdAt) return <span className="font-mono text-slate-600 text-xs">N/A</span>;
+                          const d = new Date(row.createdAt);
+                          return (
+                            <span className="font-mono text-slate-600 text-xs">
+                              {d.toLocaleDateString('en-GB')}, {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                            </span>
+                          );
+                        } 
+                      },
+                      { 
+                        key: 'status', 
+                        label: 'STATUS', 
+                        render: (row) => renderBadge(row.status || 'Pending') 
+                      },
+                      {
+                        key: 'actionButton',
+                        label: 'ACTION',
+                        render: (row) => (
+                          <button
+                            type="button"
+                            onClick={() => navigate(`${ROUTES.PHARMACY.DISPENSE}/${row._id}`)}
+                            className="h-[34px] px-4 rounded-xl text-xs font-bold bg-[#2F63F2] text-white hover:bg-blue-700 transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                          >
+                            <Pill className="w-3.5 h-3.5" />
+                            Serve
+                          </button>
+                        )
+                      }
+                    ]}
+                    data={prescriptions?.slice(0, 5) || []}
+                    loading={prescriptionsLoading}
+                    actions={[
+                      {
+                        label: 'View Prescription',
+                        icon: Eye,
+                        isPrimary: false,
+                        onClick: (row) => navigate(`${ROUTES.PHARMACY.DISPENSE}/${row._id}?action=view`)
+                      },
+                      {
+                        label: 'Billing Summary',
+                        icon: Receipt,
+                        isPrimary: false,
+                        show: () => isBillingEnabled,
+                        onClick: (row) => setSelectedBillingPrescription(row)
+                      }
+                    ]}
+                  />
+                ) : (
+                  <Table
+                    actionsAlign="center"
+                    headers={[
+                      {
+                        key: 'admissionNumber',
+                        label: 'ADMISSION / BED',
+                        render: (row) => (
+                          <div>
+                            <span className="font-bold text-[#2F63F2] font-mono text-xs">{row.admissionNumber || 'ADM'}</span>
+                            <span className="text-[11px] text-slate-500 font-medium block">
+                              Bed: {row.bedNumber || 'N/A'} ({row.wardName || 'Ward'})
+                            </span>
+                          </div>
+                        )
+                      },
+                      {
+                        key: 'uhid',
+                        label: 'PATIENT ID',
+                        render: (row) => <span className="font-bold text-[#2F63F2] font-mono">{row.uhid || row.patientId?.uhid || 'N/A'}</span>
+                      },
+                      {
+                        key: 'patientName',
+                        label: 'PATIENT NAME',
+                        render: (row) => <span className="font-bold text-[#111827]">{row.patientName || row.patientId?.name || 'N/A'}</span>
+                      },
+                      {
+                        key: 'doctorName',
+                        label: 'DOCTOR',
+                        render: (row) => <span className="font-semibold text-slate-700">Dr. {row.doctorName || 'N/A'}</span>
+                      },
+                      {
+                        key: 'round',
+                        label: 'ROUND',
+                        render: (row) => {
+                          const roundNum = row.roundNumber || row.dayNumber || (typeof row.round === 'string' && row.round.replace(/[^0-9]/g, '')) || 1;
+                          return (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200">
+                              Round {roundNum}
+                            </span>
+                          );
+                        }
+                      },
+                      {
+                        key: 'reviewDate',
+                        label: 'PRESCRIBED TIME',
+                        render: (row) => {
+                          const dateVal = row.reviewDate || row.createdAt;
+                          if (!dateVal) return <span className="font-mono text-slate-600 text-xs">N/A</span>;
+                          const d = new Date(dateVal);
+                          return (
+                            <span className="font-mono text-slate-600 text-xs">
+                              {d.toLocaleDateString('en-GB')}, {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                            </span>
+                          );
+                        }
+                      },
+                      {
+                        key: 'status',
+                        label: 'STATUS',
+                        render: (row) => renderBadge(row.status || 'Pending')
+                      },
+                      {
+                        key: 'actionButton',
+                        label: 'ACTION',
+                        render: (row) => (
+                          <button
+                            type="button"
+                            onClick={() => handleStartIpdDispense(row, 'dispense')}
+                            className="h-[34px] px-3.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-[#2F63F2] text-white hover:bg-blue-700 transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap"
+                          >
+                            <Bed className="w-3.5 h-3.5" />
+                            <span>Start Dispensing</span>
+                          </button>
+                        )
+                      }
+                    ]}
+                    data={ipdPrescriptions?.slice(0, 5) || []}
+                    loading={ipdPrescriptionsLoading}
+                    actions={[
+                      {
+                        label: 'View Prescription Details',
+                        icon: Eye,
+                        isPrimary: false,
+                        onClick: (row) => handleStartIpdDispense(row, 'view')
+                      }
+                    ]}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -1249,6 +1939,7 @@ const PharmacyDashboard = () => {
             {/* Queue Table */}
             <div className="border border-[#E5E7EB] rounded-[14px] overflow-hidden bg-white">
               <Table
+                actionsAlign="center"
                 headers={[
                   { key: 'patientId.uhid', label: 'Patient ID', render: (row) => <span className="font-bold text-[#2F63F2] font-mono">{row.patientId?.uhid || 'N/A'}</span> },
                   { key: 'patientId.name', label: 'Patient Name', sortable: true, render: (row) => <span className="font-bold text-[#111827]">{row.patientId?.name || 'N/A'}</span> },
@@ -1280,6 +1971,21 @@ const PharmacyDashboard = () => {
                 ]}
                 data={filteredPrescriptions}
                 loading={prescriptionsLoading}
+                actions={[
+                  {
+                    label: 'View Prescription',
+                    icon: Eye,
+                    isPrimary: false,
+                    onClick: (row) => navigate(`${ROUTES.PHARMACY.DISPENSE}/${row._id}?action=view`)
+                  },
+                  {
+                    label: 'Billing Summary',
+                    icon: Receipt,
+                    isPrimary: false,
+                    show: () => isBillingEnabled,
+                    onClick: (row) => setSelectedBillingPrescription(row)
+                  }
+                ]}
               />
             </div>
           </>
@@ -1379,6 +2085,7 @@ const PharmacyDashboard = () => {
             {/* History Table */}
             <div className="border border-[#E5E7EB] rounded-[14px] overflow-hidden bg-white">
               <Table
+                actionsAlign="center"
                 headers={[
                   { key: 'patientId.uhid', label: 'Patient ID', render: (row) => <span className="font-bold text-[#2F63F2] font-mono">{row.patientId?.uhid || 'N/A'}</span> },
                   { key: 'patientId.name', label: 'Patient Name', sortable: true, render: (row) => <span className="font-bold text-[#111827]">{row.patientId?.name || 'N/A'}</span> },
@@ -1410,13 +2117,15 @@ const PharmacyDashboard = () => {
                           <Eye className="w-3.5 h-3.5 text-[#2F63F2]" />
                           <span>View</span>
                         </button>
-                        <button
-                          onClick={() => handlePrintPrescription(row)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-blue-50 hover:bg-blue-100 text-[#2F63F2] transition-all border border-blue-200"
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                          <span>Invoice</span>
-                        </button>
+                        {isBillingEnabled && (
+                          <button
+                            onClick={() => handlePrintPrescription(row)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-blue-50 hover:bg-blue-100 text-[#2F63F2] transition-all border border-blue-200"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                            <span>Invoice</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => handlePrintLabel(row)}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition-all border border-indigo-200"
@@ -1426,6 +2135,34 @@ const PharmacyDashboard = () => {
                         </button>
                       </div>
                     )
+                  }
+                ]}
+                actions={[
+                  {
+                    label: 'View Prescription',
+                    icon: Eye,
+                    isPrimary: false,
+                    onClick: (row) => setSearchParams({ tab: 'history', prescriptionId: row._id, action: 'view' })
+                  },
+                  {
+                    label: 'Billing Summary',
+                    icon: Receipt,
+                    isPrimary: false,
+                    show: () => isBillingEnabled,
+                    onClick: (row) => setSelectedBillingPrescription(row)
+                  },
+                  {
+                    label: 'Print Invoice',
+                    icon: Printer,
+                    isPrimary: false,
+                    show: () => isBillingEnabled,
+                    onClick: (row) => handlePrintPrescription(row)
+                  },
+                  {
+                    label: 'Print Label',
+                    icon: FileText,
+                    isPrimary: false,
+                    onClick: (row) => handlePrintLabel(row)
                   }
                 ]}
                 data={filteredPrescriptions}
@@ -1590,11 +2327,323 @@ const PharmacyDashboard = () => {
           </div>
         )}
 
+        {/* ========================================================================= */}
+        {/* ROUTE 8: IPD PRESCRIPTION QUEUE PAGE */}
+        {/* ========================================================================= */}
+        {activeTab === 'ipd-queue' && (
+          <>
+            {/* IPD Queue Filters */}
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-3.5">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Search Patient</label>
+                  <div className="relative flex items-center">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none z-10" />
+                    <input
+                      type="text"
+                      placeholder="Patient Name, UHID, Adm #..."
+                      className="enterprise-input w-full h-[40px] text-xs font-medium"
+                      style={{ paddingLeft: '2.5rem' }}
+                      value={searchPatient}
+                      onChange={(e) => setSearchPatient(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Doctor</label>
+                  <select
+                    className="enterprise-input w-full h-[40px] text-xs font-medium cursor-pointer"
+                    value={selectedDoctor}
+                    onChange={(e) => setSelectedDoctor(e.target.value)}
+                  >
+                    <option value="">All Doctors</option>
+                    {doctors?.map(doc => (
+                      <option key={doc._id} value={doc._id}>Dr. {doc.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Date From</label>
+                    <input
+                      type="date"
+                      className="enterprise-input w-full h-[40px] text-xs font-medium px-2"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Date To</label>
+                    <input
+                      type="date"
+                      className="enterprise-input w-full h-[40px] text-xs font-medium px-2"
+                      value={dateTo}
+                      onChange={(e) => setDateTo(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={handleResetFilters}
+                  className="h-[38px] px-4 rounded-xl border border-[#E5E7EB] bg-slate-100 hover:bg-slate-200 text-[#111827] text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className="h-[38px] px-5 rounded-xl bg-[#2F63F2] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  Filter
+                </button>
+              </div>
+            </div>
+
+            {/* IPD Queue Table */}
+            <div className="border border-[#E5E7EB] rounded-[14px] overflow-hidden bg-white">
+              <Table
+                actionsAlign="center"
+                headers={[
+                  {
+                    key: 'uhid',
+                    label: 'PATIENT ID',
+                    render: (row) => <span className="font-bold text-[#2F63F2] font-mono">{row.uhid || row.patientId?.uhid || 'N/A'}</span>
+                  },
+                  {
+                    key: 'patientName',
+                    label: 'PATIENT NAME',
+                    sortable: true,
+                    render: (row) => <span className="font-bold text-[#111827]">{row.patientName || row.patientId?.name || 'N/A'}</span>
+                  },
+                  {
+                    key: 'doctorName',
+                    label: 'DOCTOR',
+                    render: (row) => <span className="font-semibold text-slate-700">Dr. {row.doctorName || 'N/A'}</span>
+                  },
+                  {
+                    key: 'round',
+                    label: 'ROUND',
+                    render: (row) => {
+                      const roundNum = row.roundNumber || row.dayNumber || (typeof row.round === 'string' && row.round.replace(/[^0-9]/g, '')) || 1;
+                      return (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200">
+                          Round {roundNum}
+                        </span>
+                      );
+                    }
+                  },
+                  {
+                    key: 'reviewDate',
+                    label: 'PRESCRIBED DATE',
+                    render: (row) => {
+                      const dateVal = row.reviewDate || row.createdAt;
+                      if (!dateVal) return <span className="font-mono text-slate-600 text-xs">N/A</span>;
+                      const d = new Date(dateVal);
+                      return (
+                        <span className="font-mono text-slate-600 text-xs font-semibold">
+                          {d.toLocaleDateString('en-GB')}
+                        </span>
+                      );
+                    }
+                  },
+                  {
+                    key: 'status',
+                    label: 'STATUS',
+                    render: (row) => renderIpdStatusBadge(row.status, false)
+                  },
+                  {
+                    key: 'actionButton',
+                    label: 'ACTION',
+                    render: (row) => (
+                      <button
+                        type="button"
+                        onClick={() => handleStartIpdDispense(row, 'dispense')}
+                        className="inline-flex items-center gap-1.5 px-3.5 h-[36px] rounded-xl text-xs font-bold uppercase tracking-wider bg-[#2F63F2] hover:bg-blue-700 text-white transition-all shadow-xs cursor-pointer whitespace-nowrap"
+                      >
+                        <Bed className="w-3.5 h-3.5" />
+                        <span>Start Dispensing</span>
+                      </button>
+                    )
+                  }
+                ]}
+                data={filteredIpdPrescriptions}
+                loading={ipdPrescriptionsLoading}
+                actions={[
+                  {
+                    label: 'View Prescription Details',
+                    icon: Eye,
+                    isPrimary: false,
+                    onClick: (row) => handleStartIpdDispense(row, 'view')
+                  }
+                ]}
+              />
+            </div>
+          </>
+        )}
+
+        {/* ========================================================================= */}
+        {/* ROUTE 9: IPD DISPENSED HISTORY PAGE */}
+        {/* ========================================================================= */}
+        {activeTab === 'ipd-history' && (
+          <>
+            {/* IPD History Filters */}
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-3.5">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Search Patient</label>
+                  <div className="relative flex items-center">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none z-10" />
+                    <input
+                      type="text"
+                      placeholder="Patient Name, UHID, Adm #..."
+                      className="enterprise-input w-full h-[40px] text-xs font-medium"
+                      style={{ paddingLeft: '2.5rem' }}
+                      value={searchPatient}
+                      onChange={(e) => setSearchPatient(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Doctor</label>
+                  <select
+                    className="enterprise-input w-full h-[40px] text-xs font-medium cursor-pointer"
+                    value={selectedDoctor}
+                    onChange={(e) => setSelectedDoctor(e.target.value)}
+                  >
+                    <option value="">All Doctors</option>
+                    {doctors?.map(doc => (
+                      <option key={doc._id} value={doc._id}>Dr. {doc.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Date From</label>
+                    <input
+                      type="date"
+                      className="enterprise-input w-full h-[40px] text-xs font-medium px-2"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Date To</label>
+                    <input
+                      type="date"
+                      className="enterprise-input w-full h-[40px] text-xs font-medium px-2"
+                      value={dateTo}
+                      onChange={(e) => setDateTo(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={handleResetFilters}
+                  className="h-[38px] px-4 rounded-xl border border-[#E5E7EB] bg-slate-100 hover:bg-slate-200 text-[#111827] text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className="h-[38px] px-5 rounded-xl bg-[#2F63F2] hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  Filter
+                </button>
+              </div>
+            </div>
+
+            {/* IPD History Table */}
+            <div className="border border-[#E5E7EB] rounded-[14px] overflow-hidden bg-white">
+              <Table
+                headers={[
+                  {
+                    key: 'uhid',
+                    label: 'PATIENT ID',
+                    render: (row) => <span className="font-bold text-[#2F63F2] font-mono">{row.uhid || row.patientId?.uhid || 'N/A'}</span>
+                  },
+                  {
+                    key: 'patientName',
+                    label: 'PATIENT NAME',
+                    sortable: true,
+                    render: (row) => <span className="font-bold text-[#111827]">{row.patientName || row.patientId?.name || 'N/A'}</span>
+                  },
+                  {
+                    key: 'doctorName',
+                    label: 'DOCTOR',
+                    render: (row) => <span className="font-semibold text-slate-700">Dr. {row.doctorName || 'N/A'}</span>
+                  },
+                  {
+                    key: 'round',
+                    label: 'ROUND',
+                    render: (row) => {
+                      const roundNum = row.roundNumber || row.dayNumber || (typeof row.round === 'string' && row.round.replace(/[^0-9]/g, '')) || 1;
+                      return (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200">
+                          Round {roundNum}
+                        </span>
+                      );
+                    }
+                  },
+                  {
+                    key: 'dispensedDate',
+                    label: 'DISPENSED DATE',
+                    render: (row) => {
+                      const dateVal = row.prescriptionSentDate || row.reviewDate || row.createdAt || row.dispensedAt;
+                      if (!dateVal) return <span className="font-mono text-slate-600 text-xs">N/A</span>;
+                      const d = new Date(dateVal);
+                      return (
+                        <span className="font-mono text-slate-600 text-xs font-semibold">
+                          {d.toLocaleDateString('en-GB')}
+                        </span>
+                      );
+                    }
+                  },
+                  {
+                    key: 'status',
+                    label: 'STATUS',
+                    render: (row) => renderIpdStatusBadge(row.status, true)
+                  },
+                  {
+                    key: 'actions',
+                    label: 'ACTIONS',
+                    render: (row) => (
+                      <button
+                        type="button"
+                        onClick={() => handleStartIpdDispense(row, 'view')}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-[#111827] transition-all border border-[#E5E7EB] cursor-pointer whitespace-nowrap"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-[#2F63F2]" />
+                        <span>View Prescription</span>
+                      </button>
+                    )
+                  }
+                ]}
+                data={filteredIpdPrescriptions}
+                loading={ipdPrescriptionsLoading}
+              />
+            </div>
+          </>
+        )}
+
 
 
       </div>
 
-      {/* Modal: Add Medicine */}
+      {/* Modal: Dispense IPD Ward Medications */}
+            {/* Modal: Add Medicine */}
       <Modal isOpen={isMedModalOpen} onClose={() => setIsMedModalOpen(false)} title="Add Medicine to Catalog">
         <form onSubmit={(e) => {
           e.preventDefault();
@@ -1627,11 +2676,21 @@ const PharmacyDashboard = () => {
             onChange={(e) => setMedForm({ ...medForm, rackNo: e.target.value })}
           />
           <div className="flex justify-end gap-2 pt-4 border-t border-[#E5E7EB]">
-            <Button type="button" variant="secondary" onClick={() => setIsMedModalOpen(false)} className="h-[40px]">Cancel</Button>
+            <Button type="button" variant="secondary" onClick={() => setIsMedModalOpen(false)} className="h-[40px]">Close</Button>
             <Button type="submit" variant="primary" loading={addMedicineMutation.isPending} className="h-[40px] bg-[#2F63F2]">Add Medicine</Button>
           </div>
         </form>
       </Modal>
+
+      {/* Patient Billing Summary Modal (Shown only if Billing feature flag is enabled) */}
+      {isBillingEnabled && (
+        <BillingSummaryModal
+          isOpen={!!selectedBillingPrescription}
+          onClose={() => setSelectedBillingPrescription(null)}
+          appointment={selectedBillingPrescription?.appointmentId || selectedBillingPrescription?.consultationId?.appointmentId || selectedBillingPrescription}
+          consultationId={selectedBillingPrescription?.consultationId?._id || selectedBillingPrescription?.consultationId}
+        />
+      )}
     </div>
   );
 };

@@ -112,3 +112,5 @@ class WorkflowRealtimeService {
 }
 
 export const workflowRealtime = new WorkflowRealtimeService();
+export default workflowRealtime;
+

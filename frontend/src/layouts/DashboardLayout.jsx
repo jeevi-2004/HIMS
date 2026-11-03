@@ -28,7 +28,7 @@ const DashboardLayout = ({ children }) => {
       <SharedSidebar sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
 
       {/* Main Content & Header Area */}
-      <div className="flex-1 flex flex-col min-h-screen min-w-0 md:pl-[270px] pb-20 md:pb-0">
+      <div className="flex-1 flex flex-col min-h-screen min-w-0 md:pl-[270px] pb-24 sm:pb-28 md:pb-0">
         {/* Subscription Expired Warning Banner */}
         {isSubscriptionInactive && (
           <div className="bg-amber-600 text-white px-4 py-2.5 text-xs font-semibold flex items-center justify-between shadow-xs sticky top-0 z-30">

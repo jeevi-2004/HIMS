@@ -1,19 +1,45 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { useBillingSettings } from '../context/BillingSettingsContext';
 import { workflowRealtime } from '../services/workflowRealtimeService';
 import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
 import { 
-  Volume2, Maximize, Sun, Moon, Ticket, DoorOpen, Activity, Pill, ShieldCheck, CheckCircle2, Clock, Globe
+  Volume2, Maximize, Sun, Moon, Ticket, DoorOpen, Activity, Pill, ShieldCheck, CheckCircle2, Clock, Globe, ArrowLeft
 } from 'lucide-react';
 
 const DigitalDisplayBoard = () => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const { queueEngine } = useBillingSettings();
   const [theme, setTheme] = useState('dark'); // 'dark' | 'light'
   const [currentTime, setCurrentTime] = useState(new Date());
   const [voiceLang, setVoiceLang] = useState('en-US');
   const [voiceSpeed, setVoiceSpeed] = useState(1.0);
+
+  const handleBackToDashboard = () => {
+    // If navigation history exists within the application, go back
+    if (window.history.state && window.history.state.idx > 0) {
+      navigate(-1);
+      return;
+    }
+
+    // Role-based dashboard destination
+    const role = (user?.role || '').toUpperCase();
+    if (role === 'SUPER_ADMIN') {
+      navigate('/superadmin/dashboard');
+    } else if (role === 'RECEPTIONIST') {
+      navigate('/reception/dashboard');
+    } else if (role === 'DOCTOR') {
+      navigate('/doctor/dashboard');
+    } else if (role === 'PHARMACIST') {
+      navigate('/pharmacy/dashboard');
+    } else {
+      navigate('/admin/dashboard');
+    }
+  };
 
   // Clock
   useEffect(() => {
@@ -45,8 +71,17 @@ const DigitalDisplayBoard = () => {
   useEffect(() => {
     const unsubscribe = workflowRealtime.subscribe((event) => {
       refetch();
+      if (!event) return;
+      const eventType = event.type || '';
+      const qState = (event.queueState || event.queueStatus || event.status || '').toUpperCase();
 
-      if (event.type === 'PatientCalled' || event.queueState === 'CALLED' || event.queueState === 'IN_CONSULTATION') {
+      const isCallEvent =
+        eventType === 'TriggerVoiceCall' ||
+        eventType === 'ConsultationStarted' ||
+        (eventType === 'PatientCalled' && (qState === 'CALLED' || qState.includes('CONSULTATION'))) ||
+        qState === 'IN_CONSULTATION';
+
+      if (isCallEvent && (event.tokenNumber || event.token)) {
         voiceAnnouncement.announceCall(event);
       }
     });
@@ -73,7 +108,7 @@ const DigitalDisplayBoard = () => {
   const emergencyPatients = appointments.filter(a => {
     const st = (a.workflow?.queueState || a.queueStatus || a.status || '').toUpperCase();
     const isCompleted = st === 'COMPLETED' || st === 'SENT_TO_PHARMACY' || st === 'SENT TO PHARMACY' || a.pharmacyStatus === 'SENT' || a.pharmacyStatus === 'DISPENSING' || a.pharmacyStatus === 'DISPENSED';
-    const isEmg = a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || (a.consultationType || '').toLowerCase() === 'emergency' || (a.tokenNumber || '').startsWith('EMG');
+    const isEmg = a.isEmergency || a.priorityLevel === 'EMERGENCY' || a.priority === 'EMERGENCY' || (a.consultationType || '').toLowerCase() === 'emergency' || String(a.tokenNumber || '').startsWith('EMG');
     
     // Only show Emergency patients who are BEFORE consultation (WAITING / READY / SCHEDULED / ARRIVED) or IN CONSULTATION
     return isEmg && !isCompleted && (st === 'WAITING' || st === 'READY' || st === 'SCHEDULED' || st === 'ARRIVED' || st === 'IN_CONSULTATION' || st === 'IN-CONSULTATION' || st === 'CALLED');
@@ -143,6 +178,20 @@ const DigitalDisplayBoard = () => {
       {/* Top Header */}
       <header className="flex flex-col md:flex-row items-start md:items-center justify-between border-b border-slate-800 pb-4 mb-6 gap-4">
         <div className="flex items-center gap-3">
+          {/* Quick Back Arrow Button */}
+          <button
+            type="button"
+            onClick={handleBackToDashboard}
+            title="Back to Dashboard"
+            className={`flex items-center justify-center w-11 h-11 rounded-2xl transition-all cursor-pointer shrink-0 border ${
+              isDark 
+                ? 'bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700/80 shadow-md' 
+                : 'bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 border-slate-200 shadow-sm'
+            }`}
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          
           <div className="w-12 h-12 rounded-2xl bg-[#3B5BDB] flex items-center justify-center text-white font-extrabold text-xl shadow-lg">
             VZ
           </div>

@@ -81,6 +81,10 @@ const PatientSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  diagnosis: {
+    type: String,
+    trim: true
+  },
   allergies: [{
     type: String,
     trim: true

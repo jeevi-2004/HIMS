@@ -110,6 +110,10 @@ const HospitalSchema = new mongoose.Schema({
     enum: ['TOKEN_ONLY', 'FULL_DIGITAL'],
     default: 'FULL_DIGITAL'
   },
+  ipd_requested: {
+    type: Boolean,
+    default: false
+  },
   featureModules: {
     type: Map,
     of: Boolean,

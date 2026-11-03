@@ -1,60 +1,245 @@
 import React, { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { useQuery } from '@tanstack/react-query';
+import api from '../services/api';
 import { 
-  X, Search, Calendar, Clock, Pill, FlaskConical, HeartPulse, ChevronRight, ChevronUp
+  X, Search, Calendar, Clock, Pill, FlaskConical, HeartPulse, ChevronRight, ChevronUp, AlertCircle
 } from 'lucide-react';
 
-const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopyPrescription }) => {
+const PatientHistoryDrawer = ({ 
+  isOpen, 
+  onClose, 
+  patient, 
+  patientHistory, 
+  title,
+  isLoading: externalLoading,
+  onCopyPrescription 
+}) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedVisitId, setExpandedVisitId] = useState(null);
   const [expandedSectionMap, setExpandedSectionMap] = useState({});
 
-  const visits = useMemo(() => {
-    const rawSnapshots = patientHistory?.snapshots || [];
-    const rawConsultations = patientHistory?.consultations || [];
+  const patientId = patient?._id || (typeof patient === 'string' ? patient : null);
 
-    if (rawSnapshots.length > 0) {
-      const snapConsultationIds = new Set(rawSnapshots.map(s => String(s.consultationId || s._id)));
-      
-      const snapshotVisits = rawSnapshots.map(s => ({
-        _id: s._id,
-        isSnapshot: true,
-        consultationId: s.consultationId,
-        appointmentId: s.appointmentId,
-        createdAt: s.completedAt || s.createdAt,
-        date: s.consultationDate || s.createdAt,
-        doctorId: { name: s.doctor?.name || 'Doctor' },
-        doctorName: s.doctor?.name,
-        doctorSpecialization: s.doctor?.specialization,
-        hospitalName: s.hospital?.name,
-        diagnosis: s.diagnosis || s.primaryDiagnosis,
-        chiefComplaint: s.chiefComplaint,
-        clinicalNotes: s.clinicalNotes,
-        advice: s.doctorAdvice,
-        vitals: s.vitals,
-        prescriptions: (s.prescriptions || []).map(p => ({
-          medicineName: p.medicineName,
-          dosage: p.dose || `${p.morning || '1'}-${p.afternoon || '0'}-${p.night || '1'}`,
+  // Auto-fetch patient history if not passed from parent
+  const { data: fetchedHistory, isLoading: isFetchingHistory } = useQuery({
+    queryKey: ['patientHistoryDrawerAutoFetch', patientId],
+    queryFn: async () => {
+      if (!patientId) return null;
+      const res = await api.get(`/operations/patients/${patientId}/history`);
+      return res.data?.data || null;
+    },
+    enabled: isOpen && !!patientId && !patientHistory
+  });
+
+  const effectiveHistory = patientHistory || fetchedHistory;
+  const isLoading = Boolean(externalLoading || (!patientHistory && isFetchingHistory));
+
+  const activePatient = useMemo(() => ({
+    ...(typeof patient === 'object' ? patient : {}),
+    ...(effectiveHistory?.patient || {})
+  }), [patient, effectiveHistory]);
+
+  const visits = useMemo(() => {
+    if (!effectiveHistory) return [];
+
+    let rawList = [];
+    if (Array.isArray(effectiveHistory)) {
+      rawList = effectiveHistory;
+    } else if (Array.isArray(effectiveHistory.history) && effectiveHistory.history.length > 0) {
+      rawList = effectiveHistory.history;
+    } else if (Array.isArray(effectiveHistory.snapshots) && effectiveHistory.snapshots.length > 0) {
+      rawList = effectiveHistory.snapshots;
+    } else if (Array.isArray(effectiveHistory.consultations) && effectiveHistory.consultations.length > 0) {
+      rawList = effectiveHistory.consultations;
+    }
+
+    // Deduplicate items cleanly by composite encounter keys
+    const seenKeys = new Set();
+    const deduplicated = [];
+
+    rawList.forEach((item, idx) => {
+      if (!item) return;
+      const recId = String(item._id || `item_${idx}`);
+      const apptId = item.appointmentId ? String(item.appointmentId?._id || item.appointmentId) : null;
+      const consultId = item.consultationId ? String(item.consultationId?._id || item.consultationId) : null;
+      const isIPDDailyReview = Boolean(item.isIPDDailyReview || (item.isIpd && (item.roundNumber || item.dayNumber)));
+      const isIPDAdmission = Boolean(item.isIPDAdmission || item.isIPDEncounter || (item.isIpd && !isIPDDailyReview));
+      const roundVal = item.dayNumber || item.roundNumber || item.day || 1;
+
+      // Suppress duplicate admission encounter if daily rounds already represent this admission and admission card has no separate prescriptions
+      const hasRoundEncounters = rawList.some(other => 
+        Boolean(other?.isIPDDailyReview || (other?.isIpd && (other?.roundNumber || other?.dayNumber))) &&
+        (other.admissionId === item.admissionId || other.admissionId === item._id)
+      );
+      if (isIPDAdmission && hasRoundEncounters && (!item.prescriptions || item.prescriptions.length === 0)) {
+        return;
+      }
+
+      let key = recId;
+      if (isIPDDailyReview) {
+        key = `ipd_round_${item.admissionId || ''}_${roundVal}`;
+      } else if (isIPDAdmission || item.isIpd) {
+        key = `ipd_adm_${item.admissionId || recId}`;
+      } else if (apptId) {
+        key = `opd_appt_${apptId}`;
+      } else if (consultId) {
+        key = `opd_consult_${consultId}`;
+      }
+
+      if (seenKeys.has(key)) return;
+      if (isIPDDailyReview && item.admissionId && seenKeys.has(`ipd_round_${item.admissionId}_${roundVal}`)) return;
+      if (isIPDAdmission && item.admissionId && seenKeys.has(`ipd_adm_${item.admissionId}`)) return;
+      if (apptId && seenKeys.has(`opd_appt_${apptId}`)) return;
+      if (consultId && seenKeys.has(`opd_consult_${consultId}`)) return;
+      if (recId && seenKeys.has(recId)) return;
+
+      seenKeys.add(key);
+      if (recId) seenKeys.add(recId);
+      if (isIPDDailyReview && item.admissionId) seenKeys.add(`ipd_round_${item.admissionId}_${roundVal}`);
+      if (isIPDAdmission && item.admissionId) seenKeys.add(`ipd_adm_${item.admissionId}`);
+      if (apptId) seenKeys.add(`opd_appt_${apptId}`);
+      if (consultId) seenKeys.add(`opd_consult_${consultId}`);
+
+      // Normalize fields
+      const dateVal = item.consultationDate || item.completedAt || item.date || item.createdAt;
+      const docName = item.doctor?.name || item.doctorName || item.doctorId?.name || (typeof item.doctorId === 'string' ? item.doctorId : null) || 'Doctor';
+      const docSpec = item.doctor?.specialization || item.doctorSpecialization || item.doctorId?.specialization || (isIPDDailyReview ? `IPD Daily Consultation (Round ${roundVal})` : (item.isIpd ? 'In-Patient Department (IPD)' : 'General OPD'));
+      const tokenNum = item.tokenNumber || item.appointmentId?.tokenNumber || item.token || '';
+
+      const rxList = (item.prescriptions && item.prescriptions.length > 0)
+        ? item.prescriptions
+        : (item.items && item.items.length > 0)
+          ? item.items
+          : [];
+
+// Helper to sanitize and extract genuine clinical notes from legacy pipe-delimited dumps
+const cleanClinicalNotes = (notes) => {
+  if (!notes || typeof notes !== 'string') return '';
+  let cleaned = notes.trim();
+  // Strip out legacy raw pipe-separated admin metadata if present
+  // e.g. "Admission No: IPD-2026-0006 | Type: OPD Transfer | Ward/Bed: Bed 102 | Reason: ... | Clinical Notes: <actual_notes>"
+  if (cleaned.includes(' | ') && (cleaned.includes('Admission No:') || cleaned.includes('Clinical Notes:') || cleaned.includes('Ward/Bed:'))) {
+    const parts = cleaned.split(' | ');
+    const notePart = parts.find(p => p.startsWith('Clinical Notes:'));
+    if (notePart) {
+      cleaned = notePart.replace(/^Clinical Notes:\s*/, '').trim();
+    } else {
+      const nonMetaParts = parts.filter(p => !/^(Admission No|Type|Ward\/Bed|Reason):/.test(p));
+      cleaned = nonMetaParts.length > 0 ? nonMetaParts.join('\n') : parts[parts.length - 1];
+    }
+  }
+  // Remove accidental double "Dr. Dr."
+  cleaned = cleaned.replace(/Dr\.\s+Dr\./gi, 'Dr.').trim();
+  return cleaned;
+};
+
+// Helper to sanitize doctor advice from administrative placeholder strings
+const cleanDoctorAdvice = (advice) => {
+  if (!advice || typeof advice !== 'string') return '';
+  const trimmed = advice.trim();
+  // Suppress artificial administrative placeholder advice
+  if (/^Active Inpatient Admission/i.test(trimmed)) {
+    return '';
+  }
+  return trimmed.replace(/Dr\.\s+Dr\./gi, 'Dr.');
+};
+
+const extractText = (val, fallback = '') => {
+  if (!val) return fallback;
+  if (typeof val === 'string') return val;
+  if (Array.isArray(val)) {
+    return val.map(v => (typeof v === 'string' ? v : v?.name || v?.complaint || v?.diagnosis || v?.text || '')).filter(Boolean).join(', ') || fallback;
+  }
+  if (typeof val === 'object') {
+    return val.name || val.complaint || val.diagnosis || val.text || val.val || fallback;
+  }
+  return String(val);
+};
+
+      deduplicated.push({
+        ...item,
+        _id: recId,
+        date: dateVal,
+        createdAt: dateVal,
+        doctorName: docName,
+        doctorId: { name: docName },
+        doctorSpecialization: docSpec,
+        tokenNumber: tokenNum,
+        wardBed: item.wardBed || item.bedLabel || (item.bedNumber ? `Bed ${item.bedNumber}` : (item.bedId ? `Bed ${item.bedId?.bedNumber || ''}` : '')),
+        admissionId: item.admissionId || '',
+        admissionType: item.admissionType || '',
+        isIpd: !!(item.isIpd || item.isIPDAdmission || item.isIPDDailyReview || item.admissionId),
+        isIPDDailyReview: !!(item.isIPDDailyReview || item.roundNumber),
+        dayNumber: item.dayNumber || item.roundNumber || null,
+        diagnosis: extractText(item.diagnosis || item.primaryDiagnosis, 'General Consultation'),
+        primaryDiagnosis: extractText(item.primaryDiagnosis || item.diagnosis, 'General Consultation'),
+        chiefComplaint: extractText(item.chiefComplaint || item.chiefComplaints || item.reasonForAdmission || item.symptoms || item.diagnosis, 'None specified'),
+        clinicalNotes: cleanClinicalNotes(item.clinicalNotes || item.notes || item.assessmentNotes || ''),
+        advice: cleanDoctorAdvice(item.doctorAdvice || item.advice || item.generalInstructions || ''),
+        vitals: item.vitals || item.appointmentId?.vitals || {},
+        prescriptions: rxList.map(p => ({
+          medicineName: p.medicineName || p.name || 'Medicine',
+          dosage: p.dosage || p.dose || (p.morning !== undefined ? `${p.morning || '1'}-${p.afternoon || '0'}-${p.night || '1'}` : (p.frequency || '1-0-1')),
           morning: p.morning || (p.dose && p.dose.split('-')[0]) || '1',
           afternoon: p.afternoon || (p.dose && p.dose.split('-')[1]) || '0',
           night: p.night || (p.dose && p.dose.split('-')[2]) || '1',
-          duration: p.duration,
-          instructions: p.timing || p.foodInstruction,
-          foodTiming: p.timing || p.foodInstruction,
-          quantity: p.quantity,
-          notes: p.remarks
+          duration: p.duration || '3 Days',
+          instructions: p.instructions || p.timing || p.foodInstruction || p.foodTiming || 'After Food',
+          foodTiming: p.foodTiming || p.instructions || p.timing || p.foodInstruction || 'After Food',
+          quantity: p.quantity !== undefined ? p.quantity : 1,
+          notes: p.notes || p.remarks || '—'
         })),
-        investigations: (s.investigations || []).map(inv => typeof inv === 'string' ? inv : (inv.investigationName || inv.name)),
-        followupDate: s.followupDate,
-        followupReason: s.followupReason,
-        version: s.snapshotVersion
-      }));
+        investigations: (item.investigations || item.appointmentId?.investigations || []).map(inv => 
+          typeof inv === 'string' ? inv : (inv.investigationName || inv.name || inv.code)
+        )
+      });
+    });
 
-      const unSnapshotted = rawConsultations.filter(c => !snapConsultationIds.has(String(c._id)));
-      return [...snapshotVisits, ...unSnapshotted];
-    }
-    return rawConsultations;
-  }, [patientHistory]);
+    // Smart sort:
+    //  - Overall order: newest date first (most recent admission / OPD visit at top)
+    //  - Within the SAME IPD admission: IPD Admission card first, then daily rounds in
+    //    ascending round order (Round 1 → Round 2 → Round 3 …)
+    //  - OPD visits: sorted newest date first among themselves
+
+    // Step 1 — compute a "group anchor date" for each item.
+    //   For IPD daily rounds, use the admission's own date so the whole group
+    //   sorts together with the admission anchor.
+    const admAnchorDate = {};
+    deduplicated.forEach(item => {
+      if (item.admissionId) {
+        const d = new Date(item.date || item.createdAt || 0).getTime();
+        if (!admAnchorDate[item.admissionId] || d < admAnchorDate[item.admissionId]) {
+          admAnchorDate[item.admissionId] = d; // earliest date of any item in this admission
+        }
+      }
+    });
+
+    deduplicated.sort((a, b) => {
+      const aAdmId = a.admissionId || null;
+      const bAdmId = b.admissionId || null;
+
+      // ── Same IPD admission group ──────────────────────────────────────
+      if (aAdmId && bAdmId && aAdmId === bAdmId) {
+        // Admission header card (isIPDAdmission && !isIPDDailyReview) comes first
+        const aIsHeader = a.isIPDAdmission && !a.isIPDDailyReview;
+        const bIsHeader = b.isIPDAdmission && !b.isIPDDailyReview;
+        if (aIsHeader && !bIsHeader) return -1;
+        if (!aIsHeader && bIsHeader) return 1;
+        // Both are daily rounds → sort ascending by round number
+        const aRound = Number(a.dayNumber || a.roundNumber || 0);
+        const bRound = Number(b.dayNumber || b.roundNumber || 0);
+        return aRound - bRound;
+      }
+
+      // ── Different groups — sort by anchor date, newest first ──────────
+      const aDate = aAdmId ? (admAnchorDate[aAdmId] || 0) : new Date(a.date || a.createdAt || 0).getTime();
+      const bDate = bAdmId ? (admAnchorDate[bAdmId] || 0) : new Date(b.date || b.createdAt || 0).getTime();
+      return bDate - aDate;
+    });
+
+    return deduplicated;
+  }, [effectiveHistory]);
 
   const consultations = visits;
 
@@ -67,37 +252,48 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
     } else {
       setExpandedVisitId(null);
     }
-  }, [patientHistory, patient?._id, consultations]);
+  }, [effectiveHistory, patientId, consultations]);
 
   const filteredConsultations = useMemo(() => {
     if (!searchQuery.trim()) return consultations;
     const q = searchQuery.trim().toLowerCase();
 
     return consultations.filter(c => {
-      const docName = (c.doctorId?.name || c.doctorName || '').toLowerCase();
-      const diag = (c.diagnosis || c.primaryDiagnosis || '').toLowerCase();
-      const complaint = (c.chiefComplaint || '').toLowerCase();
-      const notes = (c.clinicalNotes || '').toLowerCase();
-      const dateStr = new Date(c.createdAt || c.date).toLocaleDateString().toLowerCase();
+      const docName = String(c.doctorId?.name || c.doctorName || '').toLowerCase();
+      const diag = String(c.diagnosis || c.primaryDiagnosis || '').toLowerCase();
+      const complaint = String(c.chiefComplaint || '').toLowerCase();
+      const notes = String(c.clinicalNotes || '').toLowerCase();
+      const token = String(c.tokenNumber || '').toLowerCase();
+      const dateStr = new Date(c.createdAt || c.date || Date.now()).toLocaleDateString().toLowerCase();
 
       const rxMatch = (c.prescriptions || []).some(m => (m.medicineName || '').toLowerCase().includes(q));
       const invMatch = Array.isArray(c.investigations)
         ? c.investigations.some(i => (typeof i === 'string' ? i : i.investigationName || '').toLowerCase().includes(q))
         : (c.investigations || '').toLowerCase().includes(q);
 
-      return docName.includes(q) || diag.includes(q) || complaint.includes(q) || notes.includes(q) || dateStr.includes(q) || rxMatch || invMatch;
+      return docName.includes(q) || diag.includes(q) || complaint.includes(q) || notes.includes(q) || token.includes(q) || dateStr.includes(q) || rxMatch || invMatch;
     });
   }, [consultations, searchQuery]);
 
   // Helper to get prescriptions for a consultation
   const getPrescriptionsForVisit = (c) => {
-    if (c.prescriptions && c.prescriptions.length > 0) {
+    if (c.prescriptions && Array.isArray(c.prescriptions) && c.prescriptions.length > 0) {
       return c.prescriptions;
     }
-    const matchedRx = (patientHistory?.prescriptions || []).find(p => 
-      String(p.consultationId?._id || p.consultationId) === String(c._id) ||
-      String(p.appointmentId?._id || p.appointmentId) === String(c.appointmentId?._id || c.appointmentId)
-    );
+    // Admission encounter should NEVER fall back to picking up routine daily round prescriptions
+    if (c.isIPDAdmission && !c.isIPDDailyReview && !c.roundNumber) {
+      return [];
+    }
+    // Fallback: only match prescriptions explicitly belonging to this specific consultation
+    const matchedRx = (effectiveHistory?.prescriptions || []).find(p => {
+      if (p.consultationId && String(p.consultationId?._id || p.consultationId) === String(c._id)) {
+        return true;
+      }
+      if (!c.isIpd && !p.isIpd && !p.admissionId && c.appointmentId) {
+        return String(p.appointmentId?._id || p.appointmentId) === String(c.appointmentId?._id || c.appointmentId);
+      }
+      return false;
+    });
     if (matchedRx?.items && matchedRx.items.length > 0) {
       return matchedRx.items;
     }
@@ -117,10 +313,10 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
 
   // Helper to get investigations for a consultation
   const getInvestigationsForVisit = (c) => {
-    if (c.investigations) {
+    if (c.investigations && c.investigations.length > 0) {
       return c.investigations;
     }
-    if (c.appointmentId?.investigations) {
+    if (c.appointmentId?.investigations && c.appointmentId.investigations.length > 0) {
       return c.appointmentId.investigations;
     }
     return null;
@@ -135,6 +331,8 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
     }));
   };
 
+  const headerTitle = title || (activePatient?.name ? `VISIT HISTORY - ${activePatient.name.toUpperCase()}` : 'VISIT HISTORY');
+
   const drawerContent = (
     <div className="fixed inset-0 z-[99999] overflow-y-auto font-sans print:hidden flex items-center justify-center p-3 sm:p-6">
       {/* Full Screen Overlay Backdrop */}
@@ -147,17 +345,23 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
       <div className="relative w-full max-w-4xl lg:max-w-5xl max-h-[92vh] sm:max-h-[90vh] bg-white shadow-2xl rounded-2xl sm:rounded-3xl border border-slate-200/90 flex flex-col text-left overflow-hidden z-[100000] font-sans my-auto">
         
         {/* Header */}
-        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
           <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm sm:text-base font-black text-slate-900 tracking-tight">{patient?.name || 'Patient'}</h3>
-              <span className="text-[11px] sm:text-xs font-bold text-slate-500 font-mono">• {patient?.gender || 'N/A'}, {patient?.age ? `${patient.age}Y` : 'N/A'}</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-base sm:text-lg font-black text-[#2F63F2] tracking-tight uppercase">
+                {headerTitle}
+              </h3>
+              {(activePatient?.gender || activePatient?.age) && (
+                <span className="text-[11px] sm:text-xs font-bold text-slate-500 font-mono">
+                  • {activePatient?.gender || 'N/A'}, {activePatient?.age ? `${activePatient.age}Y` : 'N/A'}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2 text-[10px] sm:text-xs text-slate-400 font-mono mt-0.5 font-bold">
-              <span>UHID: {patient?.uhid || 'N/A'}</span>
-              {patient?.bloodGroup && (
+              <span>UHID: {activePatient?.uhid || 'N/A'}</span>
+              {activePatient?.bloodGroup && (
                 <span className="bg-red-50 text-red-600 border border-red-200/60 px-1.5 py-0.2 rounded text-[10px] uppercase font-bold">
-                  {patient.bloodGroup}
+                  {activePatient.bloodGroup}
                 </span>
               )}
             </div>
@@ -166,7 +370,7 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
           <button
             type="button"
             onClick={onClose}
-            className="p-1 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
             title="Close"
           >
             <X className="w-5 h-5" />
@@ -176,19 +380,25 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
         {/* Filter Search Input */}
         <div className="px-4 sm:px-6 py-2.5 sm:py-3 border-b border-slate-100 bg-white shrink-0">
           <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search history by diagnosis, medicine, test, doctor, date..."
-              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200/90 rounded-xl sm:rounded-2xl text-xs text-slate-700 font-medium placeholder-slate-400 focus:outline-none focus:border-[#2F63F2] focus:bg-white transition-all"
+              placeholder="Search history by diagnosis, token, medicine, test, doctor, date..."
+              className="w-full pl-9 pr-3.5 py-2 bg-slate-50 border border-slate-200/90 rounded-xl sm:rounded-2xl text-xs text-slate-700 font-medium placeholder-slate-400 focus:outline-none focus:border-[#2F63F2] focus:bg-white transition-all"
             />
           </div>
         </div>
 
         {/* Timeline Body */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-3 sm:space-y-4 text-left">
-          {filteredConsultations.length === 0 ? (
+          {isLoading ? (
+            <div className="p-16 text-center text-slate-400 font-medium space-y-3">
+              <div className="w-8 h-8 border-2 border-[#2F63F2] border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-xs font-mono font-bold text-slate-600">Loading visit history records...</p>
+            </div>
+          ) : filteredConsultations.length === 0 ? (
             <div className="text-center py-16 bg-slate-50 border border-dashed border-slate-200 rounded-2xl">
               <Calendar className="w-10 h-10 text-slate-300 mx-auto mb-2" />
               <h4 className="text-sm font-bold text-slate-600">No medical history records found</h4>
@@ -248,20 +458,73 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
 
                         {/* Doctor Name & Specialization */}
                         <div className="min-w-0">
-                          <h4 className="text-sm font-black text-slate-900 tracking-tight">
-                            Dr. {c.doctorId?.name || c.doctorName || 'Consultant'}
-                          </h4>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="text-sm font-black text-slate-900 tracking-tight">
+                              {(() => {
+                                const rawName = c.doctorName || c.doctorId?.name || 'Consultant';
+                                return rawName.toLowerCase().startsWith('dr.') ? rawName : `Dr. ${rawName}`;
+                              })()}
+                            </h4>
+                            {c.tokenNumber && !c.isIpd && !c.isIPDDailyReview && (
+                              <span className="text-[10px] font-bold text-[#2F63F2] bg-[#2F63F2]/10 border border-[#2F63F2]/20 px-2 py-0.5 rounded-lg font-mono">
+                                Token #{c.tokenNumber}
+                              </span>
+                            )}
+                            {c.admissionId && (
+                              <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-2 py-0.5 rounded-lg font-mono">
+                                {c.admissionId}
+                              </span>
+                            )}
+                            {c.isIPDDailyReview && (
+                              <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-lg font-mono">
+                                Round {c.dayNumber || c.roundNumber || 1}
+                              </span>
+                            )}
+                            {(() => {
+                              if (!c.wardBed) return null;
+                              let combinedLabel = c.wardBed;
+                              if (c.wardBed.includes(' | ') || c.wardBed.includes(' - ')) {
+                                const parts = c.wardBed.split(/ \| | - /);
+                                if (parts[0] && parts[1]) {
+                                  combinedLabel = `${parts[0].trim()} / ${parts[1].trim()}`;
+                                }
+                              }
+                              return (
+                                <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-200/80 px-2.5 py-0.5 rounded-lg">
+                                  {combinedLabel}
+                                </span>
+                              );
+                            })()}
+                            {c.admissionType && c.admissionType !== 'Routine Admission' && (
+                              <span className="text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-lg">
+                                {c.admissionType}
+                              </span>
+                            )}
+                            {!c.isIpd && !c.isIPDDailyReview && (
+                              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-lg">
+                                OPD
+                              </span>
+                            )}
+                          </div>
                           <span className="text-xs font-semibold text-slate-400 font-sans block mt-0.5">
-                            {c.doctorSpecialization || 'General OPD'}
+                            {c.isIPDDailyReview 
+                              ? `IPD Daily Consultation (Round ${c.dayNumber || c.roundNumber || 1})` 
+                              : (c.isIPDAdmission || c.isIpd 
+                                  ? 'In-Patient Department (IPD)' 
+                                  : (c.doctorSpecialization || 'General OPD'))}
                           </span>
                         </div>
                       </div>
 
                       {/* Right Section: Badges & Section Buttons */}
                       <div className="flex items-center gap-2 flex-wrap shrink-0">
-                        {/* Completed Status Pill */}
-                        <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full uppercase tracking-wider">
-                          COMPLETED
+                        {/* Status Pill */}
+                        <span className={`text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider border ${
+                          ['Completed', 'COMPLETED', 'Discharged'].includes(c.status)
+                            ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                            : 'text-blue-700 bg-blue-50 border-blue-200'
+                        }`}>
+                          {c.status || 'COMPLETED'}
                         </span>
 
                         {/* Prescription Pill */}
@@ -322,9 +585,6 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
                         >
                           <HeartPulse className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
                           <span className="truncate max-w-[60px] sm:max-w-none">Vitals</span>
-                          <span className="bg-rose-100 text-rose-800 px-1.5 py-0.2 rounded-full text-[9px] sm:text-[10px] font-black shrink-0">
-                            {vitalsCount}
-                          </span>
                         </button>
 
                         {/* Chevron Expand/Collapse Toggle */}
@@ -337,7 +597,7 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
                     {/* Middle Section: Diagnosis & Chief Complaint */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-slate-100 text-xs">
                       <div>
-                        <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">DIAGNOSIS</span>
+                        <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">PRIMARY DIAGNOSIS</span>
                         <span className="font-bold text-[#2F63F2] text-sm block mt-0.5">
                           {c.diagnosis || c.primaryDiagnosis || 'General OPD'}
                         </span>
@@ -349,6 +609,24 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
                         </span>
                       </div>
                     </div>
+
+                    {/* Clinical Notes & Doctor Advice (1 row, 2 columns) */}
+                    {(c.clinicalNotes || c.advice) && (
+                      <div className={`pt-2 text-[11px] ${c.clinicalNotes && c.advice ? 'grid grid-cols-1 sm:grid-cols-2 gap-3.5' : 'space-y-1.5'}`}>
+                        {c.clinicalNotes && (
+                          <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 text-slate-700 flex flex-col justify-start">
+                            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Clinical Notes</span>
+                            <span className="text-slate-800 font-medium block mt-0.5 whitespace-pre-line leading-relaxed">{c.clinicalNotes}</span>
+                          </div>
+                        )}
+                        {c.advice && (
+                          <div className="bg-blue-50/60 p-2.5 rounded-xl border border-blue-100 text-slate-700 flex flex-col justify-start">
+                            <span className="text-[9px] font-bold text-[#2F63F2] uppercase tracking-wider block">Doctor Advice / General Instructions</span>
+                            <span className="text-slate-800 font-medium block mt-0.5 whitespace-pre-line leading-relaxed">{c.advice}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                   </div>
 
@@ -364,15 +642,6 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
                               <Pill className="w-4 h-4 text-purple-600" />
                               PRESCRIBED MEDICATIONS ({rxList.length})
                             </span>
-                            {onCopyPrescription && rxList.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => onCopyPrescription(rxList)}
-                                className="text-xs font-extrabold text-[#2F63F2] hover:underline cursor-pointer flex items-center gap-1"
-                              >
-                                <span>+ Copy All Medicines to Pad</span>
-                              </button>
-                            )}
                           </div>
 
                           {rxList.length === 0 ? (
@@ -484,15 +753,14 @@ const PatientHistoryDrawer = ({ isOpen, onClose, patient, patientHistory, onCopy
           )}
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-3 border-t border-slate-100 bg-white flex justify-end shrink-0">
+        {/* Footer with clean CLOSE button matching screenshot */}
+        <div className="px-6 py-3.5 border-t border-slate-100 bg-white flex justify-end shrink-0">
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-2xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+            className="px-6 py-2 border border-[#2F63F2] hover:bg-blue-50 text-[#2F63F2] rounded-xl text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer shadow-2xs"
           >
-            <X className="w-3.5 h-3.5" />
-            <span>Close</span>
+            CLOSE
           </button>
         </div>
 

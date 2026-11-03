@@ -1,6 +1,6 @@
 import { 
   LayoutDashboard, Pill, History, Package, ShoppingBag, 
-  Users, FileBarChart2, Settings 
+  Users, FileBarChart2, Settings, Bed 
 } from 'lucide-react';
 import { ROUTES } from '../../constants/routes';
 import { PERMISSIONS } from '../../constants/permissions';
@@ -19,7 +19,7 @@ export const pharmacyNavigation = [
   },
   {
     id: 'pharmacy.dispense',
-    title: 'Dispense Desk',
+    title: 'OPD Dispense Desk',
     icon: Pill,
     route: ROUTES.PHARMACY.DISPENSE,
     matchPaths: [ROUTES.PHARMACY.DISPENSE, '/pharmacy/dispense/queue', '/pharmacy/billing'],
@@ -27,6 +27,18 @@ export const pharmacyNavigation = [
     workspace: 'pharmacy',
     group: 'pharmacy',
     order: 2
+  },
+  {
+    id: 'pharmacy.ipd-dispense',
+    title: 'IPD Dispense Desk',
+    icon: Bed,
+    route: ROUTES.PHARMACY.IPD_DISPENSE,
+    matchPaths: [ROUTES.PHARMACY.IPD_DISPENSE],
+    permission: PERMISSIONS.PHARMACY_DISPENSE,
+    featureFlag: 'IPD',
+    workspace: 'pharmacy',
+    group: 'pharmacy',
+    order: 3
   },
   {
     id: 'pharmacy.reports',
@@ -37,9 +49,8 @@ export const pharmacyNavigation = [
     permission: PERMISSIONS.REPORTS_VIEW,
     workspace: 'pharmacy',
     group: 'reports',
-    order: 3
+    order: 4
   },
-
 ];
 
 export default pharmacyNavigation;

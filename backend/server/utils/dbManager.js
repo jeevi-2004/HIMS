@@ -61,7 +61,8 @@ async function getTenantConnection(hospitalCode) {
     'Patient', 'Appointment', 'Consultation', 'Prescription',
     'Medicine', 'MedicineBatch', 'Invoice', 'UserSession',
     'AuditLog', 'ClinicalDiagnosis', 'MedicineForm',
-    'MedicineFrequency', 'MedicineDosage', 'FoodInstruction'
+    'MedicineFrequency', 'MedicineDosage', 'FoodInstruction',
+    'IPDWard', 'IPDBed', 'IPDAdmission', 'Service'
   ];
 
   for (const modelName of tenantModels) {

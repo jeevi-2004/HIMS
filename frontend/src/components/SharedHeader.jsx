@@ -85,7 +85,7 @@ const SharedHeader = ({ setSidebarOpen }) => {
 
   return (
     <>
-      <header className="h-14 sm:h-16 flex items-center justify-between px-3 sm:px-6 border-b border-[#E5E7EB] bg-white sticky top-0 z-30 shadow-xs font-sans">
+      <header className="h-14 sm:h-16 flex items-center justify-between px-3 sm:px-6 border-b border-[#E5E7EB] bg-white/95 backdrop-blur-md sticky top-0 z-40 shadow-xs font-sans">
         {/* Left: Mobile Sidebar Toggle, Back Button & VillZone HIMS Brand Logo */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button 

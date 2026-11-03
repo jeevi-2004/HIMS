@@ -13,8 +13,13 @@ class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, errorInfo) {
+    console.error('CRITICAL COMPONENT ERROR in ErrorBoundary:', error?.message || error, '\nStack:', error?.stack || 'No stack trace');
+    if (errorInfo?.componentStack) {
+      console.error('Component stack:', errorInfo.componentStack);
+    }
     logger.error('React ErrorBoundary caught rendering exception', {
-      error,
+      message: error?.message || String(error),
+      stack: error?.stack,
       componentStack: errorInfo?.componentStack
     });
   }

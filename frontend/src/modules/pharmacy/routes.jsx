@@ -49,6 +49,16 @@ export const pharmacyRoutes = (
       } 
     />
 
+    {/* IPD Dispense Desk Route - Strictly conditional on IPD feature flag */}
+    <Route 
+      path={ROUTES.PHARMACY.IPD_DISPENSE} 
+      element={
+        <WorkspaceRoute allowedRoles={PHARMACY_ROLES} featureFlag="IPD">
+          <PharmacyDashboard />
+        </WorkspaceRoute>
+      } 
+    />
+
     <Route path="/pharmacy/settings" element={<Navigate to={ROUTES.PHARMACY.DASHBOARD} replace />} />
     <Route path="/pharmacy/purchase" element={<Navigate to={ROUTES.PHARMACY.DISPENSE} replace />} />
     <Route path="/pharmacy/stock" element={<Navigate to={ROUTES.PHARMACY.DISPENSE} replace />} />

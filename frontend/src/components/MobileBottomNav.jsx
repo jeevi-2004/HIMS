@@ -33,10 +33,10 @@ const MobileBottomNav = () => {
       { key: 'queue', label: 'Queue', icon: Users, path: '/reception/queue' },
       { key: 'profile', label: 'Profile', icon: User, path: '/profile' }
     ];
-  } else if (user.role === 'PHARMACIST' || user.role === 'PHARMACY') {
+  } else if (currentPath.startsWith('/pharmacy') || user.role === 'PHARMACIST' || user.role === 'PHARMACY') {
     navItems = [
       { key: 'dashboard', label: 'Dashboard', icon: LayoutGrid, path: '/pharmacy/dashboard' },
-      { key: 'dispense', label: 'Dispense', icon: Pill, path: '/pharmacy/dispense' },
+      { key: 'dispense', label: 'OPD Dispense', icon: Pill, path: '/pharmacy/dispense' },
       { key: 'reports', label: 'Reports', icon: FileBarChart2, path: '/pharmacy/reports' },
       { key: 'profile', label: 'Profile', icon: User, path: '/profile' }
     ];
@@ -73,7 +73,9 @@ const MobileBottomNav = () => {
   };
 
   // Check if currently in a consultation
-  const isConsultActive = currentPath.startsWith('/doctor/consultation');
+  const isIPDConsultation = (currentPath.includes('/consultation') || currentPath.includes('/prescription')) && 
+    location.search.includes('type=ipd');
+  const isConsultActive = currentPath.startsWith('/doctor/consultation') && !isIPDConsultation;
 
   const handleTabClick = (path) => {
     if (path && path !== '#') {
@@ -154,7 +156,7 @@ const MobileBottomNav = () => {
 
   // Determine center FAB config based on role & active workspace
   const getCenterFab = () => {
-    if (user.role === 'PHARMACIST' || user.role === 'PHARMACY') {
+    if (currentPath.startsWith('/pharmacy') || user.role === 'PHARMACIST' || user.role === 'PHARMACY') {
       const isQueueActive = currentPath === '/pharmacy/queue' || currentPath === '/pharmacy/dashboard?tab=queue' || currentPath.includes('/pharmacy/dispense');
       return {
         icon: ClipboardList,
