@@ -599,6 +599,21 @@ const getItemDateString = (item) => {
           queueStatus: 'In-Consultation',
           date: new Date().toISOString()
         });
+        const callPayload = {
+          tokenNumber: record.tokenNumber || '',
+          tokenNo: record.tokenNumber || '',
+          patientName: record.patientId?.name || record.patientName || 'Patient',
+          doctorName: record.doctorId?.name || record.doctorName || user?.name || 'Doctor',
+          roomNumber: record.doctorId?.roomNo || record.doctorId?.doctorProfile?.roomNo || 'Consultation Room',
+          roomNo: record.doctorId?.roomNo || record.doctorId?.doctorProfile?.roomNo || 'Consultation Room',
+          type: 'TriggerVoiceCall'
+        };
+        api.post('/workflow/events/trigger-call', callPayload).catch(() => {});
+        voiceAnnouncement.enqueueAnnouncement({
+          ...callPayload,
+          patientObj: record,
+          broadcastOnly: true
+        });
         queryClient.invalidateQueries(['doctorQueue']);
         queryClient.invalidateQueries(['appointments']);
         queryClient.invalidateQueries(['doctorFollowUps']);

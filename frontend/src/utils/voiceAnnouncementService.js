@@ -245,14 +245,23 @@ class VoiceAnnouncementService {
               this.lastVoiceAnnouncement = event.data.announcement;
             }
 
-            // Synthesize audio ONLY on Receptionist screens
+            // Synthesize audio ONLY on Receptionist / Display screens (Doctor speakers stay muted)
             const pathname = typeof window !== 'undefined' ? (window.location.pathname || '').toLowerCase() : '';
             const href = typeof window !== 'undefined' ? (window.location.href || '').toLowerCase() : '';
-            const isReceptionistPage = pathname.includes('reception') || pathname.includes('display') || href.includes('reception') || href.includes('display');
+            const isDoctorPage = pathname.includes('/doctor');
+            const isReceptionistPage = !isDoctorPage && (
+              pathname.includes('reception') || 
+              pathname.includes('display') || 
+              href.includes('reception') || 
+              href.includes('display') || 
+              pathname.includes('admin') ||
+              pathname === '/' || 
+              pathname === '/dashboard'
+            );
             if (isReceptionistPage && event.data.announcementData) {
               console.log("[PLAN1][RECEPTION] VOICE PLAY FUNCTION CALLED");
               const tDisp = event.data.token ? `Token #${event.data.token}` : (event.data.announcementData?.patientName || 'Patient');
-              toast.success(`Voice Calling ${tDisp}...`, { duration: 4000 });
+              toast.success(`📢 Voice Calling ${tDisp}...`, { duration: 4000 });
               this.enqueueAnnouncement({
                 ...event.data.announcementData,
                 broadcastOnly: false
@@ -1116,14 +1125,22 @@ class VoiceAnnouncementService {
         }, 150);
       };
 
-      // Helper to speak utterance safely with GC guard & safety timeout
+      const provider = this.settings.provider || 'browser';
+
+      // Helper to speak utterance safely with GC guard, Chrome unfreeze, & safety timeout
       const speakUtterance = (text, voice, lang, rate = 0.88) => {
         return new Promise((resolve) => {
           try {
-            if (!text) {
+            if (!text || typeof window === 'undefined' || !('speechSynthesis' in window)) {
               resolve();
               return;
             }
+
+            // Chrome unstick fix: Cancel any stale / frozen speech engine queue
+            try {
+              window.speechSynthesis.cancel();
+            } catch (_) {}
+
             const u = new SpeechSynthesisUtterance(text);
             u.rate = rate;
             u.pitch = 1.0;
@@ -1142,9 +1159,11 @@ class VoiceAnnouncementService {
             }
 
             let done = false;
+            let resumeInterval = null;
             const complete = () => {
               if (done) return;
               done = true;
+              if (resumeInterval) clearInterval(resumeInterval);
               resolve();
             };
 
@@ -1157,8 +1176,15 @@ class VoiceAnnouncementService {
               complete();
             };
 
-            // Safety timeout: max 12 seconds per phrase
-            setTimeout(complete, 12000);
+            // Chrome keepalive interval to prevent Chrome from freezing after 15 seconds
+            resumeInterval = setInterval(() => {
+              if (window.speechSynthesis.paused) {
+                window.speechSynthesis.resume();
+              }
+            }, 400);
+
+            // Safety timeout: max 10 seconds per phrase
+            setTimeout(complete, 10000);
 
             if (window.speechSynthesis.paused) {
               window.speechSynthesis.resume();
@@ -1171,11 +1197,32 @@ class VoiceAnnouncementService {
         });
       };
 
-      // Execute based on mode:
-      if (mode === 'TA_ONLY') {
+      // Helper to play Tamil phrase via Cloud TTS or Local speech synthesis
+      const playTamilAudio = async () => {
+        if (provider === 'sarvam' || provider === 'azure' || provider === 'google') {
+          const vId = provider === 'sarvam' 
+            ? (this.settings.sarvamVoiceId || 'kavitha') 
+            : provider === 'azure' 
+              ? (this.settings.azureVoiceId || 'ta-IN-PallaviNeural') 
+              : (this.settings.googleVoiceId || 'ta-IN-Chirp3-HD-Aoede');
+          const ok = await this.playCloudAudio(currentItem.tamText, provider, vId);
+          if (ok) return true;
+          console.warn('[VOICE ANNOUNCEMENT] Cloud synthesis failed, falling back to local speech.');
+        }
+
         if (hasTamil) {
           await speakUtterance(currentItem.tamText, tamilVoice, 'ta-IN', 0.86);
+          return true;
         } else {
+          console.warn('[VOICE ANNOUNCEMENT] No native Tamil voice installed on this device.');
+          return false;
+        }
+      };
+
+      // Execute based on mode:
+      if (mode === 'TA_ONLY') {
+        const played = await playTamilAudio();
+        if (!played) {
           // Fallback when computer has no Tamil voice pack: speak English clearly so user HEARS the call!
           console.warn('[VOICE ANNOUNCEMENT] No native Tamil voice found on this device; speaking English announcement.');
           await speakUtterance(currentItem.engText, englishVoice, 'en-US', 0.88);
@@ -1185,13 +1232,10 @@ class VoiceAnnouncementService {
         await speakUtterance(currentItem.engText, englishVoice, 'en-US', 0.88);
         finishCurrent();
       } else {
-        // BOTH mode: Speak English first, then Tamil if voice exists
+        // BOTH mode: Speak English first, then Tamil
         await speakUtterance(currentItem.engText, englishVoice, 'en-US', 0.88);
-
-        if (hasTamil) {
-          await new Promise(r => setTimeout(r, 400));
-          await speakUtterance(currentItem.tamText, tamilVoice, 'ta-IN', 0.86);
-        }
+        await new Promise(r => setTimeout(r, 350));
+        await playTamilAudio();
         finishCurrent();
       }
     } catch (err) {

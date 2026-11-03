@@ -80,6 +80,74 @@ const generateInvoiceNo = async () => {
   return `INV-${datePrefix}-${String(count + 1).padStart(4, '0')}-${randomSuffix}`;
 };
 
+/**
+ * Generates an original, strictly unique sequential daily token (e.g. OP001, OP002, EMG001)
+ * for any given date and facility. Guarantees no collisions between male, female, or follow-up patients.
+ */
+const generateUniqueDailyToken = async ({
+  targetDate = new Date(),
+  branchId = null,
+  hospitalId = null,
+  isEmergency = false,
+  excludeApptId = null,
+  customPrefix = null
+}) => {
+  const d = new Date(targetDate || new Date());
+  const sOfDay = new Date(d); sOfDay.setHours(0, 0, 0, 0);
+  const eOfDay = new Date(d); eOfDay.setHours(23, 59, 59, 999);
+
+  let prefix = customPrefix;
+  if (!prefix) {
+    prefix = isEmergency ? 'EMG' : 'OP';
+  }
+
+  const query = {
+    $or: [
+      { date: { $gte: sOfDay, $lte: eOfDay } },
+      { consultationDate: { $gte: sOfDay, $lte: eOfDay } }
+    ],
+    tokenNumber: { $exists: true, $nin: ['', null, 'N/A', 'undefined'] }
+  };
+
+  if (excludeApptId) {
+    query._id = { $ne: excludeApptId };
+  }
+  if (branchId) {
+    query.branchId = branchId;
+  } else if (hospitalId) {
+    query.hospitalId = hospitalId;
+  }
+
+  const existing = await Appointment.find(query).select('tokenNumber').lean();
+  const usedTokens = new Set();
+  let maxIndex = 0;
+
+  for (const item of existing) {
+    if (!item.tokenNumber) continue;
+    const str = String(item.tokenNumber).trim().toUpperCase();
+    usedTokens.add(str);
+
+    if (str.startsWith(prefix.toUpperCase())) {
+      const match = str.match(/\d+/);
+      if (match) {
+        const val = parseInt(match[0], 10);
+        if (!isNaN(val) && val > maxIndex) {
+          maxIndex = val;
+        }
+      }
+    }
+  }
+
+  let nextNum = 1;
+  let candidate = `${prefix}${String(nextNum).padStart(3, '0')}`;
+  while (usedTokens.has(candidate.toUpperCase())) {
+    nextNum++;
+    candidate = `${prefix}${String(nextNum).padStart(3, '0')}`;
+  }
+
+  return candidate;
+};
+
 const BACKEND_MEDICAL_ALIASES = [
   { group: 'mri', terms: ['mri', 'magnetic resonance'] },
   { group: 'ct', terms: ['ct', 'cat scan', 'computed tomography'] },
@@ -571,34 +639,13 @@ const bookAppointment = async (req, res, next) => {
       }
     }
 
-    const countFilter = {
-      date: { $gte: startOfDay, $lte: endOfDay },
-      tokenType: tokenType
-    };
-    if (req.user.branchId) {
-      countFilter.branchId = req.user.branchId;
-    }
-
-    const count = await Appointment.countDocuments(countFilter);
-    const existingTokens = await Appointment.find({
-      date: { $gte: startOfDay, $lte: endOfDay },
-      tokenNumber: { $exists: true, $nin: ['', null, 'N/A'] },
-      ...(req.user.branchId ? { branchId: req.user.branchId } : {})
-    }).select('tokenNumber').lean();
-
-    let maxIndex = 0;
-    for (const t of existingTokens) {
-      const numMatch = String(t.tokenNumber || '').match(/\d+/);
-      if (numMatch) {
-        const n = parseInt(numMatch[0], 10);
-        if (n > maxIndex) maxIndex = n;
-      }
-    }
-
-    const index = Math.max(count, maxIndex) + 1;
-    const generatedTokenNumber = `${tokenPrefix}${String(index).padStart(3, '0')}`;
-    // Always assign ordered token number for scheduled, follow-up, or walk-in appointments
-    const tokenNumber = generatedTokenNumber;
+    const tokenNumber = await generateUniqueDailyToken({
+      targetDate: targetBookingDate,
+      branchId: req.user.branchId,
+      hospitalId: req.user.hospitalId,
+      isEmergency: isEmgApp,
+      customPrefix: isEmgApp ? tokenPrefix : (tokenPrefix || 'OP')
+    });
 
     const rawBillingStatus = String(billingStatus || '').trim();
     const effectiveBillingStatus = (rawBillingStatus === 'Pending' || !rawBillingStatus) ? 'Unpaid' : rawBillingStatus;
@@ -778,6 +825,62 @@ const getAppointments = async (req, res, next) => {
         }
       }
 
+      // 1.1 Auto-deduplicate any colliding tokens across appointments on the same date (e.g. Male and Female sharing OP001)
+      const allDatedApps = await Appointment.find({
+        status: { $nin: ['Cancelled'] },
+        'workflow.queueState': { $ne: 'CANCELLED' },
+        tokenNumber: { $exists: true, $nin: ['', null, 'N/A', 'undefined'] }
+      }).select('_id date consultationDate scheduledDate tokenNumber isEmergency tokenType priorityLevel createdAt time doctorId patientId branchId').sort({ createdAt: 1 }).lean();
+
+      if (allDatedApps.length > 0) {
+        const appsByDate = new Map();
+        for (const app of allDatedApps) {
+          const rawD = app.consultationDate || app.date || app.createdAt;
+          const dObj = new Date(rawD);
+          const dKey = !isNaN(dObj.getTime()) ? dObj.toISOString().split('T')[0] : 'undated';
+          if (!appsByDate.has(dKey)) appsByDate.set(dKey, []);
+          appsByDate.get(dKey).push(app);
+        }
+
+        for (const [dKey, dayApps] of appsByDate.entries()) {
+          if (dKey === 'undated' || dayApps.length <= 1) continue;
+
+          const seenTokens = new Set();
+          const duplicates = [];
+          for (const app of dayApps) {
+            const tok = String(app.tokenNumber || '').trim().toUpperCase();
+            if (seenTokens.has(tok)) {
+              duplicates.push(app);
+            } else {
+              seenTokens.add(tok);
+            }
+          }
+
+          if (duplicates.length > 0) {
+            for (const dupApp of duplicates) {
+              const isEmg = Boolean(dupApp.isEmergency) || (dupApp.tokenType === 'EMERGENCY') || (dupApp.priorityLevel === 'EMERGENCY') || String(dupApp.tokenNumber || '').startsWith('EMG');
+              const prefix = isEmg ? 'EMG' : 'OP';
+              let candidateNum = 1;
+              let candidateToken = `${prefix}${String(candidateNum).padStart(3, '0')}`;
+              while (seenTokens.has(candidateToken.toUpperCase())) {
+                candidateNum++;
+                candidateToken = `${prefix}${String(candidateNum).padStart(3, '0')}`;
+              }
+              seenTokens.add(candidateToken.toUpperCase());
+
+              await Appointment.updateOne(
+                { _id: dupApp._id },
+                { $set: { tokenNumber: candidateToken } }
+              );
+              await Consultation.updateOne(
+                { appointmentId: dupApp._id },
+                { $set: { tokenNumber: candidateToken } }
+              ).catch(() => {});
+            }
+          }
+        }
+      }
+
       // 2. Automatically transition scheduled / follow-up appointments whose booked date has arrived (date <= today) to Active Queue (Waiting)
       // They must NOT remain in Scheduled or Follow-up rows once their booked date has arrived!
       await Appointment.updateMany(
@@ -883,20 +986,12 @@ const getAppointments = async (req, res, next) => {
           }).select('_id').lean();
 
           if (!existingAppt) {
-            const existingTokens = await Appointment.find({
-              date: { $gte: sOfDay, $lte: eOfDay },
-              tokenNumber: { $exists: true, $nin: ['', null, 'N/A'] }
-            }).select('tokenNumber').lean();
-
-            let maxNum = 0;
-            for (const ext of existingTokens) {
-              const m = String(ext.tokenNumber || '').match(/\d+/);
-              if (m) {
-                const val = parseInt(m[0], 10);
-                if (val > maxNum) maxNum = val;
-              }
-            }
-            const tokenNumber = `OP${String(maxNum + 1).padStart(3, '0')}`;
+            const tokenNumber = await generateUniqueDailyToken({
+              targetDate: consult.followupDate,
+              hospitalId: consult.hospitalId,
+              branchId: consult.branchId,
+              isEmergency: false
+            });
 
             let fTime = consult.followupTime || '10:00 AM';
             if (/^\d{1,2}:\d{2}$/.test(fTime)) {
@@ -1221,28 +1316,77 @@ const getAppointments = async (req, res, next) => {
         }
       }
 
-      // Attach accurate consultation date for completed visits
-      const effectiveConsultDate = 
-        appObj.consultationDate ||
-        appObj.workflow?.timestamps?.consultationCompletedAt ||
-        consult?.createdAt ||
-        consult?.consultationDate ||
-        appObj.workflow?.timestamps?.completedAt ||
-        appObj.sentToPharmacyAt ||
-        appObj.completedAt ||
-        appObj.updatedAt;
+      // Attach accurate consultation date ONLY for completed visits
+      const isCompletedVisit = 
+        appObj.status === 'Completed' ||
+        appObj.status === 'Sent to Pharmacy' ||
+        appObj.queueStatus === 'Completed' ||
+        appObj.queueStatus === 'Sent to Pharmacy' ||
+        appObj.workflow?.queueState === 'COMPLETED' ||
+        appObj.workflow?.queueState === 'SENT_TO_PHARMACY' ||
+        appObj.workflow?.consultationState === 'COMPLETED';
 
-      if (effectiveConsultDate) {
-        appObj.consultationDate = effectiveConsultDate;
-        const appDateVal = appObj.date ? new Date(appObj.date) : null;
-        if (appDateVal && !isNaN(appDateVal.getTime()) && appDateVal.getTime() > Date.now() + 86400000) {
-          appObj.scheduledDate = appObj.date;
-          appObj.date = effectiveConsultDate;
+      if (isCompletedVisit) {
+        const effectiveConsultDate = 
+          appObj.consultationDate ||
+          appObj.workflow?.timestamps?.consultationCompletedAt ||
+          consult?.consultationDate ||
+          consult?.createdAt ||
+          appObj.workflow?.timestamps?.completedAt ||
+          appObj.sentToPharmacyAt ||
+          appObj.completedAt;
+
+        if (effectiveConsultDate) {
+          appObj.consultationDate = effectiveConsultDate;
+          const appDateVal = appObj.date ? new Date(appObj.date) : null;
+          if (appDateVal && !isNaN(appDateVal.getTime()) && appDateVal.getTime() > Date.now() + 86400000) {
+            appObj.scheduledDate = appObj.date;
+            appObj.date = effectiveConsultDate;
+          }
         }
       }
 
       return appObj;
     });
+
+    // Guarantee 100% unique, non-colliding tokens per calendar date across all returned appointments (validating both Male & Female counts)
+    const tokensByDate = new Map();
+    for (const appObj of appointments) {
+      const isCompleted = appObj.status === 'Completed' || appObj.status === 'Sent to Pharmacy';
+      const targetD = (isCompleted && appObj.consultationDate) ? appObj.consultationDate : (appObj.date || appObj.createdAt);
+      const dObj = new Date(targetD);
+      const dKey = !isNaN(dObj.getTime()) ? dObj.toISOString().split('T')[0] : 'undated';
+      if (!tokensByDate.has(dKey)) {
+        tokensByDate.set(dKey, { used: new Set(), items: [] });
+      }
+      tokensByDate.get(dKey).items.push(appObj);
+    }
+
+    for (const [dKey, dayData] of tokensByDate.entries()) {
+      if (dKey === 'undated') continue;
+      for (const appObj of dayData.items) {
+        let tok = String(appObj.tokenNumber || '').trim().toUpperCase();
+        const isEmg = Boolean(appObj.isEmergency) || (appObj.tokenType === 'EMERGENCY') || (appObj.priorityLevel === 'EMERGENCY') || tok.startsWith('EMG');
+        const prefix = isEmg ? 'EMG' : 'OP';
+
+        if (!tok || tok === 'N/A' || dayData.used.has(tok)) {
+          // Token is missing or duplicate on this date! Generate next original unique sequential token
+          let nextNum = 1;
+          let candidate = `${prefix}${String(nextNum).padStart(3, '0')}`;
+          while (dayData.used.has(candidate)) {
+            nextNum++;
+            candidate = `${prefix}${String(nextNum).padStart(3, '0')}`;
+          }
+          tok = candidate;
+          appObj.tokenNumber = tok;
+
+          // Asynchronously persist this original unique token to MongoDB
+          Appointment.updateOne({ _id: appObj._id }, { $set: { tokenNumber: tok } }).exec().catch(() => {});
+          Consultation.updateOne({ appointmentId: appObj._id }, { $set: { tokenNumber: tok } }).exec().catch(() => {});
+        }
+        dayData.used.add(tok);
+      }
+    }
 
     res.status(200).json({ success: true, data: appointments });
   } catch (error) {
@@ -1946,18 +2090,29 @@ const createConsultation = async (req, res, next) => {
       }
       appointment.followupStatus = 'Completed';
       appointment.followupCompleted = true;
-      // Ensure appointment always has an official token number
-      if (!appointment.tokenNumber || String(appointment.tokenNumber).trim() === '' || appointment.tokenNumber === 'N/A') {
-        const apptDate = new Date(appointment.date || new Date());
-        const sOfDay = new Date(apptDate); sOfDay.setHours(0, 0, 0, 0);
-        const eOfDay = new Date(apptDate); eOfDay.setHours(23, 59, 59, 999);
-        const prefix = appointment.isEmergency ? 'EMG' : 'OP';
-        const priorCount = await Appointment.countDocuments({
-          ...(validBranchId ? { branchId: validBranchId } : {}),
-          date: { $gte: sOfDay, $lte: eOfDay },
-          tokenNumber: { $exists: true, $nin: ['', null, 'N/A'] }
+      // Ensure appointment always has an original, non-clashing unique token number on this consultation date
+      const apptTargetDate = appointment.consultationDate || appointment.date || new Date();
+      const sOfDay = new Date(apptTargetDate); sOfDay.setHours(0, 0, 0, 0);
+      const eOfDay = new Date(apptTargetDate); eOfDay.setHours(23, 59, 59, 999);
+      const isEmg = Boolean(appointment.isEmergency);
+
+      const hasCollidingToken = (appointment.tokenNumber && appointment.tokenNumber !== 'N/A') ? await Appointment.findOne({
+        _id: { $ne: appointment._id },
+        $or: [
+          { date: { $gte: sOfDay, $lte: eOfDay } },
+          { consultationDate: { $gte: sOfDay, $lte: eOfDay } }
+        ],
+        tokenNumber: appointment.tokenNumber
+      }).select('_id').lean() : null;
+
+      if (!appointment.tokenNumber || String(appointment.tokenNumber).trim() === '' || appointment.tokenNumber === 'N/A' || hasCollidingToken) {
+        appointment.tokenNumber = await generateUniqueDailyToken({
+          targetDate: apptTargetDate,
+          branchId: validBranchId,
+          hospitalId: validHospitalId || req.user.hospitalId,
+          isEmergency: isEmg,
+          excludeApptId: appointment._id
         });
-        appointment.tokenNumber = `${prefix}${String(priorCount + 1).padStart(3, '0')}`;
       }
       if (chiefComplaint || finalDiagnosis) {
         appointment.chiefComplaint = chiefComplaint || finalDiagnosis;
@@ -1978,6 +2133,14 @@ const createConsultation = async (req, res, next) => {
         appointment.sentByDoctorId = req.user._id;
       }
       await appointment.save(options);
+      if (consultation) {
+        consultation.tokenNumber = appointment.tokenNumber;
+        await consultation.save(options).catch(() => {});
+      }
+      if (prescription && !isIpdPatient) {
+        prescription.tokenNumber = appointment.tokenNumber;
+        await prescription.save(options).catch(() => {});
+      }
     }
 
     // 5b. Update IPD Admission & Record Daily Review if this is an IPD Inpatient Consultation
@@ -2239,13 +2402,12 @@ const createConsultation = async (req, res, next) => {
       }, null, options);
 
       if (!existingFollowupAppt) {
-        const count = await Appointment.countDocuments({
-          ...(validBranchId ? { branchId: validBranchId } : {}),
-          date: { $gte: startOfDay, $lte: endOfDay }
+        const tokenNumber = await generateUniqueDailyToken({
+          targetDate: followupDate,
+          branchId: validBranchId,
+          hospitalId: validHospitalId || req.user.hospitalId,
+          isEmergency: false
         });
-
-        const index = count + 1;
-        const tokenNumber = `OP${String(index).padStart(3, '0')}`;
 
         let fTime = followupTime || '10:00 AM';
         if (/^\d{1,2}:\d{2}$/.test(fTime)) {
@@ -3637,13 +3799,26 @@ const startFollowupConsultation = async (req, res, next) => {
       targetAppointment.queueStatus = 'In-Consultation';
       if (isEmergency) targetAppointment.isEmergency = true;
       if (req.user?._id) targetAppointment.doctorId = req.user._id;
-      if (!targetAppointment.tokenNumber) {
-        const count = await Appointment.countDocuments({
-          ...hospitalFilter,
-          date: { $gte: startOfToday, $lte: endOfToday }
+      const sOfToday = new Date(); sOfToday.setHours(0, 0, 0, 0);
+      const eOfToday = new Date(); eOfToday.setHours(23, 59, 59, 999);
+      const collidingAppt = targetAppointment.tokenNumber ? await Appointment.findOne({
+        ...hospitalFilter,
+        _id: { $ne: targetAppointment._id },
+        $or: [
+          { date: { $gte: sOfToday, $lte: eOfToday } },
+          { consultationDate: { $gte: sOfToday, $lte: eOfToday } }
+        ],
+        tokenNumber: targetAppointment.tokenNumber
+      }).select('_id').lean() : null;
+
+      if (!targetAppointment.tokenNumber || collidingAppt) {
+        targetAppointment.tokenNumber = await generateUniqueDailyToken({
+          targetDate: new Date(),
+          branchId: req.user?.branchId,
+          hospitalId: req.user?.hospitalId,
+          isEmergency,
+          excludeApptId: targetAppointment._id
         });
-        const prefix = isEmergency ? 'EMG' : 'OP';
-        targetAppointment.tokenNumber = `${prefix}${String(count + 1).padStart(3, '0')}`;
       }
       if (targetAppointment.workflow) {
         targetAppointment.workflow.queueState = 'IN_CONSULTATION';
@@ -3689,12 +3864,12 @@ const startFollowupConsultation = async (req, res, next) => {
     }
 
     // 4. Create fresh follow-up appointment for today
-    const count = await Appointment.countDocuments({
-      ...hospitalFilter,
-      date: { $gte: startOfToday, $lte: endOfToday }
+    const tokenNumber = await generateUniqueDailyToken({
+      targetDate: new Date(),
+      branchId: req.user?.branchId,
+      hospitalId: req.user?.hospitalId,
+      isEmergency
     });
-    const prefix = isEmergency ? 'EMG' : 'OP';
-    const tokenNumber = `${prefix}${String(count + 1).padStart(3, '0')}`;
 
     const [createdAppt] = await Appointment.create([{
       patientId: resolvedPatientId,

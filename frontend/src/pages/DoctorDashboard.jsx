@@ -463,9 +463,6 @@ const DoctorDashboard = () => {
         <div className="flex items-center gap-1.5">
           <span className="font-bold text-[#2F63F2] font-mono text-sm">#{row.tokenNumber || '—'}</span>
         </div>
-        {row.consultationType === 'Emergency' && (
-          <span className="text-[8px] font-extrabold text-rose-500 uppercase tracking-widest mt-0.5">🚨 EMERGENCY</span>
-        )}
       </div>
     )},
     { key: 'patientId.name', label: 'Patient', render: (row) => (

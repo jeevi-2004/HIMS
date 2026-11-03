@@ -1985,7 +1985,7 @@ const ReceptionistAppointments = () => {
   // Real-Time Voice Announcement Listener in Receptionist Workspace
   useEffect(() => {
     const unsubscribe = workflowRealtime.subscribe((event) => {
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ['appointments'] });
       if (!event) return;
       const eventType = event.type || '';
       const qState = (event.queueState || event.queueStatus || event.status || '').toUpperCase();
@@ -1998,20 +1998,24 @@ const ReceptionistAppointments = () => {
       if (isCallEvent && (event.tokenNumber || event.token || event.patientName || event.patientId || event.appointmentId || event._id)) {
         const tNo = event.tokenNumber || event.token || event.tokenNo || '';
         const pName = event.patientName || (typeof event.patientId === 'object' ? event.patientId?.name : '') || 'Patient';
-        toast.success(`📢 Calling Token #${tNo || 'OPD'} (${pName})`, { duration: 4000 });
-        voiceAnnouncement.announceCall({
-          tokenNumber: tNo,
-          tokenNo: tNo,
-          patientName: pName,
-          doctorName: event.doctorName || (typeof event.doctorId === 'object' ? event.doctorId?.name : ''),
-          roomNo: event.roomNo || event.roomNumber || (typeof event.doctorId === 'object' ? (event.doctorId?.roomNo || event.doctorId?.doctorProfile?.roomNo) : 'Consultation Room'),
-          roomNumber: event.roomNo || event.roomNumber || 'Consultation Room'
-        });
+        
+        const pathname = typeof window !== 'undefined' ? (window.location.pathname || '').toLowerCase() : '';
+        if (!pathname.includes('/doctor')) {
+          toast.success(`📢 Calling Token #${tNo || 'OPD'} (${pName})`, { duration: 4000 });
+          voiceAnnouncement.announceCall({
+            tokenNumber: tNo,
+            tokenNo: tNo,
+            patientName: pName,
+            doctorName: event.doctorName || (typeof event.doctorId === 'object' ? event.doctorId?.name : '') || 'Doctor',
+            roomNo: event.roomNo || event.roomNumber || (typeof event.doctorId === 'object' ? (event.doctorId?.roomNo || event.doctorId?.doctorProfile?.roomNo) : 'Consultation Room'),
+            roomNumber: event.roomNo || event.roomNumber || 'Consultation Room'
+          });
+        }
       }
     });
 
     return () => unsubscribe();
-  }, [refetch]);
+  }, [queryClient]);
 
   // Sort doctors by live waiting queue count (lowest queue count first)
   const sortedDoctorsWithQueueCount = useMemo(() => {
@@ -2175,10 +2179,7 @@ const ReceptionistAppointments = () => {
         emergency++;
       }
       if (isScheduled) {
-        const pId = String(app.patientId?._id || app.patientId || '');
-        if (!consultedOrCompletedPatientIds.has(pId)) {
-          scheduled++;
-        }
+        scheduled++;
       }
       else if (st === 'In Consultation') inConsultation++;
       else if (st === 'Called') called++;
@@ -2199,8 +2200,6 @@ const ReceptionistAppointments = () => {
       // Workspace Segmented Tab Filter
       if (workspaceTab === 'SCHEDULED') {
         if (!isScheduled) return false;
-        const pId = String(app.patientId?._id || app.patientId || '');
-        if (consultedOrCompletedPatientIds.has(pId)) return false;
       } else if (workspaceTab === 'ACTIVE_QUEUE') {
         if (isScheduled) return false;
         if (st === 'Completed' || st === 'Cancelled') return false;

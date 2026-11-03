@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import Card from '../components/Card';
@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 
 const ReceptionistDashboard = () => {
+  const queryClient = useQueryClient();
   const [isBookOpen, setIsBookOpen] = useState(false);
 
   // Fetch today's appointments for current hospital/tenant
@@ -29,7 +30,7 @@ const ReceptionistDashboard = () => {
 
   useEffect(() => {
     const unsubscribe = workflowRealtime.subscribe((event) => {
-      appointmentsRefetch();
+      queryClient.invalidateQueries({ queryKey: ['appointments'] });
       if (!event) return;
       const eventType = event.type || '';
       const qState = (event.queueState || event.queueStatus || event.status || '').toUpperCase();
@@ -40,18 +41,21 @@ const ReceptionistDashboard = () => {
         (eventType === 'PatientCalled' && (qState === 'CALLED' || qState.includes('CONSULTATION')));
 
       if (isCallEvent && (event.tokenNumber || event.token || event.patientName || event.patientId || event.appointmentId || event._id)) {
-        voiceAnnouncement.announceCall({
-          tokenNumber: event.tokenNumber || event.token || event.tokenNo || '',
-          tokenNo: event.tokenNumber || event.token || event.tokenNo || '',
-          patientName: event.patientName || (typeof event.patientId === 'object' ? event.patientId?.name : '') || 'Patient',
-          doctorName: event.doctorName || (typeof event.doctorId === 'object' ? event.doctorId?.name : '') || 'Doctor',
-          roomNo: event.roomNo || event.roomNumber || (typeof event.doctorId === 'object' ? (event.doctorId?.roomNo || event.doctorId?.doctorProfile?.roomNo) : 'Consultation Room'),
-          roomNumber: event.roomNo || event.roomNumber || 'Consultation Room'
-        });
+        const pathname = typeof window !== 'undefined' ? (window.location.pathname || '').toLowerCase() : '';
+        if (!pathname.includes('/doctor')) {
+          voiceAnnouncement.announceCall({
+            tokenNumber: event.tokenNumber || event.token || event.tokenNo || '',
+            tokenNo: event.tokenNumber || event.token || event.tokenNo || '',
+            patientName: event.patientName || (typeof event.patientId === 'object' ? event.patientId?.name : '') || 'Patient',
+            doctorName: event.doctorName || (typeof event.doctorId === 'object' ? event.doctorId?.name : '') || 'Doctor',
+            roomNo: event.roomNo || event.roomNumber || (typeof event.doctorId === 'object' ? (event.doctorId?.roomNo || event.doctorId?.doctorProfile?.roomNo) : 'Consultation Room'),
+            roomNumber: event.roomNo || event.roomNumber || 'Consultation Room'
+          });
+        }
       }
     });
     return () => unsubscribe();
-  }, [appointmentsRefetch]);
+  }, [queryClient]);
 
   // Fetch doctors list (including DOCTOR and DOCTOR_ADMIN)
   const { data: doctors } = useQuery({

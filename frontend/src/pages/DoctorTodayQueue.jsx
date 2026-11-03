@@ -423,7 +423,6 @@ const DoctorTodayQueue = () => {
       label: 'Patient', 
       render: (row) => {
         const patientName = row.patientId?.name || 'Walk-in Patient';
-        const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || String(row.tokenNumber || '').startsWith('EMG');
         return (
           <div className="flex items-center gap-2">
             <button
@@ -434,11 +433,6 @@ const DoctorTodayQueue = () => {
             >
               {patientName}
             </button>
-            {isEmg && (
-              <span className="text-[10px] font-extrabold text-rose-700 bg-rose-100 border border-rose-200 px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse shrink-0">
-                🚨 EMERGENCY
-              </span>
-            )}
           </div>
         );
       } 

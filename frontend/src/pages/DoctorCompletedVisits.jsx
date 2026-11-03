@@ -85,13 +85,40 @@ const DoctorCompletedVisits = () => {
         const docId = a.doctorId?._id || a.doctorId;
         return !docId || String(docId) === String(user._id);
       });
-      return opdList
+      const filtered = opdList
         .filter(app => !app.isIpd && !app.isIPDAdmission && !app.ipdAdmissionId && (app.consultationType || '').toUpperCase() !== 'IPD')
         .sort((a, b) => {
           const dateA = new Date(getVisitConsultDate(a) || 0).getTime();
           const dateB = new Date(getVisitConsultDate(b) || 0).getTime();
-          return dateB - dateA;
+          if (dateB !== dateA) return dateB - dateA;
+          return String(a.tokenNumber || '').localeCompare(String(b.tokenNumber || ''), undefined, { numeric: true });
         });
+
+      // Safety check: ensure each visit on each consult date has an original unique token (validating male & female counts)
+      const seenTokensByDate = new Map();
+      return filtered.map(app => {
+        const cDate = getVisitConsultDate(app);
+        const dKey = cDate ? new Date(cDate).toISOString().split('T')[0] : 'general';
+        if (!seenTokensByDate.has(dKey)) seenTokensByDate.set(dKey, new Set());
+        const dateSet = seenTokensByDate.get(dKey);
+        let token = String(app.tokenNumber || '').trim();
+        if (!token || token === 'N/A' || dateSet.has(token)) {
+          let num = 1;
+          const isEmg = Boolean(app.isEmergency) || String(token).startsWith('EMG');
+          const prefix = isEmg ? 'EMG' : 'OP';
+          let candidate = `${prefix}${String(num).padStart(3, '0')}`;
+          while (dateSet.has(candidate)) {
+            num++;
+            candidate = `${prefix}${String(num).padStart(3, '0')}`;
+          }
+          token = candidate;
+        }
+        dateSet.add(token);
+        return {
+          ...app,
+          tokenNumber: token
+        };
+      });
     },
     enabled: !!user?._id
   });
