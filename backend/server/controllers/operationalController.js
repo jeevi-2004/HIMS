@@ -2713,6 +2713,13 @@ const getPatientHistory = async (req, res, next) => {
         ...(matchingAppt?.vitals || {}),
         ...(c.vitals || {})
       };
+      if (combinedVitals.bp && (!combinedVitals.bpSystolic || !combinedVitals.bpDiastolic)) {
+        const parts = String(combinedVitals.bp).split('/');
+        if (parts.length === 2) {
+          if (!combinedVitals.bpSystolic) combinedVitals.bpSystolic = parts[0].trim();
+          if (!combinedVitals.bpDiastolic) combinedVitals.bpDiastolic = parts[1].trim();
+        }
+      }
 
       const docName = c.doctorId?.name || matchingAppt?.doctorId?.name || (typeof c.doctorId === 'string' ? c.doctorId : null) || 'Doctor';
       const docSpec = c.doctorId?.specialization || matchingAppt?.doctorId?.specialization || 'General OPD';
@@ -2894,6 +2901,19 @@ const getPatientHistory = async (req, res, next) => {
 
         const dailyAdvice = (rev.treatmentPlan || rev.instructions || matchedConsult?.advice || '').trim();
 
+        const mergedReviewVitals = {
+          ...(adm.vitals || {}),
+          ...(matchedConsult?.vitals || {}),
+          ...(rev.vitals || {})
+        };
+        if (mergedReviewVitals.bp && (!mergedReviewVitals.bpSystolic || !mergedReviewVitals.bpDiastolic)) {
+          const parts = String(mergedReviewVitals.bp).split('/');
+          if (parts.length === 2) {
+            if (!mergedReviewVitals.bpSystolic) mergedReviewVitals.bpSystolic = parts[0].trim();
+            if (!mergedReviewVitals.bpDiastolic) mergedReviewVitals.bpDiastolic = parts[1].trim();
+          }
+        }
+
         ipdDailyConsultations.push({
           _id: matchedConsult?._id || rev._id || `${adm._id}_rev_${dayNum}`,
           consultationId: matchedConsult?._id,
@@ -2914,7 +2934,7 @@ const getPatientHistory = async (req, res, next) => {
           clinicalNotes: dailyNotes,
           notes: dailyNotes,
           advice: dailyAdvice,
-          vitals: (rev.vitals && Object.values(rev.vitals).some(Boolean)) ? rev.vitals : (matchedConsult?.vitals || adm.vitals || {}),
+          vitals: (mergedReviewVitals && Object.values(mergedReviewVitals).some(Boolean)) ? mergedReviewVitals : {},
           status: 'COMPLETED',
           prescriptions: revRx,
           items: revRx,

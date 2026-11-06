@@ -340,11 +340,62 @@ const extractText = (val, fallback = '') => {
 
   // Helper to get vitals for a consultation
   const getVitalsForVisit = (c) => {
-    if (c.vitals && Object.values(c.vitals).some(Boolean)) {
-      return c.vitals;
+    if (!c) return null;
+
+    // Inherit from parent admission if this is an IPD round/review missing baseline vitals (e.g. weight, height, BMI)
+    let parentAdmissionVitals = {};
+    if (c.admissionId) {
+      const parentAdm = visits.find(v => v.admissionId === c.admissionId && !v.isIPDDailyReview);
+      if (parentAdm?.vitals && typeof parentAdm.vitals === 'object') {
+        parentAdmissionVitals = parentAdm.vitals;
+      }
     }
-    if (c.appointmentId?.vitals && Object.values(c.appointmentId.vitals).some(Boolean)) {
-      return c.appointmentId.vitals;
+
+    const apptVitals = (c.appointmentId?.vitals && typeof c.appointmentId.vitals === 'object')
+      ? c.appointmentId.vitals
+      : (c.appointmentObj?.vitals && typeof c.appointmentObj.vitals === 'object')
+        ? c.appointmentObj.vitals
+        : {};
+
+    const consultVitals = (c.vitals && typeof c.vitals === 'object') ? c.vitals : {};
+
+    const merged = {
+      ...parentAdmissionVitals,
+      ...apptVitals,
+      ...consultVitals
+    };
+
+    // Normalize BP if bp: '120/70' or '120 / 70' is provided without systolic/diastolic
+    if (merged.bp && (!merged.bpSystolic || !merged.bpDiastolic)) {
+      const parts = String(merged.bp).split('/');
+      if (parts.length === 2) {
+        if (!merged.bpSystolic) merged.bpSystolic = parts[0].trim();
+        if (!merged.bpDiastolic) merged.bpDiastolic = parts[1].trim();
+      }
+    }
+    if (merged.bloodPressure && (!merged.bpSystolic || !merged.bpDiastolic)) {
+      const parts = String(merged.bloodPressure).split('/');
+      if (parts.length === 2) {
+        if (!merged.bpSystolic) merged.bpSystolic = parts[0].trim();
+        if (!merged.bpDiastolic) merged.bpDiastolic = parts[1].trim();
+      }
+    }
+
+    // Auto-calculate BMI if weight and height are present but BMI is not provided
+    if (!merged.bmi && merged.weight && merged.height) {
+      const w = parseFloat(merged.weight);
+      const h = parseFloat(merged.height);
+      if (w > 0 && h > 0) {
+        const hMeter = h > 3 ? h / 100 : h;
+        const calc = (w / (hMeter * hMeter)).toFixed(1);
+        if (!isNaN(calc) && isFinite(calc)) {
+          merged.bmi = calc;
+        }
+      }
+    }
+
+    if (Object.values(merged).some(v => v !== null && v !== undefined && String(v).trim() !== '' && String(v).trim() !== '0')) {
+      return merged;
     }
     return null;
   };
@@ -809,53 +860,93 @@ const extractText = (val, fallback = '') => {
                                 <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 text-center">
                                   <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">BP</span>
                                   <strong className="text-slate-900 font-mono text-xs block mt-0.5">
-                                    {vitalsObj?.bpSystolic && vitalsObj?.bpDiastolic ? `${vitalsObj.bpSystolic}/${vitalsObj.bpDiastolic}` : (vitalsObj?.bloodPressure || 'N/A')}
+                                    {(() => {
+                                      if (vitalsObj?.bpSystolic && vitalsObj?.bpDiastolic) return `${vitalsObj.bpSystolic}/${vitalsObj.bpDiastolic}`;
+                                      if (vitalsObj?.bp && String(vitalsObj.bp).trim()) return String(vitalsObj.bp).trim();
+                                      if (vitalsObj?.bloodPressure && String(vitalsObj.bloodPressure).trim()) return String(vitalsObj.bloodPressure).trim();
+                                      if (vitalsObj?.bpSystolic) return `${vitalsObj.bpSystolic}/—`;
+                                      return 'N/A';
+                                    })()}
                                   </strong>
                                 </div>
 
                                 <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 text-center">
                                   <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">PULSE</span>
                                   <strong className="text-slate-900 font-mono text-xs block mt-0.5">
-                                    {vitalsObj?.pulse ? `${vitalsObj.pulse} bpm` : 'N/A'}
+                                    {(() => {
+                                      const val = vitalsObj?.pulse || vitalsObj?.heartRate || vitalsObj?.pulseRate;
+                                      if (!val || String(val).trim() === '' || String(val).trim() === '0') return 'N/A';
+                                      const str = String(val).trim();
+                                      return str.toLowerCase().includes('bpm') ? str : `${str} bpm`;
+                                    })()}
                                   </strong>
                                 </div>
 
                                 <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 text-center">
                                   <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">TEMP</span>
                                   <strong className="text-slate-900 font-mono text-xs block mt-0.5">
-                                    {vitalsObj?.temperature ? `${vitalsObj.temperature} °F` : 'N/A'}
+                                    {(() => {
+                                      const val = vitalsObj?.temperature || vitalsObj?.temp;
+                                      if (!val || String(val).trim() === '' || String(val).trim() === '0') return 'N/A';
+                                      const str = String(val).trim();
+                                      return (str.includes('°') || str.toLowerCase().includes('f') || str.toLowerCase().includes('c')) ? str : `${str} °F`;
+                                    })()}
                                   </strong>
                                 </div>
 
                                 <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 text-center">
                                   <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">SPO2</span>
                                   <strong className="text-slate-900 font-mono text-xs block mt-0.5">
-                                    {vitalsObj?.spo2 ? `${vitalsObj.spo2}%` : 'N/A'}
+                                    {(() => {
+                                      const val = vitalsObj?.spo2 || vitalsObj?.oxygenSaturation;
+                                      if (!val || String(val).trim() === '' || String(val).trim() === '0') return 'N/A';
+                                      const str = String(val).trim();
+                                      return str.includes('%') ? str : `${str}%`;
+                                    })()}
                                   </strong>
                                 </div>
 
                                 <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 text-center">
                                   <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">WEIGHT</span>
                                   <strong className="text-slate-900 font-mono text-xs block mt-0.5">
-                                    {vitalsObj?.weight ? `${vitalsObj.weight} kg` : 'N/A'}
+                                    {(() => {
+                                      const val = vitalsObj?.weight || vitalsObj?.wt;
+                                      if (!val || String(val).trim() === '' || String(val).trim() === '0') return 'N/A';
+                                      const str = String(val).trim();
+                                      return str.toLowerCase().includes('kg') ? str : `${str} kg`;
+                                    })()}
                                   </strong>
                                 </div>
 
                                 <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 text-center">
                                   <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">HEIGHT</span>
                                   <strong className="text-slate-900 font-mono text-xs block mt-0.5">
-                                    {vitalsObj?.height ? `${vitalsObj.height} cm` : 'N/A'}
+                                    {(() => {
+                                      const val = vitalsObj?.height || vitalsObj?.ht;
+                                      if (!val || String(val).trim() === '' || String(val).trim() === '0') return 'N/A';
+                                      const str = String(val).trim();
+                                      return str.toLowerCase().includes('cm') ? str : `${str} cm`;
+                                    })()}
                                   </strong>
                                 </div>
 
                                 <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 text-center col-span-2">
                                   <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">BMI</span>
                                   <strong className="text-blue-600 font-mono text-xs block mt-0.5">
-                                    {vitalsObj?.bmi ? `${vitalsObj.bmi} kg/m²` : (
-                                      (vitalsObj?.weight && vitalsObj?.height) 
-                                        ? `${(Number(vitalsObj.weight) / Math.pow(Number(vitalsObj.height) / 100, 2)).toFixed(1)} kg/m²`
-                                        : 'N/A'
-                                    )}
+                                    {(() => {
+                                      if (vitalsObj?.bmi && String(vitalsObj.bmi).trim() && String(vitalsObj.bmi).trim() !== 'N/A' && String(vitalsObj.bmi).trim() !== '0') {
+                                        const str = String(vitalsObj.bmi).trim();
+                                        return str.toLowerCase().includes('kg/m') ? str : `${str} kg/m²`;
+                                      }
+                                      const w = parseFloat(vitalsObj?.weight || vitalsObj?.wt);
+                                      const h = parseFloat(vitalsObj?.height || vitalsObj?.ht);
+                                      if (w > 0 && h > 0) {
+                                        const hMeter = h > 3 ? h / 100 : h;
+                                        const calc = (w / (hMeter * hMeter)).toFixed(1);
+                                        if (!isNaN(calc) && isFinite(calc)) return `${calc} kg/m²`;
+                                      }
+                                      return 'N/A';
+                                    })()}
                                   </strong>
                                 </div>
                               </div>
