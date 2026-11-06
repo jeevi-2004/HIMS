@@ -15,6 +15,18 @@ class WorkflowRealtimeService {
     this.initSSE();
   }
 
+  getHospitalId() {
+    try {
+      if (typeof window === 'undefined') return '';
+      const raw = localStorage.getItem('vzh_user');
+      if (raw) {
+        const u = JSON.parse(raw);
+        return String(u.hospitalId || u.hospital?._id || u.hospital || '');
+      }
+    } catch (_) {}
+    return '';
+  }
+
   initBroadcastChannel() {
     try {
       if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -34,25 +46,28 @@ class WorkflowRealtimeService {
     if (typeof window === 'undefined' || !('EventSource' in window)) return;
 
     try {
-      const streamUrl = '/api/workflow/events/stream';
+      const hospId = this.getHospitalId();
+      const streamUrl = hospId 
+        ? `/api/workflow/events/stream?hospitalId=${encodeURIComponent(hospId)}` 
+        : '/api/workflow/events/stream';
+
+      if (this.eventSource) {
+        try { this.eventSource.close(); } catch (_) {}
+      }
+
       this.eventSource = new EventSource(streamUrl);
 
       this.eventSource.onopen = () => {
         this.isConnected = true;
-        console.log('[REALTIME SERVICE] Connected to Workflow SSE Stream.');
+        console.log('[REALTIME SERVICE] Connected to Workflow SSE Stream. Hospital:', hospId || 'All');
       };
 
       this.eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.type === 'PING') return;
+          if (payload.type === 'PING' || payload.type === 'CONNECTED') return;
 
           this.notifyListeners(payload);
-
-          // Broadcast cross-tab
-          if (this.broadcastChannel) {
-            this.broadcastChannel.postMessage(payload);
-          }
         } catch (e) {
           console.error('[REALTIME SERVICE] Error parsing SSE payload:', e);
         }
@@ -113,4 +128,3 @@ class WorkflowRealtimeService {
 
 export const workflowRealtime = new WorkflowRealtimeService();
 export default workflowRealtime;
-

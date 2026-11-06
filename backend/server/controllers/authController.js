@@ -262,7 +262,7 @@ const getProfile = async (req, res, next) => {
   try {
     const user = await User.findById(req.user._id)
       .populate('roleId')
-      .populate('hospitalId', 'name code featureModules opdOperationMode planName geolocationSettings ipd_requested')
+      .populate('hospitalId', 'name code featureModules opdOperationMode planName geolocationSettings ipd_requested address contactCountryCode contactNumber ownerName ownerMobile prescriptionSettings')
       .populate('branchId', 'name code')
       .populate('departmentId', 'name code');
 

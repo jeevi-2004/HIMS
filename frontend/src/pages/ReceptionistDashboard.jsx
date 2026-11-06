@@ -37,10 +37,15 @@ const ReceptionistDashboard = () => {
 
       const isCallEvent =
         eventType === 'TriggerVoiceCall' ||
-        eventType === 'ConsultationStarted' ||
-        (eventType === 'PatientCalled' && (qState === 'CALLED' || qState.includes('CONSULTATION')));
+        (eventType === 'PatientCalled' && qState === 'CALLED');
 
       if (isCallEvent && (event.tokenNumber || event.token || event.patientName || event.patientId || event.appointmentId || event._id)) {
+        const myHospId = String(user?.hospitalId || user?.hospital?._id || user?.hospital || '');
+        const evtHospId = String(event.hospitalId || '');
+        if (myHospId && evtHospId && myHospId !== evtHospId) {
+          return;
+        }
+
         const pathname = typeof window !== 'undefined' ? (window.location.pathname || '').toLowerCase() : '';
         if (!pathname.includes('/doctor')) {
           voiceAnnouncement.announceCall({

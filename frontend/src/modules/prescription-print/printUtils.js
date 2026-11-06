@@ -15,6 +15,8 @@ export const normalizePrescriptionData = (rawConsultation = {}, rawDoctor = {}, 
     ? rawDiag
     : (typeof rawDiag === 'string' && rawDiag.includes(',') ? rawDiag.split(',').map(s => s.trim()).filter(Boolean) : (rawDiag ? [rawDiag] : []));
   const adviceList = rawConsultation.advice || [];
+  const rawRx = rawConsultation.prescriptions || rawConsultation.prescription || rawConsultation.medicines || rawConsultation.rxList || [];
+  const rxList = Array.isArray(rawRx) ? rawRx : [];
   const doctorProfile = rawDoctor.doctorProfile || {};
 
   const sampleFallback = isSample;

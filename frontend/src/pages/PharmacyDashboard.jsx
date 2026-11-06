@@ -1112,35 +1112,39 @@ const PharmacyDashboard = () => {
             const roundNum = prescriptionDetail.roundNumber || prescriptionDetail.dayNumber ||
               selectedIpdOrder?.roundNumber || selectedIpdOrder?.dayNumber || 1;
             return (
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200">
-                Round {roundNum}
+              <span className="inline-flex flex-row flex-nowrap items-center justify-center px-2.5 py-1 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200 whitespace-nowrap shrink-0">
+                {`Round\u00A0${roundNum}`}
               </span>
             );
           })() : undefined}
         >
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3.5 p-1 text-xs">
-            <div className="flex flex-col gap-0.5">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 sm:gap-x-6 gap-y-3 sm:gap-y-3.5 p-1 text-xs">
+            <div className="flex flex-col gap-0.5 min-w-0">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Patient ID</span>
-              <span className="font-bold font-mono text-[#2F63F2]">{patient?.uhid || 'N/A'}</span>
+              <span className="font-bold font-mono text-[#2F63F2] truncate">{patient?.uhid || 'N/A'}</span>
             </div>
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-0.5 min-w-0">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Patient Name</span>
-              <span className="font-bold text-[#111827]">{patient?.name || 'N/A'}</span>
+              <span className="font-bold text-[#111827] truncate">{patient?.name || 'N/A'}</span>
             </div>
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-0.5 min-w-0">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Age / Gender</span>
-              <span className="font-bold text-slate-700">{patient?.age ? `${patient.age} yrs` : 'N/A'} / {patient?.gender ? (patient.gender.length === 1 ? patient.gender.toUpperCase() : patient.gender.charAt(0).toUpperCase()) : 'N/A'}</span>
-              {patient?.bloodGroup && patient.bloodGroup !== 'Unknown' && patient.bloodGroup !== 'N/A' && patient.bloodGroup !== '—' && (
-                <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight w-max shadow-2xs">
-                  {patient.bloodGroup}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="font-bold text-slate-700 whitespace-nowrap">
+                  {patient?.age ? `${patient.age} yrs` : 'N/A'} / {patient?.gender ? (patient.gender.length === 1 ? patient.gender.toUpperCase() : patient.gender.charAt(0).toUpperCase()) : 'N/A'}
                 </span>
-              )}
+                {patient?.bloodGroup && patient.bloodGroup !== 'Unknown' && patient.bloodGroup !== 'N/A' && patient.bloodGroup !== '—' && (
+                  <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight shadow-2xs">
+                    {patient.bloodGroup}
+                  </span>
+                )}
+              </div>
             </div>
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-0.5 min-w-0">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Mobile Number</span>
-              <span className="font-bold font-mono text-slate-700">{patient?.mobileNumber || 'N/A'}</span>
+              <span className="font-bold font-mono text-slate-700 truncate">{patient?.mobileNumber || 'N/A'}</span>
             </div>
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-0.5 min-w-0">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">
                 {prescriptionDetail.isIpd ? 'Token / IPD Number' : 'Token Number'}
               </span>
@@ -1148,17 +1152,17 @@ const PharmacyDashboard = () => {
                 #{prescriptionDetail?.tokenNumber || consultation?.appointmentId?.tokenNumber || 'N/A'}
               </span>
             </div>
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-0.5 min-w-0">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Doctor Name</span>
-              <span className="font-bold text-[#111827]">Dr. {doctor?.name || 'N/A'}</span>
+              <span className="font-bold text-[#111827] truncate">Dr. {doctor?.name || 'N/A'}</span>
             </div>
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-0.5 col-span-2 md:col-span-1 min-w-0">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Diagnosis & Clinical Notes</span>
               <span className="font-bold text-[#111827] bg-slate-50 border border-[#E5E7EB] rounded-xl px-3 py-1.5 text-xs block truncate" title={consultation?.diagnosis || 'General OPD Consultation'}>
                 {consultation?.diagnosis || 'General OPD Consultation'}
               </span>
             </div>
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-0.5 col-span-2 md:col-span-1 min-w-0">
               <span className="text-[10px] font-bold text-[#6B7280] uppercase tracking-wider">Prescription Sent Date</span>
               <span className="font-bold text-slate-800 bg-slate-50 border border-[#E5E7EB] rounded-xl px-3 py-1.5 text-xs block truncate" title={prescriptionSentDateStr}>
                 {prescriptionSentDateStr}
@@ -1480,14 +1484,14 @@ const PharmacyDashboard = () => {
 
         {/* DASHBOARD MODE SWITCHER + NOTIFICATION BUTTON (Shown when activeTab === 'dashboard') */}
         {activeTab === 'dashboard' && (
-          <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
-            {/* Live Notification Bell (Borderless Icon Only, exclusively for IPD prescription queue) */}
+          <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 self-start sm:self-center">
+            {/* Live Notification Bell (Aligned in same line with OPD & IPD Dashboard switcher) */}
             <button
               type="button"
               onClick={() => {
                 setDashboardMode('ipd');
               }}
-              className="relative p-2 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+              className="relative p-2 h-10 w-10 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors cursor-pointer shrink-0"
               title={ipdPendingList.length > 0 ? `${ipdPendingList.length} IPD Patient${ipdPendingList.length > 1 ? 's' : ''} in Prescription Queue` : 'No IPD Prescriptions in Queue'}
               aria-label="IPD Prescriptions Notification"
             >
@@ -1500,30 +1504,30 @@ const PharmacyDashboard = () => {
             </button>
 
             {/* Segmented Switcher Pill: OPD Dashboard | IPD Dashboard */}
-            <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 gap-1 h-10">
+            <div className="flex-1 sm:flex-initial flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 gap-1 h-10 min-w-0">
               <button
                 type="button"
                 onClick={() => setDashboardMode('opd')}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer h-full whitespace-nowrap ${
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer h-full whitespace-nowrap min-w-0 ${
                   dashboardMode === 'opd'
                     ? 'bg-white text-[#2F63F2] font-bold shadow-xs border border-slate-200'
                     : 'text-slate-600 hover:text-slate-900 font-medium'
                 }`}
               >
-                <Pill className="w-3.5 h-3.5" />
-                <span>OPD Dashboard</span>
+                <Pill className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">OPD Dashboard</span>
               </button>
               <button
                 type="button"
                 onClick={() => setDashboardMode('ipd')}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer h-full whitespace-nowrap ${
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer h-full whitespace-nowrap min-w-0 ${
                   dashboardMode === 'ipd'
                     ? 'bg-white text-[#2F63F2] font-bold shadow-xs border border-slate-200'
                     : 'text-slate-600 hover:text-slate-900 font-medium'
                 }`}
               >
-                <Bed className="w-3.5 h-3.5" />
-                <span>IPD Dashboard</span>
+                <Bed className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">IPD Dashboard</span>
               </button>
             </div>
           </div>
@@ -1531,101 +1535,128 @@ const PharmacyDashboard = () => {
 
         {/* OPD DISPENSING WORKFLOW TABS */}
         {isDispensingModule && (
-          <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-[#E5E7EB] self-start lg:self-auto">
+          <div className="flex items-center gap-1 sm:gap-1.5 bg-slate-100 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl border border-[#E5E7EB] w-full sm:w-auto">
             <button
               onClick={() => handleTabSwitch('queue')}
-              className={`flex items-center gap-2 px-4.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
+              className={`flex-1 sm:flex-initial flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4.5 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
                 activeTab === 'queue' 
                   ? 'bg-white text-[#2F63F2] shadow-sm border border-[#E5E7EB]' 
                   : 'text-[#6B7280] hover:text-[#111827] hover:bg-slate-200/60'
               }`}
             >
-              <ClipboardList className="w-4 h-4" />
-              Prescription Queue
+              <ClipboardList className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span>Prescription Queue</span>
             </button>
             <button
               onClick={() => handleTabSwitch('history')}
-              className={`flex items-center gap-2 px-4.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
+              className={`flex-1 sm:flex-initial flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4.5 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
                 activeTab === 'history' 
                   ? 'bg-white text-[#2F63F2] shadow-sm border border-[#E5E7EB]' 
                   : 'text-[#6B7280] hover:text-[#111827] hover:bg-slate-200/60'
               }`}
             >
-              <FileText className="w-4 h-4" />
-              Dispensed History
+              <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span>Dispensed History</span>
             </button>
           </div>
         )}
 
         {/* IPD DISPENSING WORKFLOW TABS */}
         {isIpdDispenseModule && (
-          <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-[#E5E7EB] self-start lg:self-auto">
+          <div className="flex items-center gap-1 sm:gap-1.5 bg-slate-100 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl border border-[#E5E7EB] w-full sm:w-auto">
             <button
               onClick={() => handleTabSwitch('ipd-queue')}
-              className={`flex items-center gap-2 px-4.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
+              className={`flex-1 sm:flex-initial flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4.5 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
                 activeTab === 'ipd-queue' 
                   ? 'bg-white text-[#2F63F2] shadow-sm border border-[#E5E7EB]' 
                   : 'text-[#6B7280] hover:text-[#111827] hover:bg-slate-200/60'
               }`}
             >
-              <ClipboardList className="w-4 h-4" />
-              Prescription Queue
+              <ClipboardList className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span>Prescription Queue</span>
             </button>
             <button
               onClick={() => handleTabSwitch('ipd-history')}
-              className={`flex items-center gap-2 px-4.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
+              className={`flex-1 sm:flex-initial flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4.5 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold transition-all duration-200 whitespace-nowrap cursor-pointer ${
                 activeTab === 'ipd-history' 
                   ? 'bg-white text-[#2F63F2] shadow-sm border border-[#E5E7EB]' 
                   : 'text-[#6B7280] hover:text-[#111827] hover:bg-slate-200/60'
               }`}
             >
-              <FileText className="w-4 h-4" />
-              Dispensed History
+              <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span>Dispensed History</span>
             </button>
           </div>
         )}
       </div>
 
-      {/* 2. Compact Statistics Cards Grid: Exactly 3 cards across Dashboard & Dispensing Desks */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 sm:gap-4">
-        <div className="bg-white border border-[#E5E7EB] rounded-[16px] px-5 py-4 shadow-card-soft hover:shadow-md transition-all duration-200 flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Pending Prescriptions</p>
-            <h3 className="text-2xl font-bold text-[#111827] mt-1">
+      {/* 2. Compact Statistics Cards Grid: Exactly 3 cards across in ONE ROW on mobile and desktop */}
+      <div className="grid grid-cols-3 gap-2 sm:gap-4">
+        {/* Card 1: Pending Prescriptions */}
+        <div className="bg-white border border-[#E5E7EB] rounded-2xl p-2.5 sm:px-5 sm:py-4 shadow-card-soft hover:shadow-md transition-all duration-200 flex flex-col justify-between sm:flex-row sm:items-center min-w-0">
+          <div className="min-w-0 w-full sm:w-auto">
+            <div className="flex items-start justify-between gap-1 w-full sm:hidden">
+              <span className="text-[9px] font-bold uppercase tracking-tight text-[#6B7280] leading-tight line-clamp-2">
+                Pending Prescriptions
+              </span>
+              <div className="w-6 h-6 rounded-full border border-amber-200 bg-amber-50 flex items-center justify-center text-amber-600 shrink-0">
+                <Clock className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <p className="hidden sm:block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Pending Prescriptions</p>
+            <h3 className="text-xl sm:text-2xl font-bold text-[#111827] mt-1">
               {activeTab === 'dashboard'
                 ? (dashboardMode === 'opd' ? summaryCounts.pending : ipdSummaryCounts.pending)
                 : (isIpdDispenseModule ? ipdSummaryCounts.pending : summaryCounts.pending)}
             </h3>
           </div>
-          <div className="w-10 h-10 rounded-full border border-amber-200 bg-amber-50 flex items-center justify-center text-amber-600 shadow-2xs">
+          <div className="hidden sm:flex w-10 h-10 rounded-full border border-amber-200 bg-amber-50 items-center justify-center text-amber-600 shadow-2xs shrink-0">
             <Clock className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="bg-white border border-[#E5E7EB] rounded-[16px] px-5 py-4 shadow-card-soft hover:shadow-md transition-all duration-200 flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Dispensing</p>
-            <h3 className="text-2xl font-bold text-[#111827] mt-1">
+        {/* Card 2: Dispensing */}
+        <div className="bg-white border border-[#E5E7EB] rounded-2xl p-2.5 sm:px-5 sm:py-4 shadow-card-soft hover:shadow-md transition-all duration-200 flex flex-col justify-between sm:flex-row sm:items-center min-w-0">
+          <div className="min-w-0 w-full sm:w-auto">
+            <div className="flex items-start justify-between gap-1 w-full sm:hidden">
+              <span className="text-[9px] font-bold uppercase tracking-tight text-[#6B7280] leading-tight line-clamp-2">
+                Dispensing
+              </span>
+              <div className="w-6 h-6 rounded-full border border-blue-200 bg-blue-50 flex items-center justify-center text-[#2F63F2] shrink-0">
+                <Pill className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <p className="hidden sm:block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Dispensing</p>
+            <h3 className="text-xl sm:text-2xl font-bold text-[#111827] mt-1">
               {activeTab === 'dashboard'
                 ? (dashboardMode === 'opd' ? summaryCounts.dispensing : ipdSummaryCounts.dispensing)
                 : (isIpdDispenseModule ? ipdSummaryCounts.dispensing : summaryCounts.dispensing)}
             </h3>
           </div>
-          <div className="w-10 h-10 rounded-full border border-blue-200 bg-blue-50 flex items-center justify-center text-[#2F63F2] shadow-2xs">
+          <div className="hidden sm:flex w-10 h-10 rounded-full border border-blue-200 bg-blue-50 items-center justify-center text-[#2F63F2] shadow-2xs shrink-0">
             <Pill className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="bg-white border border-[#E5E7EB] rounded-[16px] px-5 py-4 shadow-card-soft hover:shadow-md transition-all duration-200 flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Dispensed Today</p>
-            <h3 className="text-2xl font-bold text-[#111827] mt-1">
+        {/* Card 3: Dispensed Today */}
+        <div className="bg-white border border-[#E5E7EB] rounded-2xl p-2.5 sm:px-5 sm:py-4 shadow-card-soft hover:shadow-md transition-all duration-200 flex flex-col justify-between sm:flex-row sm:items-center min-w-0">
+          <div className="min-w-0 w-full sm:w-auto">
+            <div className="flex items-start justify-between gap-1 w-full sm:hidden">
+              <span className="text-[9px] font-bold uppercase tracking-tight text-[#6B7280] leading-tight line-clamp-2">
+                Dispensed Today
+              </span>
+              <div className="w-6 h-6 rounded-full border border-emerald-200 bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
+                <PackageCheck className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <p className="hidden sm:block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Dispensed Today</p>
+            <h3 className="text-xl sm:text-2xl font-bold text-[#111827] mt-1">
               {activeTab === 'dashboard'
                 ? (dashboardMode === 'opd' ? summaryCounts.dispensedToday : ipdSummaryCounts.dispensedToday)
                 : (isIpdDispenseModule ? ipdSummaryCounts.dispensedToday : summaryCounts.dispensedToday)}
             </h3>
           </div>
-          <div className="w-10 h-10 rounded-full border border-emerald-200 bg-emerald-50 flex items-center justify-center text-emerald-600 shadow-2xs">
+          <div className="hidden sm:flex w-10 h-10 rounded-full border border-emerald-200 bg-emerald-50 items-center justify-center text-emerald-600 shadow-2xs shrink-0">
             <PackageCheck className="w-5 h-5" />
           </div>
         </div>
@@ -1754,19 +1785,8 @@ const PharmacyDashboard = () => {
                 ) : (
                   <Table
                     actionsAlign="center"
+                    actionsTitle=""
                     headers={[
-                      {
-                        key: 'admissionNumber',
-                        label: 'ADMISSION / BED',
-                        render: (row) => (
-                          <div>
-                            <span className="font-bold text-[#2F63F2] font-mono text-xs">{row.admissionNumber || 'ADM'}</span>
-                            <span className="text-[11px] text-slate-500 font-medium block">
-                              Bed: {row.bedNumber || 'N/A'} ({row.wardName || 'Ward'})
-                            </span>
-                          </div>
-                        )
-                      },
                       {
                         key: 'uhid',
                         label: 'PATIENT ID',
@@ -1785,12 +1805,15 @@ const PharmacyDashboard = () => {
                       {
                         key: 'round',
                         label: 'ROUND',
+                        className: 'whitespace-nowrap min-w-[90px]',
                         render: (row) => {
                           const roundNum = row.roundNumber || row.dayNumber || (typeof row.round === 'string' && row.round.replace(/[^0-9]/g, '')) || 1;
                           return (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200">
-                              Round {roundNum}
-                            </span>
+                            <div className="whitespace-nowrap min-w-[80px] w-max">
+                              <span className="inline-flex flex-row flex-nowrap items-center justify-center px-2.5 py-1 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200 whitespace-nowrap shrink-0">
+                                {`Round\u00A0${roundNum}`}
+                              </span>
+                            </div>
                           );
                         }
                       },
@@ -2409,6 +2432,7 @@ const PharmacyDashboard = () => {
             <div className="border border-[#E5E7EB] rounded-[14px] overflow-hidden bg-white">
               <Table
                 actionsAlign="center"
+                actionsTitle=""
                 headers={[
                   {
                     key: 'uhid',
@@ -2429,12 +2453,15 @@ const PharmacyDashboard = () => {
                   {
                     key: 'round',
                     label: 'ROUND',
+                    className: 'whitespace-nowrap min-w-[90px]',
                     render: (row) => {
                       const roundNum = row.roundNumber || row.dayNumber || (typeof row.round === 'string' && row.round.replace(/[^0-9]/g, '')) || 1;
                       return (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200">
-                          Round {roundNum}
-                        </span>
+                        <div className="whitespace-nowrap min-w-[80px] w-max">
+                          <span className="inline-flex flex-row flex-nowrap items-center justify-center px-2.5 py-1 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200 whitespace-nowrap shrink-0">
+                            {`Round\u00A0${roundNum}`}
+                          </span>
+                        </div>
                       );
                     }
                   },
@@ -2588,12 +2615,15 @@ const PharmacyDashboard = () => {
                   {
                     key: 'round',
                     label: 'ROUND',
+                    className: 'whitespace-nowrap min-w-[90px]',
                     render: (row) => {
                       const roundNum = row.roundNumber || row.dayNumber || (typeof row.round === 'string' && row.round.replace(/[^0-9]/g, '')) || 1;
                       return (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200">
-                          Round {roundNum}
-                        </span>
+                        <div className="whitespace-nowrap min-w-[80px] w-max">
+                          <span className="inline-flex flex-row flex-nowrap items-center justify-center px-2.5 py-1 rounded-md text-xs font-bold bg-blue-50 text-[#2F63F2] border border-blue-200 whitespace-nowrap shrink-0">
+                            {`Round\u00A0${roundNum}`}
+                          </span>
+                        </div>
                       );
                     }
                   },

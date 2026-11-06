@@ -27,7 +27,7 @@ const capitalizeWords = (str) => {
 export const CANONICAL_FEATURE_MODULES = [
   { key: 'OPD', label: 'OPD', default: true },
   { key: 'Appointments', label: 'Appointments', default: true },
-  { key: 'IPD', label: 'IPD', default: true },
+  { key: 'IPD', label: 'IPD', default: false },
   { key: 'Billing', label: 'Billing', default: true },
   { key: 'Pharmacy', label: 'Pharmacy', default: true },
   { key: 'Branches', label: 'Multi-Branch', default: false },
@@ -80,6 +80,10 @@ export const getHospitalFeatureModules = (hosp) => {
       }
     }
   });
+
+  if (!hosp?.ipd_requested) {
+    modules['IPD'] = false;
+  }
 
   return modules;
 };
@@ -735,6 +739,10 @@ const SuperAdminDashboard = () => {
 
   // Feature Modules Handler
   const handleToggleFeatureModule = async (hosp, modKey, currentValue) => {
+    if (modKey === 'IPD' && !hosp?.ipd_requested) {
+      toast.error('Cannot enable IPD module because IPD was not requested during hospital registration.');
+      return;
+    }
     try {
       const currentModules = getHospitalFeatureModules(hosp);
       const updatedModules = {
@@ -1168,7 +1176,7 @@ const SuperAdminDashboard = () => {
 
                   <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                     {CANONICAL_FEATURE_MODULES.map((mod) => {
-                      const enabled = currentModules[mod.key];
+                      const enabled = (mod.key === 'IPD' && !hosp.ipd_requested) ? false : Boolean(currentModules[mod.key]);
                       const isDisabled = mod.key === 'IPD' && !hosp.ipd_requested;
                       return (
                         <label 

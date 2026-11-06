@@ -415,7 +415,7 @@ const HospitalBillingWorkflowSettings = () => {
       
       {/* Toast Notification Banner */}
       {toastMessage && (
-        <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+        <div className="fixed bottom-6 right-6 z-50 bg-emerald-600 text-white text-xs font-bold px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 border border-emerald-500/20">
           <Check className="w-4 h-4 stroke-[3]" />
           <span>{toastMessage}</span>
         </div>
@@ -1636,6 +1636,13 @@ const HospitalBillingWorkflowSettings = () => {
                 </div>
 
                 <div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Active English Voice</span>
+                  <span className="font-bold text-blue-700 text-xs block truncate mb-3">
+                    {voiceForm.customEnglishVoiceName || (activeDiag.activeEnglish?.name || 'Auto Prioritized')}
+                    <span className="text-[11px] text-slate-500 font-normal block">
+                      Language: {voiceForm.customEnglishVoiceLang || (activeDiag.activeEnglish?.lang || 'en-US')}
+                    </span>
+                  </span>
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">Active Tamil Voice</span>
                   <span className="font-bold text-emerald-700 text-xs block truncate">
                     {voiceForm.provider === 'sarvam' ? voiceForm.sarvamVoiceId : voiceForm.provider === 'azure' ? voiceForm.azureVoiceId : voiceForm.provider === 'google' ? voiceForm.googleVoiceId : (activeDiag.activeTamil?.name || 'Microsoft Valluvar')}

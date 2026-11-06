@@ -253,14 +253,10 @@ const DoctorDashboard = () => {
           doctorName: app.doctorId?.name || app.doctorName || user?.name || 'Doctor',
           roomNumber: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
           roomNo: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
+          hospitalId: user?.hospitalId || user?.hospital?._id || user?.hospital,
           type: 'TriggerVoiceCall'
         };
         api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
-        voiceAnnouncement.enqueueAnnouncement({
-          ...callPayload,
-          patientObj: app,
-          broadcastOnly: true
-        });
       }
 
       await api.put(`/operations/appointments/${appId}/queue`, { status: 'In Consultation', queueStatus: 'In-Consultation' });
@@ -407,15 +403,11 @@ const DoctorDashboard = () => {
       patientName: target.patientId?.name || 'Patient',
       doctorName: target.doctorId?.name || target.doctorName || user?.name || 'Doctor',
       roomNumber: target.doctorId?.roomNumber || target.roomNumber || '',
+      hospitalId: user?.hospitalId || user?.hospital?._id || user?.hospital,
       type: 'TriggerVoiceCall'
     };
     api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
     
-    voiceAnnouncement.enqueueAnnouncement({
-      ...callPayload,
-      patientObj: target,
-      broadcastOnly: true
-    });
     api.put(`/operations/appointments/${target._id}/queue`, { status: 'Completed', queueStatus: 'Completed' })
       .then(() => {
         toast.success(`✓ Token #${target.tokenNumber} Accepted & Completed! Voice call sent to Reception desk.`);
@@ -432,11 +424,10 @@ const DoctorDashboard = () => {
       patientName: app.patientId?.name || 'Patient',
       doctorName: app.doctorId?.name || app.doctorName || user?.name || 'Doctor',
       roomNumber: app.doctorId?.roomNumber || app.roomNumber || '',
+      hospitalId: user?.hospitalId || user?.hospital?._id || user?.hospital,
       patientObj: app,
-      isRepeat: true,
-      broadcastOnly: true
+      isRepeat: true
     };
-    voiceAnnouncement.enqueueAnnouncement(callPayload);
     api.post('/workflow/events/trigger-call', { ...callPayload, type: 'TriggerVoiceCall' }).catch(() => {});
     toast.success(`📢 Re-calling Token #${app.tokenNumber} at Reception`);
   };
@@ -917,13 +908,13 @@ const DoctorDashboard = () => {
                       label: 'View Consultation',
                       icon: Eye,
                       isPrimary: true,
-                      onClick: (row) => navigate(`/doctor/consultation/${row._id}`),
+                      onClick: (row) => navigate(`/doctor/consultation/${row._id}?mode=view`),
                       show: () => activeQueueTab === 'completed'
                     },
                     {
                       label: 'View Prescription',
                       icon: FileText,
-                      onClick: (row) => navigate(`/doctor/consultation/${row._id}`),
+                      onClick: (row) => navigate(`/doctor/consultation/${row._id}?mode=view`),
                       show: () => activeQueueTab === 'completed'
                     }
                   ]),

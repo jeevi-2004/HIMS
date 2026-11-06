@@ -48,8 +48,12 @@ router.put('/announcement-settings', (req, res) => {
 
 // 5. Trigger Remote Voice Call
 router.post('/events/trigger-call', (req, res) => {
-  const payload = req.body;
-  WorkflowEventHub.publish('TriggerVoiceCall', payload);
+  const payload = req.body || {};
+  const hospitalId = payload.hospitalId || req.user?.hospitalId || req.hospitalId;
+  WorkflowEventHub.publish('TriggerVoiceCall', {
+    ...payload,
+    hospitalId: hospitalId ? String(hospitalId) : undefined
+  });
   res.json({
     success: true,
     message: 'Voice call triggered successfully'

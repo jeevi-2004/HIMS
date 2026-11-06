@@ -254,7 +254,48 @@ const IPDDailyConsultationModal = ({
       setSelectedDoctorName(assignedDoctorName);
       setChiefComplaints('Transferred from OPD Queue to IPD');
       setVitals({ bp: '', pulse: '', temperature: '', spo2: '' });
-      setClinicalFindings('No specific clinical findings recorded.');
+
+      // Fetch doctor consulted or selected clinical finding / examination from admission or consultation
+      const admConditionTokens = [];
+      if (effectiveAdm.generalCondition && !String(effectiveAdm.generalCondition).toLowerCase().includes('select')) {
+        admConditionTokens.push(`Condition: ${effectiveAdm.generalCondition}`);
+      }
+      if (effectiveAdm.consciousnessLevel && !String(effectiveAdm.consciousnessLevel).toLowerCase().includes('select')) {
+        admConditionTokens.push(`Consciousness: ${effectiveAdm.consciousnessLevel}`);
+      }
+      if (effectiveAdm.painScore !== undefined && effectiveAdm.painScore !== null && effectiveAdm.painScore !== '' && !String(effectiveAdm.painScore).toLowerCase().includes('select')) {
+        admConditionTokens.push(`Pain: ${effectiveAdm.painScore}`);
+      }
+      const admSelected = admConditionTokens.join(' | ');
+
+      const admExam = (effectiveAdm.examinationFindings || effectiveAdm.admissionExamination || effectiveAdm.initialAssessment?.examinationFindings || '').trim();
+      const admClinical = (effectiveAdm.clinicalFindings || effectiveAdm.initialAssessment?.clinicalFindings || '').trim();
+      const admNotes = (effectiveAdm.clinicalNotes || effectiveAdm.reasonForAdmission || '').trim();
+
+      let admConsulted = '';
+      if (admExam && admClinical && admExam !== admClinical) {
+        admConsulted = `${admExam} | ${admClinical}`;
+      } else {
+        admConsulted = admExam || admClinical || admNotes;
+      }
+
+      let admFinalFindings = '';
+      if (admConsulted && admSelected && !admConsulted.includes(admSelected)) {
+        admFinalFindings = `${admConsulted} | ${admSelected}`;
+      } else {
+        admFinalFindings = admConsulted || admSelected;
+      }
+
+      if (!admFinalFindings && Array.isArray(effectiveAdm.dailyReviews)) {
+        for (const r of effectiveAdm.dailyReviews) {
+          if (r.clinicalFindings || r.examinationFindings) {
+            admFinalFindings = r.clinicalFindings || r.examinationFindings;
+            break;
+          }
+        }
+      }
+
+      setClinicalFindings(admFinalFindings || 'No specific clinical findings recorded.');
       setDiagnosis(effectiveAdm.finalDiagnosis || effectiveAdm.diagnosis || '—');
       setAssessment('Inpatient care in progress.');
       setTreatmentPlan('Continue supportive inpatient care.');
@@ -280,15 +321,80 @@ const IPDDailyConsultationModal = ({
     } else {
       setVitals({ bp: '', pulse: '', temperature: '', spo2: '' });
     }
-    // 1. Clinical Findings (fetch doctor's notes or synthesize from General Condition, Consciousness, Pain Score)
+    // 1. Clinical Findings (fetch doctor consulted or selected clinical findings / examination)
     const conditionTokens = [];
-    if (rev.generalCondition) conditionTokens.push(`Condition: ${rev.generalCondition}`);
-    if (rev.consciousnessLevel) conditionTokens.push(`Consciousness: ${rev.consciousnessLevel}`);
-    if (rev.painScore !== undefined && rev.painScore !== null && rev.painScore !== '') {
+    if (rev.generalCondition && !String(rev.generalCondition).toLowerCase().includes('select')) {
+      conditionTokens.push(`Condition: ${rev.generalCondition}`);
+    }
+    if (rev.consciousnessLevel && !String(rev.consciousnessLevel).toLowerCase().includes('select')) {
+      conditionTokens.push(`Consciousness: ${rev.consciousnessLevel}`);
+    }
+    if (rev.painScore !== undefined && rev.painScore !== null && rev.painScore !== '' && !String(rev.painScore).toLowerCase().includes('select')) {
       conditionTokens.push(`Pain: ${rev.painScore}`);
     }
-    const synthesizedFindings = conditionTokens.join(' | ');
-    const finalFindings = rev.clinicalFindings || rev.examinationFindings || synthesizedFindings || rev.clinicalNotes || '';
+    const selectedFindings = conditionTokens.join(' | ');
+
+    const consultExam = (rev.examinationFindings || '').trim();
+    const consultClinical = (rev.clinicalFindings || '').trim();
+    const consultNotes = (rev.clinicalNotes || '').trim();
+
+    // Check if consultClinical already starts with or includes condition tokens
+    const clinicalHasConditions = consultClinical && (
+      consultClinical.includes('Condition:') ||
+      consultClinical.includes('Consciousness:') ||
+      consultClinical.includes('Pain:')
+    );
+
+    let consultedFindings = '';
+    if (consultExam && consultClinical && consultExam !== consultClinical) {
+      if (clinicalHasConditions) {
+        consultedFindings = consultExam;
+      } else {
+        consultedFindings = `${consultExam} | ${consultClinical}`;
+      }
+    } else if (consultExam) {
+      consultedFindings = consultExam;
+    } else if (consultClinical && !clinicalHasConditions) {
+      consultedFindings = consultClinical;
+    } else if (consultNotes && consultNotes !== rev.assessment && consultNotes !== rev.assessmentPlan) {
+      consultedFindings = consultNotes;
+    }
+
+    let finalFindings = '';
+    if (consultedFindings && selectedFindings) {
+      if (!consultedFindings.includes(selectedFindings)) {
+        finalFindings = `${consultedFindings} | ${selectedFindings}`;
+      } else {
+        finalFindings = consultedFindings;
+      }
+    } else if (consultedFindings) {
+      finalFindings = consultedFindings;
+    } else if (consultClinical) {
+      finalFindings = consultClinical;
+    } else if (selectedFindings) {
+      finalFindings = selectedFindings;
+    } else if (consultNotes) {
+      finalFindings = consultNotes;
+    } else {
+      // Fallback to admission level clinical findings / examination
+      finalFindings = effectiveAdm.examinationFindings ||
+        effectiveAdm.clinicalFindings ||
+        effectiveAdm.admissionExamination ||
+        effectiveAdm.clinicalNotes ||
+        effectiveAdm.initialAssessment?.examinationFindings ||
+        effectiveAdm.initialAssessment?.clinicalFindings ||
+        '';
+    }
+
+    if (!finalFindings && Array.isArray(effectiveAdm.dailyReviews)) {
+      for (const r of effectiveAdm.dailyReviews) {
+        if (r.clinicalFindings || r.examinationFindings) {
+          finalFindings = r.clinicalFindings || r.examinationFindings;
+          break;
+        }
+      }
+    }
+
     setClinicalFindings(finalFindings || 'No specific clinical findings recorded.');
 
     // 2. Diagnosis (fetch doctor's original clinical diagnosis, fallback to Round 1 / earliest review)
@@ -704,7 +810,7 @@ const IPDDailyConsultationModal = ({
                       toast('Opening patient clinical visit history...');
                     }
                   }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50/70 hover:bg-blue-100/80 active:bg-blue-200/60 text-[#2F63F2] border border-blue-200 text-xs font-semibold rounded-lg shadow-2xs transition-all cursor-pointer"
+                  className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50/70 hover:bg-blue-100/80 active:bg-blue-200/60 text-[#2F63F2] border border-blue-200 text-xs font-semibold rounded-lg shadow-2xs transition-all cursor-pointer"
                   title="View past consultation records & visit history"
                 >
                   <Stethoscope className="w-3.5 h-3.5 text-[#2F63F2]" />
@@ -722,47 +828,49 @@ const IPDDailyConsultationModal = ({
               </div>
             </div>
 
-            {/* Bottom Row of Patient Banner: Clean Key-Value Pairs */}
+            {/* Bottom Row of Patient Banner: Clean Structured Key-Value Details */}
             <div className="pt-2.5 border-t border-slate-100">
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
-                <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-tight">IPD No:</span>
-                  <span className="font-bold text-slate-900 font-mono">{ipdNoDisplay}</span>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs sm:flex sm:flex-wrap sm:items-center sm:gap-x-5 sm:gap-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-1.5">
+                  <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-tight">IPD No:</span>
+                  <span className="font-bold text-slate-900 font-mono text-xs">{ipdNoDisplay}</span>
                 </div>
 
-                <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-tight">UHID:</span>
-                  <span className="font-bold text-slate-900 font-mono">{cleanUhid}</span>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-1.5">
+                  <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-tight">UHID:</span>
+                  <span className="font-bold text-slate-900 font-mono text-xs">{cleanUhid}</span>
                 </div>
 
-                <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-tight">Age / Gender:</span>
-                  <span className="font-bold text-slate-900">{ageGenderDisplay}</span>
-                  {bloodGroupDisplay && (
-                    <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-none shadow-2xs">
-                      {bloodGroupDisplay}
-                    </span>
-                  )}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-1.5">
+                  <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-tight">Age / Gender:</span>
+                  <div className="flex items-center gap-1 font-bold text-slate-900 text-xs">
+                    <span>{ageGenderDisplay}</span>
+                    {bloodGroupDisplay && (
+                      <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-none shadow-2xs">
+                        {bloodGroupDisplay}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-tight">Ward / Bed:</span>
-                  <span className="font-bold text-slate-900">{wardBedDisplay}</span>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-1.5">
+                  <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-tight">Ward / Bed:</span>
+                  <span className="font-bold text-slate-900 text-xs truncate" title={wardBedDisplay}>{wardBedDisplay}</span>
                 </div>
 
-                <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-tight">Admission Date:</span>
-                  <span className="font-bold text-slate-900">{formattedAdmissionDate}</span>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-1.5">
+                  <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-tight">Admission Date:</span>
+                  <span className="font-bold text-slate-900 text-xs">{formattedAdmissionDate}</span>
                 </div>
 
-                <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-tight">Length of Stay:</span>
-                  <span className="font-bold text-slate-900">{stayDaysDisplay}</span>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-1.5">
+                  <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-tight">Length of Stay:</span>
+                  <span className="font-bold text-slate-900 text-xs">{stayDaysDisplay}</span>
                 </div>
 
-                <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-tight">Assigned Doctor:</span>
-                  <span className="font-bold text-slate-900">{doctorDisplay}</span>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-1.5 col-span-2 sm:col-span-1">
+                  <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-tight">Assigned Doctor:</span>
+                  <span className="font-bold text-slate-900 text-xs">{doctorDisplay}</span>
                 </div>
               </div>
             </div>
@@ -771,7 +879,7 @@ const IPDDailyConsultationModal = ({
           {/* ==================================================
               2. SCROLLABLE WORKSPACE CONTENT AREA (READ-ONLY)
               ================================================== */}
-          <div className="flex-1 overflow-y-auto bg-[#f8fafc] px-4 sm:px-6 py-5 space-y-5">
+          <div className="flex-1 overflow-y-auto bg-[#f8fafc] px-3 sm:px-6 py-4 sm:py-5 space-y-4 sm:space-y-5">
             {/* Title Header */}
             <div>
               <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
@@ -848,26 +956,26 @@ const IPDDailyConsultationModal = ({
             ) : (
               <>
                 {/* Main Card: Read-Only Clinical Review — Day X */}
-                <div className="bg-white rounded-xl border border-slate-200/90 shadow-2xs p-4 sm:p-5 space-y-4">
-                  {/* Card Title */}
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-blue-50 text-[#2F63F2] flex items-center justify-center">
-                        <Stethoscope className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight">
+                <div className="bg-white rounded-xl border border-slate-200/90 shadow-2xs p-3.5 sm:p-5 space-y-4">
+                  {/* Card Title Header */}
+                  <div className="pb-2.5 border-b border-slate-100 space-y-1">
+                    <div className="flex items-center justify-between gap-1.5 sm:gap-2 flex-wrap sm:flex-nowrap">
+                      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                        <div className="w-5.5 h-5.5 sm:w-7 sm:h-7 rounded-lg bg-blue-50 text-[#2F63F2] flex items-center justify-center shrink-0">
+                          <Stethoscope className="w-3 h-3 sm:w-4 sm:h-4 text-[#2F63F2]" />
+                        </div>
+                        <h4 className="text-[11.5px] sm:text-base font-bold text-slate-900 tracking-tight whitespace-nowrap shrink-0">
                           Clinical Review — Day {selectedDayNumber}
                         </h4>
-                        <p className="text-[11px] text-slate-500 font-normal">
-                          Consulted notes & doctor's inpatient review
-                        </p>
                       </div>
+                      <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-0.5 rounded-full text-[9.5px] sm:text-[11px] font-semibold bg-emerald-50 border border-emerald-200 text-emerald-700 shadow-2xs shrink-0 whitespace-nowrap">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+                        <span>{currentReview?.statusBadge || 'Doctor Consulted'}</span>
+                      </span>
                     </div>
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 border border-emerald-200 text-emerald-700 shadow-2xs">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                      {currentReview?.statusBadge || 'Consultation Recorded'}
-                    </span>
+                    <p className="text-[10px] sm:text-[11px] text-slate-500 font-normal pl-7 sm:pl-9">
+                      Consulted notes & doctor's inpatient review
+                    </p>
                   </div>
 
                   {/* Row 1: Review Date & Time | Chief Complaints / Symptoms (No duplicate Doctor field) */}

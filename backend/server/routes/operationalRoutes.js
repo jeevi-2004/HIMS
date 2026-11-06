@@ -43,6 +43,7 @@ const {
   getAllClinicalDiagnoses,
   getMedicineForms,
   createMedicineForm,
+  updateMedicineForm,
   deleteMedicineForm,
   getMedicineFrequencies,
   createMedicineFrequency,
@@ -69,6 +70,8 @@ router.post('/doctors/presence', updateDoctorPresence);
 // Medicine Forms
 router.get('/medicine-forms', getMedicineForms);
 router.post('/medicine-forms', createMedicineForm);
+router.put('/medicine-forms/:id', updateMedicineForm);
+router.patch('/medicine-forms/:id', updateMedicineForm);
 router.delete('/medicine-forms/:id', deleteMedicineForm);
 
 // Medicine Frequencies

@@ -553,103 +553,103 @@ const IPDDepartmentDashboard = ({
           </div>
         </div>
       ) : (
-        /* Reception Desk Layout: 5 Static Metric Cards Across (Reduced space between topic & count) */
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3.5 sm:gap-4 xl:gap-4.5 items-stretch">
+        /* Reception Desk Layout: 5 Static Metric Cards Across (3 rows & 2 columns on mobile, 5 cols on desktop) */
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2.5 sm:gap-4 xl:gap-4.5 items-stretch">
           {/* Card 1: Admissions Today */}
-          <div className="bg-white border border-slate-200/90 rounded-[22px] p-3.5 sm:p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-start cursor-default select-none transition-all h-full">
-            <div className="flex items-start justify-between gap-2.5 w-full">
-              <span className="text-xs sm:text-[13px] font-semibold text-slate-700 block tracking-tight leading-snug">
+          <div className="bg-white border border-slate-200/90 rounded-[22px] p-3 sm:p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-start cursor-default select-none transition-all h-full">
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-[11px] sm:text-[13px] font-semibold text-slate-700 block tracking-tight leading-snug">
                 Admissions Today
               </span>
-              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#EFF6FF] border border-blue-100/80 text-[#2F63F2] flex items-center justify-center shrink-0 shadow-xs">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-[#EFF6FF] border border-blue-100/80 text-[#2F63F2] flex items-center justify-center shrink-0 shadow-xs">
                 <UserPlus className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2]" />
               </div>
             </div>
             <div className="mt-1.5 sm:mt-2 w-full">
-              <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight font-mono tracking-tight">
+              <div className="text-xl sm:text-3xl font-extrabold text-slate-900 leading-tight font-mono tracking-tight">
                 {totalAdmissions}
               </div>
-              <span className="text-[11px] text-slate-400 font-medium block mt-0.5 leading-tight">
+              <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium block mt-0.5 leading-tight">
                 Registered today
               </span>
             </div>
           </div>
 
           {/* Card 2: Currently Admitted */}
-          <div className="bg-white border border-slate-200/90 rounded-[22px] p-3.5 sm:p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-start cursor-default select-none transition-all h-full">
-            <div className="flex items-start justify-between gap-2.5 w-full">
-              <span className="text-xs sm:text-[13px] font-semibold text-slate-700 block tracking-tight leading-snug">
+          <div className="bg-white border border-slate-200/90 rounded-[22px] p-3 sm:p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-start cursor-default select-none transition-all h-full">
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-[11px] sm:text-[13px] font-semibold text-slate-700 block tracking-tight leading-snug">
                 Currently Admitted
               </span>
-              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#ECFDF5] border border-emerald-100/80 text-[#10B981] flex items-center justify-center shrink-0 shadow-xs">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-[#ECFDF5] border border-emerald-100/80 text-[#10B981] flex items-center justify-center shrink-0 shadow-xs">
                 <Users className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2]" />
               </div>
             </div>
             <div className="mt-1.5 sm:mt-2 w-full">
-              <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight font-mono tracking-tight">
+              <div className="text-xl sm:text-3xl font-extrabold text-slate-900 leading-tight font-mono tracking-tight">
                 {currentlyAdmitted}
               </div>
-              <span className="text-[11px] text-slate-400 font-medium block mt-0.5 leading-tight">
+              <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium block mt-0.5 leading-tight">
                 Patients in hospital
               </span>
             </div>
           </div>
 
           {/* Card 3: Available Beds */}
-          <div className="bg-white border border-slate-200/90 rounded-[22px] p-3.5 sm:p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-start cursor-default select-none transition-all h-full">
-            <div className="flex items-start justify-between gap-2.5 w-full">
-              <span className="text-xs sm:text-[13px] font-semibold text-slate-700 block tracking-tight leading-snug">
+          <div className="bg-white border border-slate-200/90 rounded-[22px] p-3 sm:p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-start cursor-default select-none transition-all h-full">
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-[11px] sm:text-[13px] font-semibold text-slate-700 block tracking-tight leading-snug">
                 Available Beds
               </span>
-              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#FFFBEB] border border-amber-100/80 text-[#D97706] flex items-center justify-center shrink-0 shadow-xs">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-[#FFFBEB] border border-amber-100/80 text-[#D97706] flex items-center justify-center shrink-0 shadow-xs">
                 <Bed className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2]" />
               </div>
             </div>
             <div className="mt-1.5 sm:mt-2 w-full">
-              <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight font-mono tracking-tight">
+              <div className="text-xl sm:text-3xl font-extrabold text-slate-900 leading-tight font-mono tracking-tight">
                 {availableBeds}
               </div>
-              <span className="text-[11px] text-slate-400 font-medium block mt-0.5 leading-tight">
+              <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium block mt-0.5 leading-tight">
                 Ready for admission
               </span>
             </div>
           </div>
 
           {/* Card 4: Discharges Today */}
-          <div className="bg-white border border-slate-200/90 rounded-[22px] p-3.5 sm:p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-start cursor-default select-none transition-all h-full">
-            <div className="flex items-start justify-between gap-2.5 w-full">
-              <span className="text-xs sm:text-[13px] font-semibold text-slate-700 block tracking-tight leading-snug">
+          <div className="bg-white border border-slate-200/90 rounded-[22px] p-3 sm:p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-start cursor-default select-none transition-all h-full">
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-[11px] sm:text-[13px] font-semibold text-slate-700 block tracking-tight leading-snug">
                 Discharges Today
               </span>
-              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#FFF1F2] border border-rose-100/80 text-[#F43F5E] flex items-center justify-center shrink-0 shadow-xs">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-[#FFF1F2] border border-rose-100/80 text-[#F43F5E] flex items-center justify-center shrink-0 shadow-xs">
                 <LogOut className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2] ml-0.5" />
               </div>
             </div>
             <div className="mt-1.5 sm:mt-2 w-full">
-              <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight font-mono tracking-tight">
+              <div className="text-xl sm:text-3xl font-extrabold text-slate-900 leading-tight font-mono tracking-tight">
                 {dischargesToday}
               </div>
-              <span className="text-[11px] text-slate-400 font-medium block mt-0.5 leading-tight">
+              <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium block mt-0.5 leading-tight">
                 Discharged today
               </span>
             </div>
           </div>
 
           {/* Card 5: Pending Payments */}
-          <div className="bg-white border border-slate-200/90 rounded-[22px] p-3.5 sm:p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-start cursor-default select-none transition-all h-full">
-            <div className="flex items-start justify-between gap-2.5 w-full">
-              <span className="text-xs sm:text-[13px] font-semibold text-slate-700 block tracking-tight leading-snug">
+          <div className="bg-white border border-slate-200/90 rounded-[22px] p-3 sm:p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-start cursor-default select-none transition-all h-full col-span-2 md:col-span-1">
+            <div className="flex items-start justify-between gap-2 w-full">
+              <span className="text-[11px] sm:text-[13px] font-semibold text-slate-700 block tracking-tight leading-snug">
                 Pending Payments
               </span>
-              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#FAF5FF] border border-purple-100/80 text-[#9333EA] flex items-center justify-center shrink-0 shadow-xs">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-[#FAF5FF] border border-purple-100/80 text-[#9333EA] flex items-center justify-center shrink-0 shadow-xs">
                 <CreditCard className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2]" />
               </div>
             </div>
             <div className="mt-1.5 sm:mt-2 w-full">
-              <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 leading-tight font-mono tracking-tight">
+              <div className="text-xl sm:text-3xl font-extrabold text-slate-900 leading-tight font-mono tracking-tight">
                 {pendingPayments}
               </div>
-              <span className="text-[11px] text-slate-400 font-medium block mt-0.5 leading-tight">
+              <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium block mt-0.5 leading-tight">
                 Outstanding dues
               </span>
             </div>

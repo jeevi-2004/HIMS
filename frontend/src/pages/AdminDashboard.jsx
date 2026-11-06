@@ -137,7 +137,7 @@ const AdminDashboard = () => {
     name: '', code: '', description: '', branchId: '' 
   });
   const [serviceForm, setServiceForm] = useState({ 
-    serviceType: '', category: '', name: '', code: '', price: 150, description: '', status: 'active' 
+    serviceType: '', category: '', name: '', code: '', price: '', description: '', status: 'active' 
   });
 
   // Helper to capitalize the first letter of each word and disallow numbers
@@ -616,6 +616,7 @@ const AdminDashboard = () => {
     try {
       const payload = {
         ...serviceForm,
+        price: serviceForm.price === '' ? 0 : Number(serviceForm.price),
         category: serviceForm.category || serviceForm.serviceType || 'General'
       };
       if (selectedService) {
@@ -628,7 +629,7 @@ const AdminDashboard = () => {
       }
       setIsServiceOpen(false);
       setSelectedService(null);
-      setServiceForm({ serviceType: '', category: '', name: '', code: '', price: 150, description: '', status: 'active' });
+      setServiceForm({ serviceType: '', category: '', name: '', code: '', price: '', description: '', status: 'active' });
       fetchData('services');
     } catch (err) {
       toast.error('Service save failed');
@@ -642,7 +643,7 @@ const AdminDashboard = () => {
       code: srv.code,
       serviceType: srv.serviceType || '',
       category: srv.category || srv.serviceType || 'General',
-      price: srv.price || 150,
+      price: srv.price !== undefined && srv.price !== null ? srv.price : '',
       description: formatWordCapitalizedNoNumbers(srv.description || ''),
       status: srv.status || 'active'
     });
@@ -1528,12 +1529,13 @@ const AdminDashboard = () => {
             <Button 
               onClick={() => { 
                 setSelectedService(null); 
+                serviceDraft.clearDraft();
                 setServiceForm({ 
                   serviceType: '', 
                   category: '', 
                   name: '', 
                   code: '', 
-                  price: 150, 
+                  price: '', 
                   description: '', 
                   status: 'active' 
                 }); 
@@ -2484,9 +2486,14 @@ const AdminDashboard = () => {
           <Input 
             label="Price (₹)" 
             type="number" 
+            min="0"
+            step="any"
             placeholder="Enter Service Price" 
-            value={serviceForm.price} 
-            onChange={(e) => setServiceForm({ ...serviceForm, price: parseFloat(e.target.value) || 0 })} 
+            value={serviceForm.price ?? ''} 
+            onChange={(e) => {
+              const val = e.target.value;
+              setServiceForm({ ...serviceForm, price: val === '' ? '' : val });
+            }} 
             required 
           />
 

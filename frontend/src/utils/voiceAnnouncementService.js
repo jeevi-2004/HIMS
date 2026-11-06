@@ -229,11 +229,19 @@ class VoiceAnnouncementService {
       try {
         this.channel = new BroadcastChannel('villzone_hims_voice_channel');
         this.channel.onmessage = (event) => {
-          if (event.data?.type === 'ANNOUNCEMENT_PLAYED') {
+          if (event.data?.type === 'ANNOUNCEMENT_STARTING') {
+            this.remotePlayingToken = event.data.token;
+            this.remotePlayingTimestamp = event.data.timestamp;
+          } else if (event.data?.type === 'ANNOUNCEMENT_PLAYED') {
             this.lastAnnouncedToken = event.data.token;
             this.lastAnnouncedTimestamp = event.data.timestamp;
             if (event.data.announcement) {
               this.lastVoiceAnnouncement = event.data.announcement;
+            }
+          } else if (event.data?.type === 'VOICE_SETTINGS_UPDATED') {
+            this.loadSavedPreferences();
+            if (event.data.settings) {
+              this.settings = { ...this.settings, ...event.data.settings };
             }
           } else if (event.data?.type === 'RECEPTION_VOICE_CALL') {
             console.log("[PLAN1][RECEPTION] RECEPTION_VOICE_CALL RECEIVED", event.data);
@@ -293,6 +301,18 @@ class VoiceAnnouncementService {
       window.addEventListener('keydown', unlockAudio, { once: true });
     }
 
+    // Cross-tab and window events for immediate voice settings synchronization
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (e) => {
+        if (e.key === 'hims_voice_settings') {
+          this.loadSavedPreferences();
+        }
+      });
+      window.addEventListener('hims_voice_settings_changed', () => {
+        this.loadSavedPreferences();
+      });
+    }
+
     // Pre-trigger voice loading for Chrome / Edge
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
@@ -333,6 +353,15 @@ class VoiceAnnouncementService {
           languageMode: this.settings.languageMode,
           profile: this.settings.profile
         }));
+        // Broadcast immediately across all open tabs (Reception Desk, Live TV Display, etc.)
+        if (this.channel) {
+          this.channel.postMessage({
+            type: 'VOICE_SETTINGS_UPDATED',
+            settings: this.settings,
+            timestamp: Date.now()
+          });
+        }
+        window.dispatchEvent(new CustomEvent('hims_voice_settings_changed', { detail: this.settings }));
       } catch (e) {
         console.error('[VOICE ANNOUNCEMENT] Failed to save voice settings:', e);
       }
@@ -352,6 +381,14 @@ class VoiceAnnouncementService {
     if (typeof window !== 'undefined') {
       try {
         localStorage.removeItem('hims_voice_settings');
+        if (this.channel) {
+          this.channel.postMessage({
+            type: 'VOICE_SETTINGS_UPDATED',
+            settings: this.settings,
+            timestamp: Date.now()
+          });
+        }
+        window.dispatchEvent(new CustomEvent('hims_voice_settings_changed', { detail: this.settings }));
       } catch (e) {}
     }
   }
@@ -523,6 +560,12 @@ class VoiceAnnouncementService {
       return false;
     }
 
+    // Strict Guard: Doctor Desk pages must NEVER play audio
+    const pathname = (window.location.pathname || '').toLowerCase();
+    if (pathname.includes('/doctor')) {
+      return false;
+    }
+
     const token = patient.tokenNumber || patient.token || '';
     const rawPatientName = patient.patientName || (typeof patient.patientId === 'object' && patient.patientId?.name ? patient.patientId.name : (patient.name || ''));
     const rawDoctorName = patient.doctorName || (typeof patient.doctorId === 'object' && patient.doctorId?.name ? patient.doctorId.name : (patient.doctor || ''));
@@ -566,11 +609,27 @@ class VoiceAnnouncementService {
     if (!voices || voices.length === 0) return null;
 
     if (savedName) {
-      const exactMatch = voices.find(v => v.name === savedName);
+      const sName = String(savedName).trim().toLowerCase();
+      // 1. Exact match (case-insensitive)
+      const exactMatch = voices.find(v => (v.name || '').toLowerCase() === sName);
       if (exactMatch) return exactMatch;
 
-      const nameSubMatch = voices.find(v => (v.name || '').toLowerCase().includes(savedName.toLowerCase()));
-      if (nameSubMatch) return nameSubMatch;
+      // 2. Contains match (either voice name contains saved name, or saved name contains voice name)
+      const subMatch = voices.find(v => {
+        const vName = (v.name || '').toLowerCase();
+        return vName.includes(sName) || sName.includes(vName);
+      });
+      if (subMatch) return subMatch;
+
+      // 3. Keyword / stem matching (e.g. 'zira', 'david', 'neerja', 'valluvar')
+      const keywords = sName.split(/[\s\-_(),]+/).filter(w => w.length > 2 && !['microsoft', 'google', 'english', 'tamil', 'online', 'natural', 'local', 'desktop', 'united', 'states', 'india'].includes(w));
+      if (keywords.length > 0) {
+        const keywordMatch = voices.find(v => {
+          const vName = (v.name || '').toLowerCase();
+          return keywords.some(k => vName.includes(k));
+        });
+        if (keywordMatch) return keywordMatch;
+      }
     }
 
     if (savedLang) {
@@ -585,6 +644,7 @@ class VoiceAnnouncementService {
    * Finds the best female English voice available on the host OS/Browser
    */
   getBestEnglishVoice() {
+    this.loadSavedPreferences();
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
     const voices = window.speechSynthesis.getVoices();
     if (!voices || voices.length === 0) return null;
@@ -747,6 +807,7 @@ class VoiceAnnouncementService {
    * Finds the best Tamil voice available on the host OS/Browser
    */
   getBestTamilVoice() {
+    this.loadSavedPreferences();
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
 
     // Check saved preference first
@@ -771,6 +832,7 @@ class VoiceAnnouncementService {
   }
 
   getVoiceDiagnostics() {
+    this.loadSavedPreferences();
     const englishVoice = this.getBestEnglishVoice();
     const tamilVoice = this.getBestTamilVoice();
     const isSavedEngAvailable = this.settings.customEnglishVoiceName
@@ -931,14 +993,29 @@ class VoiceAnnouncementService {
 
   enqueueAnnouncement(announcementData) {
     if (!announcementData) return false;
+    this.loadSavedPreferences();
 
     const { tokenNumber, patientName, doctorName, mode = 'BOTH', isRepeat = false, broadcastOnly = false } = announcementData;
     const now = Date.now();
 
-    // Deduplication Protection: Prevent rapid duplicate events (< 8.0 seconds) for the same token number
+    // Strict Guard: Doctor Desk pages must NEVER play audio
+    if (typeof window !== 'undefined') {
+      const pathname = (window.location.pathname || '').toLowerCase();
+      if (pathname.includes('/doctor')) {
+        return false;
+      }
+    }
+
+    // Deduplication Protection: Prevent rapid duplicate events (< 3.5 seconds) for the same token number
     const normToken = String(tokenNumber || announcementData.token || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    if (normToken && this.lastAnnouncedToken === normToken && !isRepeat && (now - this.lastAnnouncedTimestamp) < 2000) {
+    if (normToken && this.lastAnnouncedToken === normToken && !isRepeat && (now - this.lastAnnouncedTimestamp) < 3500) {
       console.log(`[VOICE ANNOUNCEMENT] Rapid duplicate announcement for Token #${tokenNumber} suppressed.`);
+      return false;
+    }
+
+    // Cross-Tab Deduplication: If another Reception tab has already started playing this token
+    if (normToken && this.remotePlayingToken === normToken && !isRepeat && (now - (this.remotePlayingTimestamp || 0)) < 6000) {
+      console.log(`[VOICE ANNOUNCEMENT] Token #${tokenNumber} is already playing in another Reception tab. Suppressed duplicate.`);
       return false;
     }
 
@@ -1088,6 +1165,16 @@ class VoiceAnnouncementService {
     this.isSpeaking = true;
     const currentItem = this.queue.shift();
 
+    // Broadcast to other tabs that this tab is starting the announcement
+    if (this.channel && currentItem.tokenNumber) {
+      const norm = String(currentItem.tokenNumber).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+      this.channel.postMessage({
+        type: 'ANNOUNCEMENT_STARTING',
+        token: norm,
+        timestamp: Date.now()
+      });
+    }
+
     try {
       // 1. Play hospital announcement chime first so hardware speakers activate
       this.playHospitalChime();
@@ -1136,10 +1223,10 @@ class VoiceAnnouncementService {
               return;
             }
 
-            // Chrome unstick fix: Cancel any stale / frozen speech engine queue
-            try {
-              window.speechSynthesis.cancel();
-            } catch (_) {}
+            // Resume audio engine if paused
+            if (window.speechSynthesis.paused) {
+              window.speechSynthesis.resume();
+            }
 
             const u = new SpeechSynthesisUtterance(text);
             u.rate = rate;

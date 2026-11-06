@@ -114,7 +114,7 @@ const InpatientDetailsModal = ({
   const patientName = patient.name || activeAdmission?.patientName || 'Patient';
   const bloodGroup = patient.bloodGroup || activeAdmission?.bloodGroup || null;
   const status = activeAdmission?.status || 'Admitted';
-  const isDischarged = status === 'Discharged';
+  const isDischarged = status === 'Discharged' || (status || '').toLowerCase() === 'discharged' || activeAdmission?.dischargeSummaryStatus === 'Completed';
   const ipdNumber = activeAdmission?.admissionId || activeAdmission?.ipdNo || '—';
   const uhid = patient.uhid || activeAdmission?.uhid || '—';
   const age = patient.age || activeAdmission?.age || '—';
@@ -197,7 +197,7 @@ const InpatientDetailsModal = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/70">
               {isDoctorDesk && onOpenDischarge && (
                 <button
                   type="button"
@@ -206,10 +206,10 @@ const InpatientDetailsModal = ({
                     onClose();
                     onOpenDischarge(adm);
                   }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer flex-1 sm:flex-initial whitespace-nowrap min-w-[130px]"
                   title="Open Clinical Discharge Summary"
                 >
-                  <FileText className="w-3.5 h-3.5 text-white" />
+                  <FileText className="w-3.5 h-3.5 text-white shrink-0" />
                   <span>Discharge Summary</span>
                 </button>
               )}
@@ -220,18 +220,20 @@ const InpatientDetailsModal = ({
                     if (onOpenVisitHistory) onOpenVisitHistory(activeAdmission);
                     else if (onOpenDoctorRound) onOpenDoctorRound(activeAdmission);
                   }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#2F63F2] hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 bg-[#2F63F2] hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer flex-1 sm:flex-initial whitespace-nowrap min-w-[130px]"
                 >
-                  <History className="w-3.5 h-3.5 text-white" />
+                  <History className="w-3.5 h-3.5 text-white shrink-0" />
                   <span>Visit History</span>
                 </button>
               )}
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+                className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer whitespace-nowrap ${
+                  isDoctorDesk && onOpenDischarge ? 'w-full sm:w-auto' : 'flex-1 sm:flex-initial'
+                }`}
               >
-                <Printer className="w-3.5 h-3.5 text-slate-500" />
+                <Printer className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                 <span>Print Summary</span>
               </button>
             </div>
@@ -393,7 +395,9 @@ const InpatientDetailsModal = ({
                 </span>
               </div>
               <div>
-                <span className="text-slate-400 block text-[11px]">Advance Amount Paid</span>
+                <span className="text-slate-400 block text-[11px]">
+                  {isDischarged ? 'Amount Paid' : 'Advance Amount Paid'}
+                </span>
                 <span className="font-bold text-slate-900 text-sm">
                   ₹{Number(activeAdmission?.amountPaid || 0).toLocaleString('en-IN')}
                 </span>

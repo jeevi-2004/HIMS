@@ -9,7 +9,7 @@ import Table from '../components/Table';
 import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import {
-  getMasterList, saveMasterList, universalClinicalSearch, exportMasterCSV, getDoctorFavorites, toggleDoctorFavorite
+  getMasterList, saveMasterList, universalClinicalSearch, exportMasterCSV, getDoctorFavorites, toggleDoctorFavorite, syncMedicineToMaster
 } from '../utils/clinicalMasters';
 import { isFeatureModuleEnabled } from '../utils/featureUtils';
 import { isLikelyRadiology } from '../utils/investigationUtils';
@@ -765,6 +765,29 @@ const DoctorClinicalMasters = () => {
   const [modalEditingItem, setModalEditingItem] = useState(null);
   const [modalForm, setModalForm] = useState({});
 
+  // Helper to purge all residual drafts for clinical modals and avoid draft restoration
+  const purgeModalDrafts = () => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const toRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && (
+            k.startsWith('vzh_draft_clinical_modal') ||
+            k.startsWith('hims_draft_clinical_modal') ||
+            k.includes('clinical_modal')
+          )) {
+            toRemove.push(k);
+          }
+        }
+        toRemove.forEach(k => localStorage.removeItem(k));
+      }
+    } catch (e) {
+      console.error('Error purging clinical modal drafts:', e);
+    }
+  };
+
+  // Ensure persistent draft auto-fill is disabled for quick master modals
   const modalDraftKey = activeModalTarget
     ? `clinical_modal_${activeModalTarget}${modalEditingItem ? `_edit_${modalEditingItem.id || modalEditingItem._id || ''}` : '_create'}`
     : 'clinical_modal_draft';
@@ -773,8 +796,13 @@ const DoctorClinicalMasters = () => {
     modalDraftKey,
     modalForm,
     setModalForm,
-    { isEditMode: Boolean(modalEditingItem), enabled: Boolean(activeModalTarget) }
+    { isEditMode: Boolean(modalEditingItem), enabled: false }
   );
+
+  // Clean up any stale modal drafts on initial mount
+  useEffect(() => {
+    purgeModalDrafts();
+  }, []);
 
   // Quick Add Modal State for Diagnosis Template Builder
   const [quickModalType, setQuickModalType] = useState(null);
@@ -790,6 +818,32 @@ const DoctorClinicalMasters = () => {
     printNotesHeader: true,
     presetNotes: 'Patient advised to complete full course of medication and return if symptoms persist.'
   });
+
+  // Synchronize doctor-added medicines from consultations if not already in Medicine Master
+  const syncConsultationMedicines = useCallback(async () => {
+    try {
+      const res = await api.get('/operations/consultations?limit=100');
+      const consults = res.data?.data || [];
+      if (Array.isArray(consults) && consults.length > 0) {
+        let addedAny = false;
+        consults.forEach(c => {
+          const rxItems = Array.isArray(c.prescriptions) && c.prescriptions.length > 0
+            ? c.prescriptions
+            : (Array.isArray(c.prescription?.items) ? c.prescription.items : []);
+          rxItems.forEach(rx => {
+            const medName = rx?.medicineName || rx?.name;
+            if (medName) {
+              const added = syncMedicineToMaster(rx);
+              if (added) addedAny = true;
+            }
+          });
+        });
+        if (addedAny) {
+          setMlist(getMasterList('mlist') || []);
+        }
+      }
+    } catch (_) {}
+  }, []);
 
   // Load all master lists from storage & DB
   const reloadAllMasters = () => {
@@ -814,7 +868,20 @@ const DoctorClinicalMasters = () => {
 
   useEffect(() => {
     reloadAllMasters();
-  }, []);
+    syncConsultationMedicines();
+
+    const handleMasterUpdate = (e) => {
+      if (!e?.detail?.key || e.detail.key === 'mlist') {
+        setMlist(getMasterList('mlist') || []);
+      }
+    };
+    window.addEventListener('clinical_master_updated', handleMasterUpdate);
+    window.addEventListener('storage', handleMasterUpdate);
+    return () => {
+      window.removeEventListener('clinical_master_updated', handleMasterUpdate);
+      window.removeEventListener('storage', handleMasterUpdate);
+    };
+  }, [syncConsultationMedicines]);
 
   const saveMaster = (key, data) => {
     saveMasterList(key, data);
@@ -925,6 +992,10 @@ const DoctorClinicalMasters = () => {
 
   const resetDiagnosisForm = () => {
     clearDiagnosisDraft();
+    try {
+      localStorage.removeItem('vzh_draft_clinical_template_create');
+      localStorage.removeItem('hims_draft_clinical_template_create');
+    } catch (e) {}
     setDiagnosisForm({
       name: '',
       icd: '',
@@ -1124,14 +1195,22 @@ const DoctorClinicalMasters = () => {
 
   // Open Edit or Create Modal for generic list
   const openMasterModal = (key, item = null) => {
-    setActiveModalTarget(key);
+    purgeModalDrafts();
+    clearModalDraft();
     setModalEditingItem(item);
     if (item) {
-      if (typeof item === 'object') {
+      if (key === 'medicineForms') {
+        setModalForm({
+          name: item.name || '',
+          code: item.code || '',
+          description: item.description || ''
+        });
+      } else if (typeof item === 'object') {
         const isFav = item.frequentlyUsed && user && item.frequentlyUsed.some(uid => String(uid) === String(user._id));
         setModalForm({
           ...item,
           name: item.name || getItemText(item),
+          val: item.name || getItemText(item),
           icd10Code: item.icd10Code || item.icd || '',
           category: item.category || 'General Medicine',
           frequent: !!(item.frequent || isFav),
@@ -1145,8 +1224,66 @@ const DoctorClinicalMasters = () => {
         setModalForm({ val: String(item), name: String(item), category: 'General Medicine' });
       }
     } else {
-      setModalForm({ category: 'General Medicine', frequent: false, symptoms: [], medicines: [], advice: [], investigations: [], followup: '3 Days' });
+      if (key === 'medicineForms') {
+        setModalForm({
+          name: '',
+          code: '',
+          description: ''
+        });
+      } else if (key === 'dlist') {
+        setModalForm({
+          name: '',
+          val: '',
+          icd10Code: '',
+          icd: '',
+          category: 'General Medicine',
+          frequent: false,
+          symptoms: [],
+          medicines: [],
+          advice: [],
+          investigations: [],
+          followup: '3 Days',
+          notes: ''
+        });
+      } else if (key === 'mlist') {
+        setModalForm({
+          name: '',
+          generic: '',
+          genericName: '',
+          strength: '',
+          category: 'Tablet',
+          status: 'Active'
+        });
+      } else if (key === 'slist') {
+        setModalForm({
+          name: '',
+          description: '',
+          status: 'Active'
+        });
+      } else if (key === 'icdList') {
+        setModalForm({
+          code: '',
+          desc: '',
+          category: 'General'
+        });
+      } else {
+        setModalForm({
+          name: '',
+          val: '',
+          category: 'General Medicine',
+          frequent: false
+        });
+      }
     }
+    setActiveModalTarget(key);
+  };
+
+  const handleCloseMasterModal = () => {
+    purgeModalDrafts();
+    clearModalDraft();
+    setActiveModalTarget(null);
+    setModalForm({});
+    setModalEditingItem(null);
   };
 
   // Submit Generic Master Modal (CRUD Create / Edit)
@@ -1224,9 +1361,7 @@ const DoctorClinicalMasters = () => {
         toast.error(err.response?.data?.message || err.message || 'Failed to save diagnosis to database');
       }
 
-      setActiveModalTarget(null);
-      setModalForm({});
-      setModalEditingItem(null);
+      handleCloseMasterModal();
       return;
     } else if (activeModalTarget === 'frequencies') {
       const code = (modalForm.code || modalForm.val || modalForm.name || '').trim();
@@ -1244,10 +1379,7 @@ const DoctorClinicalMasters = () => {
         toast.error(err.response?.data?.message || 'Failed to save frequency to database');
       }
 
-      clearModalDraft();
-      setActiveModalTarget(null);
-      setModalForm({});
-      setModalEditingItem(null);
+      handleCloseMasterModal();
       return;
     } else if (activeModalTarget === 'dosages') {
       const val = (modalForm.val || modalForm.name || '').trim();
@@ -1263,10 +1395,7 @@ const DoctorClinicalMasters = () => {
         toast.error(err.response?.data?.message || 'Failed to save dosage to database');
       }
 
-      clearModalDraft();
-      setActiveModalTarget(null);
-      setModalForm({});
-      setModalEditingItem(null);
+      handleCloseMasterModal();
       return;
     } else if (activeModalTarget === 'foodInstructions') {
       const name = (modalForm.name || modalForm.val || '').trim();
@@ -1282,10 +1411,37 @@ const DoctorClinicalMasters = () => {
         toast.error(err.response?.data?.message || 'Failed to save food instruction to database');
       }
 
-      clearModalDraft();
-      setActiveModalTarget(null);
-      setModalForm({});
-      setModalEditingItem(null);
+      handleCloseMasterModal();
+      return;
+    } else if (activeModalTarget === 'medicineForms') {
+      const formName = (modalForm.name || '').trim();
+      const formCode = (modalForm.code || '').trim();
+      const formDesc = (modalForm.description || '').trim();
+
+      if (!formName) return toast.error('Format Name is required');
+
+      try {
+        if (modalEditingItem && modalEditingItem._id) {
+          await api.put(`/operations/medicine-forms/${modalEditingItem._id}`, {
+            name: formName,
+            code: formCode,
+            description: formDesc
+          });
+          toast.success('Medicine format updated');
+        } else {
+          await api.post('/operations/medicine-forms', {
+            name: formName,
+            code: formCode,
+            description: formDesc
+          });
+          toast.success('Medicine format saved to database');
+        }
+        fetchMedicineForms();
+      } catch (err) {
+        toast.error(err.response?.data?.message || 'Failed to save medicine format');
+      }
+
+      handleCloseMasterModal();
       return;
     } else {
       // Simple text-based or generic master lists
@@ -1301,10 +1457,7 @@ const DoctorClinicalMasters = () => {
     }
 
     toast.success('Master record saved successfully');
-    clearModalDraft();
-    setActiveModalTarget(null);
-    setModalForm({});
-    setModalEditingItem(null);
+    handleCloseMasterModal();
   };
 
   const handleModalSave = handleGenericMasterSubmit;
@@ -1718,7 +1871,8 @@ const DoctorClinicalMasters = () => {
                         <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
                           <button
                             type="button"
-                            onClick={() => {
+                            onClick={async () => {
+                              await syncConsultationMedicines();
                               setMlist(getMasterList('mlist') || []);
                               toast.success('Refreshed Medicine Master');
                             }}
@@ -1801,18 +1955,7 @@ const DoctorClinicalMasters = () => {
                             <span>Refresh</span>
                           </button>
                           <Button
-                            onClick={async () => {
-                              const newFormName = prompt('Enter new Medicine Format name (e.g. Ointment, Gel, Drops):');
-                              if (newFormName && newFormName.trim()) {
-                                try {
-                                  await api.post('/operations/medicine-forms', { name: newFormName.trim() });
-                                  toast.success('Medicine format saved to database');
-                                  fetchMedicineForms();
-                                } catch (err) {
-                                  toast.error('Failed to add medicine format');
-                                }
-                              }
-                            }}
+                            onClick={() => openMasterModal('medicineForms')}
                             variant="primary"
                             className="h-[38px] px-3.5 sm:px-4 text-xs font-bold uppercase tracking-wider bg-[#3563FF] text-white hover:bg-[#2F58E5] whitespace-nowrap shrink-0 shadow-sm"
                             icon={Plus}
@@ -1833,7 +1976,7 @@ const DoctorClinicalMasters = () => {
                         data={filteredMedicineForms}
                         actions={createTableActions(
                           (row) => setViewingItem({ type: 'Medicine Format', item: row }),
-                          null,
+                          (row) => openMasterModal('medicineForms', row),
                           async (row) => {
                             if (window.confirm(`Delete medicine format "${row.name}"?`)) {
                               try {
@@ -2551,11 +2694,35 @@ const DoctorClinicalMasters = () => {
       {/* STANDARD CENTERED MODAL FOR MASTER CRUD SECTIONS */}
       <Modal
         isOpen={Boolean(activeModalTarget)}
-        onClose={() => setActiveModalTarget(null)}
-        title={`${modalEditingItem ? 'Edit' : 'Add'} Master Item`}
+        onClose={handleCloseMasterModal}
+        title={`${modalEditingItem ? 'Edit' : 'Add'} ${activeModalTarget === 'medicineForms' ? 'Medicine Format' : 'Master Item'}`}
         size="lg"
       >
         <form onSubmit={handleModalSave} className="space-y-4">
+          {activeModalTarget === 'medicineForms' && (
+            <div className="space-y-4">
+              <Input
+                label="Format Name *"
+                placeholder="e.g. Ointment, Gel, Drops"
+                value={modalForm.name || ''}
+                onChange={(e) => setModalForm({ ...modalForm, name: e.target.value })}
+                required
+              />
+              <Input
+                label="Format Code"
+                placeholder="e.g. OINT, GEL, DRP"
+                value={modalForm.code || ''}
+                onChange={(e) => setModalForm({ ...modalForm, code: e.target.value.toUpperCase() })}
+              />
+              <Input
+                label="Description"
+                placeholder="Optional formulation details..."
+                value={modalForm.description || ''}
+                onChange={(e) => setModalForm({ ...modalForm, description: e.target.value })}
+              />
+            </div>
+          )}
+
           {activeModalTarget === 'slist' && (
             <>
               <Input
@@ -2791,7 +2958,7 @@ const DoctorClinicalMasters = () => {
             </div>
           )}
 
-          {!['slist', 'mlist', 'icdList', 'dlist'].includes(activeModalTarget) && (
+          {!['slist', 'mlist', 'icdList', 'dlist', 'medicineForms'].includes(activeModalTarget) && (
             <Input
               label="Value Name"
               placeholder="Enter master item name..."
@@ -2805,7 +2972,7 @@ const DoctorClinicalMasters = () => {
             <Button
               type="button"
               variant="secondary"
-              onClick={() => setActiveModalTarget(null)}
+              onClick={handleCloseMasterModal}
               className="h-[38px] px-4 text-xs font-bold"
             >
               Close

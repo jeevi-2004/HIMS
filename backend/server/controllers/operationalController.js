@@ -453,7 +453,7 @@ const bookAppointment = async (req, res, next) => {
   const { 
     patientId, doctorId, date, time, consultationType, 
     billingStatus, consultationFee, paymentMethod, chiefComplaint, allergies, isEmergency,
-    appointmentSlot, bookingSource
+    appointmentSlot, bookingSource, vitals
   } = req.body;
   try {
     const isEmgApp = Boolean(isEmergency);
@@ -674,6 +674,7 @@ const bookAppointment = async (req, res, next) => {
       consultationType: consultationType || (isFutureBooking ? 'Appointment' : 'Walk-In'),
       chiefComplaint,
       allergies: uniqueAppAllergies,
+      vitals: (vitals && typeof vitals === 'object') ? vitals : undefined,
       isEmergency: isEmgApp,
       priorityLevel: priority,
       priority: priority,
@@ -703,6 +704,12 @@ const bookAppointment = async (req, res, next) => {
         capturedAt: new Date()
       }
     });
+
+    if (patientId && vitals && typeof vitals === 'object' && Object.keys(vitals).length > 0) {
+      try {
+        await Patient.findByIdAndUpdate(patientId, { $set: { vitals } });
+      } catch (_) {}
+    }
 
     // Create corresponding Invoice document for financial ledger reconciliation
     try {
@@ -748,7 +755,7 @@ const getAppointmentById = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid appointment ID format' });
     }
     const appointment = await Appointment.findById(id)
-      .populate('patientId', 'name uhid age gender mobileNumber alternativeMobile bloodGroup allergies medicalAlerts address addresses contacts guardianName emergencyContact isProfileCompleted dob aadhaarNumber occupation maritalStatus lastVisitDate')
+      .populate('patientId', 'name uhid age gender mobileNumber alternativeMobile bloodGroup allergies medicalAlerts address addresses contacts guardianName emergencyContact isProfileCompleted dob aadhaarNumber occupation maritalStatus lastVisitDate vitals')
       .populate('doctorId', 'name email doctorProfile employeeCode roomNo');
 
     if (!appointment) {
@@ -881,11 +888,14 @@ const getAppointments = async (req, res, next) => {
         }
       }
 
-      // 2. Automatically transition scheduled / follow-up appointments whose booked date has arrived (date <= today) to Active Queue (Waiting)
-      // They must NOT remain in Scheduled or Follow-up rows once their booked date has arrived!
+      const todayStartOfDay = new Date();
+      todayStartOfDay.setHours(0, 0, 0, 0);
+
+      // 2. Automatically transition scheduled / follow-up appointments whose booked date has arrived (today) to Active Queue (Waiting)
+      // They redirect to Today's Queue on their scheduled date!
       await Appointment.updateMany(
         {
-          date: { $lte: todayEndOfDay },
+          date: { $gte: todayStartOfDay, $lte: todayEndOfDay },
           status: { $in: ['Scheduled', 'SCHEDULED'] }
         },
         {
@@ -939,6 +949,7 @@ const getAppointments = async (req, res, next) => {
       // Ensures Doctor follow-ups and Receptionist scheduled queue are always 100% in sync without missing patients or duplicates
       try {
         const upcomingFollowups = await Consultation.find({
+          followupRequired: true,
           followupDate: { $gte: new Date(todayEndOfDay.getFullYear(), todayEndOfDay.getMonth(), todayEndOfDay.getDate(), 0, 0, 0, 0) },
           followupStatus: { $ne: 'Completed' },
           followupCompleted: { $ne: true }
@@ -950,19 +961,19 @@ const getAppointments = async (req, res, next) => {
           const sOfDay = new Date(fDate.getFullYear(), fDate.getMonth(), fDate.getDate(), 0, 0, 0, 0);
           const eOfDay = new Date(fDate.getFullYear(), fDate.getMonth(), fDate.getDate(), 23, 59, 59, 999);
 
-          // Check if patient was already consulted after this follow-up was booked
+          // Check if patient was already consulted ON OR AFTER this follow-up date
           const hasSubsequentConsult = await Consultation.findOne({
             patientId: consult.patientId,
             _id: { $ne: consult._id },
-            createdAt: { $gt: consult.createdAt }
+            createdAt: { $gte: sOfDay }
           }).select('_id').lean();
 
           if (hasSubsequentConsult) {
-            // Patient was already consulted! If any scheduled appointment exists for this followup, mark it Completed
+            // Patient was already consulted on or after follow-up date! Mark scheduled appointment Completed
             await Appointment.updateMany(
               {
                 patientId: consult.patientId,
-                status: 'Scheduled',
+                status: { $in: ['Scheduled', 'SCHEDULED'] },
                 date: { $gte: sOfDay, $lte: eOfDay }
               },
               {
@@ -1714,19 +1725,20 @@ const updateQueueStatus = async (req, res, next) => {
       .populate('doctorId', 'name roomNo doctorProfile');
 
     const WorkflowEventHub = require('../services/WorkflowEventHub');
+    const hospitalId = appointment.hospitalId || req.user?.hospitalId || req.hospitalId;
     const callData = {
       appointmentId: populated._id,
       _id: populated._id,
       tokenNumber: populated.tokenNumber,
       tokenNo: populated.tokenNumber,
       queueState: populated.status || populated.queueStatus,
-      patientId: populated.patientId,
-      doctorId: populated.doctorId,
-      patientName: populated.patientId?.name,
-      doctorName: populated.doctorId?.name,
-      roomNo: populated.doctorId?.roomNo || populated.doctorId?.doctorProfile?.roomNo || 'Room 1'
+      patientId: populated.patientId?._id || populated.patientId,
+      doctorId: populated.doctorId?._id || populated.doctorId,
+      patientName: populated.patientId?.name || '',
+      doctorName: populated.doctorId?.name || '',
+      roomNo: populated.doctorId?.roomNo || populated.doctorId?.doctorProfile?.roomNo || 'Room 1',
+      hospitalId: hospitalId ? String(hospitalId) : undefined
     };
-    WorkflowEventHub.publish('PatientCalled', callData);
 
     const isInConsultation = 
       (queueStatus && String(queueStatus).toLowerCase().includes('consultation')) ||
@@ -1739,6 +1751,8 @@ const updateQueueStatus = async (req, res, next) => {
         ...callData,
         type: 'TriggerVoiceCall'
       });
+    } else {
+      WorkflowEventHub.publish('PatientCalled', callData);
     }
 
     res.status(200).json({ success: true, data: appointment });
@@ -1831,6 +1845,7 @@ const createConsultation = async (req, res, next) => {
     const isIpdPatient = Boolean(!linkedAppointment && (isExplicitIpd || ipdAdmission));
     const roundNumberVal = Number(req.body.roundNumber || req.body.dayNumber) || 1;
     const dayNumberVal = Number(req.body.dayNumber || req.body.roundNumber) || 1;
+    const targetPatient = patientId || linkedAppointment?.patientId || ipdAdmission?.patientId;
 
     // 1. Create or Update Consultation record (Status COMPLETED)
     let consultation;
@@ -1838,10 +1853,11 @@ const createConsultation = async (req, res, next) => {
     const enrichedInvestigations = await enrichInvestigationsBackend(investigations, options);
 
     if (existingConsultation) {
+      existingConsultation.patientId = targetPatient || existingConsultation.patientId;
       existingConsultation.diagnosis = finalDiagnosis;
       existingConsultation.clinicalNotes = clinicalNotes || '';
       existingConsultation.advice = advice || '';
-      existingConsultation.followupDate = followupDate ? new Date(followupDate) : undefined;
+      existingConsultation.followupDate = (followupRequired && followupDate) ? new Date(followupDate) : undefined;
       existingConsultation.chiefComplaint = chiefComplaint || finalDiagnosis;
       existingConsultation.historyOfPresentIllness = historyOfPresentIllness || '';
       existingConsultation.examinationFindings = examinationFindings || '';
@@ -1899,13 +1915,13 @@ const createConsultation = async (req, res, next) => {
         isIpd: isIpdPatient,
         roundNumber: isIpdPatient ? roundNumberVal : undefined,
         dayNumber: isIpdPatient ? dayNumberVal : undefined,
-        patientId,
+        patientId: targetPatient,
         allergies: uniqueConsultationAllergies,
         doctorId: req.user._id,
         diagnosis: finalDiagnosis,
         clinicalNotes: clinicalNotes || '',
         advice: advice || '',
-        followupDate: followupDate ? new Date(followupDate) : undefined,
+        followupDate: (followupRequired && followupDate) ? new Date(followupDate) : undefined,
         chiefComplaint: chiefComplaint || finalDiagnosis,
         historyOfPresentIllness: historyOfPresentIllness || '',
         examinationFindings: examinationFindings || '',
@@ -1942,7 +1958,7 @@ const createConsultation = async (req, res, next) => {
     }
 
     // Determine Prescription Delivery Routing from Hospital Settings & Request
-    const hospitalForDelivery = validHospitalId ? await Hospital.findById(validHospitalId, null, options) : null;
+    const hospitalForDelivery = validHospitalId ? await Hospital.findById(validHospitalId).lean() : null;
     const configuredDelivery = hospitalForDelivery?.billingWorkflowSettings?.prescriptionDelivery || 'internal_pharmacy';
     const reqDelivery = req.body.deliveryMethod || req.body.prescriptionDelivery;
 
@@ -2046,7 +2062,7 @@ const createConsultation = async (req, res, next) => {
     // 3. Populate snapshot entities
     const patientDoc = await Patient.findById(patientId, null, options);
     const doctorDoc = await User.findById(req.user._id, null, options);
-    const hospitalDoc = hospitalForDelivery || (validHospitalId ? await Hospital.findById(validHospitalId, null, options) : null);
+    const hospitalDoc = hospitalForDelivery || (validHospitalId ? await Hospital.findById(validHospitalId).lean() : null);
     const branchDoc = validBranchId ? await Branch.findById(validBranchId, null, options) : null;
     const appointment = await Appointment.findById(appointmentId, null, options);
 
@@ -2123,6 +2139,9 @@ const createConsultation = async (req, res, next) => {
       if (Array.isArray(activeDiagnoses) && activeDiagnoses.length > 0) {
         appointment.diagnoses = activeDiagnoses;
       }
+      if (vitals && typeof vitals === 'object' && Object.keys(vitals).length > 0) {
+        appointment.vitals = vitals;
+      }
       appointment.completedByDoctorId = req.user._id;
       if (req.body.consultationFee !== undefined && !isNaN(Number(req.body.consultationFee))) {
         appointment.consultationFee = Number(req.body.consultationFee);
@@ -2131,6 +2150,9 @@ const createConsultation = async (req, res, next) => {
       if (shouldSendToPharmacy) {
         appointment.sentToPharmacyAt = new Date();
         appointment.sentByDoctorId = req.user._id;
+      }
+      if (consultation) {
+        appointment.consultationId = consultation._id;
       }
       await appointment.save(options);
       if (consultation) {
@@ -2349,11 +2371,16 @@ const createConsultation = async (req, res, next) => {
     }
 
     // Auto-fulfill previous pending scheduled follow-up appointments and consultations for this patient
+    // CRITICAL: Only fulfill appointments and follow-ups on or before today (date <= endOfToday), NEVER future scheduled reviews!
     if (patientId) {
+      const endOfToday = new Date();
+      endOfToday.setHours(23, 59, 59, 999);
+
       await Appointment.updateMany(
         {
           patientId,
           _id: { $ne: appointmentId },
+          date: { $lte: endOfToday },
           $or: [
             { status: { $in: ['Scheduled', 'In Consultation', 'In-Consultation', 'In Progress'] } },
             { queueStatus: { $in: ['Scheduled', 'In Consultation', 'In-Consultation', 'In Progress'] } },
@@ -2377,7 +2404,7 @@ const createConsultation = async (req, res, next) => {
         {
           patientId,
           _id: { $ne: consultation._id },
-          followupDate: { $exists: true, $ne: null }
+          followupDate: { $exists: true, $ne: null, $lte: endOfToday }
         },
         {
           $set: {
@@ -2389,8 +2416,8 @@ const createConsultation = async (req, res, next) => {
       );
     }
 
-    // 7. Followup Appointment
-    if ((followupRequired || followupDate) && followupDate) {
+    // 7. Followup Appointment (ONLY when doctor explicitly required follow-up)
+    if (followupRequired && followupDate) {
       const startOfDay = new Date(followupDate);
       startOfDay.setHours(0, 0, 0, 0);
       const endOfDay = new Date(followupDate);
@@ -2576,20 +2603,39 @@ const getPatientHistory = async (req, res, next) => {
       ? { hospitalId: req.user.hospitalId }
       : {};
 
-    // 1. Fetch all prescriptions for this patient
-    const prescriptions = await Prescription.find({ patientId: targetPatientId, ...hospitalFilter })
-      .populate('doctorId', 'name specialization')
-      .sort({ createdAt: -1 })
-      .lean();
-
-    // 2. Fetch all appointments for this patient
+    // 1. Fetch all appointments for this patient
     const appointments = await Appointment.find({ patientId: targetPatientId, ...hospitalFilter })
       .populate('doctorId', 'name specialization')
       .sort({ date: -1, createdAt: -1 })
       .lean();
 
-    // 3. Fetch all consultations for this patient (including COMPLETED, Completed, past, active, etc.)
-    const allConsultations = await Consultation.find({ patientId: targetPatientId, ...hospitalFilter })
+    const apptIds = appointments.map(a => a._id);
+    const consultIdsFromAppts = appointments.map(a => a.consultationId).filter(Boolean);
+
+    // 2. Fetch all consultations for this patient (including COMPLETED, Completed, past, active, etc.)
+    const allConsultations = await Consultation.find({
+      $or: [
+        { patientId: targetPatientId },
+        { appointmentId: { $in: apptIds } },
+        { _id: { $in: consultIdsFromAppts } }
+      ],
+      ...hospitalFilter
+    })
+      .populate('doctorId', 'name specialization')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const consultIds = allConsultations.map(c => c._id);
+
+    // 3. Fetch all prescriptions for this patient
+    const prescriptions = await Prescription.find({
+      $or: [
+        { patientId: targetPatientId },
+        { appointmentId: { $in: apptIds } },
+        { consultationId: { $in: consultIds } }
+      ],
+      ...hospitalFilter
+    })
       .populate('doctorId', 'name specialization')
       .sort({ createdAt: -1 })
       .lean();
@@ -2613,7 +2659,12 @@ const getPatientHistory = async (req, res, next) => {
     const apptMap = new Map(appointments.map(a => [String(a._id), a]));
     const ipdAdmMap = new Map(ipdAdmissions.map(a => [String(a._id), a]));
     const ipdCodeMap = new Map(ipdAdmissions.map(a => [String(a.admissionId), a]));
-    const rxByConsultId = new Map(prescriptions.map(p => [String(p.consultationId), p]));
+    const rxByConsultId = new Map();
+    const rxByApptId = new Map();
+    prescriptions.forEach(p => {
+      if (p.consultationId) rxByConsultId.set(String(p.consultationId), p);
+      if (p.appointmentId) rxByApptId.set(String(p.appointmentId), p);
+    });
 
     // Explicitly separate IPD consultations (rounds) from OPD consultations to avoid duplicate General OPD cards
     const ipdConsultations = [];
@@ -2622,7 +2673,7 @@ const getPatientHistory = async (req, res, next) => {
     allConsultations.forEach(c => {
       const rawApptId = String(c.appointmentId?._id || c.appointmentId || '');
       const rawAdmId = String(c.admissionId?._id || c.admissionId || '');
-      const consultRx = rxByConsultId.get(String(c._id));
+      const consultRx = rxByConsultId.get(String(c._id)) || (rawApptId ? rxByApptId.get(rawApptId) : null);
 
       const isIpd = Boolean(
         c.isIpd === true ||
@@ -2640,54 +2691,87 @@ const getPatientHistory = async (req, res, next) => {
       if (isIpd) {
         ipdConsultations.push(c);
       } else {
-        c.appointmentId = apptMap.get(rawApptId) || (c.appointmentId && typeof c.appointmentId === 'object' ? c.appointmentId : null);
+        const matchingAppt = apptMap.get(rawApptId);
+        c.appointmentObj = matchingAppt || null;
+        c.appointmentId = matchingAppt || c.appointmentId || rawApptId;
         pureOpdConsultations.push(c);
       }
     });
 
     // 5. Enrich genuine OPD consultations with linked prescriptions, vitals, diagnosis, and notes
     const enrichedConsultations = pureOpdConsultations.map(c => {
-      const apptId = c.appointmentId?._id || c.appointmentId;
+      const apptId = String(c.appointmentId?._id || c.appointmentId || '');
+      const matchingAppt = apptMap.get(apptId) || c.appointmentObj || null;
       const matchingRx = prescriptions.filter(p =>
         !p.isIpd && !p.admissionId &&
         ((p.consultationId && String(p.consultationId) === String(c._id)) ||
-         (apptId && p.appointmentId && String(p.appointmentId) === String(apptId)))
+         (apptId && p.appointmentId && String(p.appointmentId) === apptId))
       );
 
       const rxItems = matchingRx.flatMap(p => p.items || []);
       const combinedVitals = {
-        ...(c.appointmentId?.vitals || {}),
+        ...(matchingAppt?.vitals || {}),
         ...(c.vitals || {})
       };
 
-      const docName = c.doctorId?.name || (typeof c.doctorId === 'string' ? c.doctorId : null) || 'Doctor';
-      const docSpec = c.doctorId?.specialization || 'General OPD';
-      const tokenNum = c.tokenNumber || c.appointmentId?.tokenNumber || '';
+      const docName = c.doctorId?.name || matchingAppt?.doctorId?.name || (typeof c.doctorId === 'string' ? c.doctorId : null) || 'Doctor';
+      const docSpec = c.doctorId?.specialization || matchingAppt?.doctorId?.specialization || 'General OPD';
+      const tokenNum = c.tokenNumber || matchingAppt?.tokenNumber || (c.appointmentId?.tokenNumber) || '';
+      const apptTime = matchingAppt?.time || c.time || '';
+
+      const finalDiagnoses = (c.diagnoses && Array.isArray(c.diagnoses) && c.diagnoses.length > 0)
+        ? c.diagnoses
+        : (c.primaryDiagnosis ? [c.primaryDiagnosis] : (c.diagnosis ? [c.diagnosis] : (matchingAppt?.diagnoses || [])));
+
+      const primaryDiag = c.primaryDiagnosis || (finalDiagnoses.length > 0 ? finalDiagnoses[0] : null) || c.diagnosis || matchingAppt?.diagnosis || matchingAppt?.primaryDiagnosis || 'Clinical Consultation';
+
+      const chiefComp = c.chiefComplaint || matchingAppt?.chiefComplaint || c.symptoms || matchingAppt?.symptoms || 'General Checkup';
+
+      const finalRx = rxItems.length > 0
+        ? rxItems
+        : (c.prescriptions && c.prescriptions.length > 0
+            ? c.prescriptions
+            : (matchingAppt?.prescriptions && matchingAppt.prescriptions.length > 0
+                ? matchingAppt.prescriptions
+                : []));
+
+      const consultDate = c.consultationDate || c.createdAt || matchingAppt?.consultationDate || matchingAppt?.workflow?.timestamps?.consultationCompletedAt || matchingAppt?.date;
 
       return {
         ...c,
+        _id: c._id,
+        appointmentId: matchingAppt || c.appointmentId,
         tokenNumber: tokenNum,
+        time: apptTime,
+        appointmentTime: apptTime,
         doctorName: docName,
         doctorSpecialization: docSpec || 'General OPD',
         isIpd: false,
-        chiefComplaint: c.chiefComplaint || c.symptoms || c.appointmentId?.chiefComplaint || '',
-        symptoms: c.symptoms || c.chiefComplaint || c.appointmentId?.chiefComplaint || '',
-        diagnosis: c.diagnosis || c.primaryDiagnosis || (Array.isArray(c.diagnoses) && c.diagnoses.join(', ')) || 'Clinical Consultation',
-        primaryDiagnosis: c.primaryDiagnosis || c.diagnosis || 'Clinical Consultation',
-        advice: c.advice || c.generalInstructions || c.treatmentPlan || '',
-        notes: c.clinicalNotes || c.examinationFindings || c.clinicalImpression || c.historyOfPresentIllness || c.notes || c.assessmentNotes || '',
-        clinicalNotes: c.clinicalNotes || c.examinationFindings || c.clinicalImpression || c.historyOfPresentIllness || c.notes || c.assessmentNotes || '',
+        chiefComplaint: chiefComp,
+        symptoms: c.symptoms || chiefComp,
+        diagnosis: primaryDiag,
+        primaryDiagnosis: primaryDiag,
+        diagnoses: finalDiagnoses,
+        advice: c.advice || c.generalInstructions || c.treatmentPlan || matchingAppt?.advice || '',
+        notes: c.clinicalNotes || c.examinationFindings || c.notes || matchingAppt?.clinicalNotes || matchingAppt?.notes || '',
+        clinicalNotes: c.clinicalNotes || c.examinationFindings || c.notes || matchingAppt?.clinicalNotes || matchingAppt?.notes || '',
         vitals: combinedVitals,
-        prescriptions: rxItems.length > 0 ? rxItems : (c.prescriptions || []),
-        items: rxItems,
-        investigations: (c.investigations && c.investigations.length > 0) ? c.investigations : (c.appointmentId?.investigations || [])
+        prescriptions: finalRx,
+        items: finalRx,
+        investigations: (c.investigations && c.investigations.length > 0) ? c.investigations : (matchingAppt?.investigations || []),
+        consultationDate: consultDate,
+        createdAt: consultDate,
+        date: matchingAppt?.date || consultDate
       };
     });
 
     // 6. Check if there are any completed appointments without a separate consultation record
-    const existingConsultationApptIds = new Set(
-      pureOpdConsultations.map(c => String(c.appointmentId?._id || c.appointmentId || ''))
-    );
+    const existingConsultationApptIds = new Set();
+    pureOpdConsultations.forEach(c => {
+      const aId = String(c.appointmentId?._id || c.appointmentId || '');
+      if (aId) existingConsultationApptIds.add(aId);
+      if (c.appointmentObj?._id) existingConsultationApptIds.add(String(c.appointmentObj._id));
+    });
 
     const transferredApptIds = new Set(
       ipdAdmissions.map(adm => String(adm.opdAppointmentId || '')).filter(Boolean)
@@ -2704,9 +2788,13 @@ const getPatientHistory = async (req, res, next) => {
     ).map(a => {
       const matchingRx = prescriptions.filter(p => !p.isIpd && !p.admissionId && p.appointmentId && String(p.appointmentId) === String(a._id));
       const rxItems = matchingRx.flatMap(p => p.items || []);
+      const finalRx = rxItems.length > 0 ? rxItems : (a.prescriptions || a.items || []);
 
       const docName = a.doctorId?.name || (typeof a.doctorId === 'string' ? a.doctorId : null) || 'Doctor';
       const docSpec = a.doctorId?.specialization || 'General OPD';
+
+      const resolvedChiefComplaint = a.chiefComplaint || a.symptoms || 'General Checkup';
+      const resolvedDiag = a.diagnosis || a.primaryDiagnosis || (Array.isArray(a.diagnoses) && a.diagnoses.length > 0 ? a.diagnoses[0] : null) || (a.chiefComplaint ? `OPD: ${a.chiefComplaint}` : 'Clinical Consultation');
 
       return {
         _id: a._id,
@@ -2717,19 +2805,24 @@ const getPatientHistory = async (req, res, next) => {
         doctorSpecialization: docSpec,
         isIpd: false,
         tokenNumber: a.tokenNumber || '',
-        chiefComplaint: a.chiefComplaint || a.symptoms || '',
-        symptoms: a.chiefComplaint || a.symptoms || '',
-        diagnosis: a.diagnosis || a.primaryDiagnosis || (a.chiefComplaint ? `OPD: ${a.chiefComplaint}` : 'OPD Visit'),
-        primaryDiagnosis: a.diagnosis || a.primaryDiagnosis || (a.chiefComplaint ? `OPD: ${a.chiefComplaint}` : 'OPD Visit'),
+        time: a.time || '',
+        appointmentTime: a.time || '',
+        chiefComplaint: resolvedChiefComplaint,
+        symptoms: a.symptoms || a.chiefComplaint || '',
+        diagnosis: resolvedDiag,
+        primaryDiagnosis: resolvedDiag,
+        diagnoses: a.diagnoses || [resolvedDiag],
         clinicalNotes: a.clinicalNotes || a.notes || '',
         notes: a.clinicalNotes || a.notes || '',
         advice: a.advice || a.generalInstructions || '',
         vitals: a.vitals || {},
         status: a.status || 'COMPLETED',
-        prescriptions: rxItems,
-        items: rxItems,
+        prescriptions: finalRx,
+        items: finalRx,
         investigations: a.investigations || [],
-        createdAt: a.date || a.createdAt || new Date(),
+        consultationDate: a.consultationDate || a.workflow?.timestamps?.consultationCompletedAt || a.date || a.createdAt,
+        createdAt: a.consultationDate || a.workflow?.timestamps?.consultationCompletedAt || a.date || a.createdAt,
+        date: a.date,
         updatedAt: a.updatedAt || new Date()
       };
     });
@@ -2952,8 +3045,8 @@ const getPatientHistory = async (req, res, next) => {
 
     for (const v of rawAllVisits) {
       if (!v) continue;
-      const apptKey = v.appointmentId ? String(v.appointmentId?._id || v.appointmentId) : null;
-      const consultKey = v.consultationId ? String(v.consultationId?._id || v.consultationId) : null;
+      const apptKey = v.appointmentId ? String(v.appointmentId?._id || v.appointmentId) : (!v.isIpd && !v.consultationId ? String(v._id) : null);
+      const consultKey = v.consultationId ? String(v.consultationId?._id || v.consultationId) : (!v.isIpd && !v.appointmentId ? String(v._id) : null);
       const recId = String(v._id || '');
 
       let primaryKey = recId;
@@ -3071,6 +3164,7 @@ const getConsultationSnapshot = async (req, res, next) => {
       ],
       ...hospitalFilter
     })
+      .sort({ createdAt: -1 })
       .populate('patientId')
       .populate({
         path: 'doctorId',
@@ -3090,6 +3184,9 @@ const getConsultationSnapshot = async (req, res, next) => {
       appointment = consultation.appointmentId;
       patient = consultation.patientId;
       doctor = consultation.doctorId;
+      if (!appointment || typeof appointment !== 'object' || !appointment._id) {
+        appointment = await Appointment.findById(consultation.appointmentId || consultationId).populate('patientId');
+      }
     } else {
       // 2. If no Consultation found, check if consultationId is an Appointment ID
       appointment = await Appointment.findOne({
@@ -3109,6 +3206,25 @@ const getConsultationSnapshot = async (req, res, next) => {
       if (appointment) {
         patient = appointment.patientId;
         doctor = appointment.doctorId;
+
+        // Try finding Consultation linked to this appointment
+        consultation = await Consultation.findOne({
+          $or: [
+            { appointmentId: appointment._id },
+            ...(appointment.consultationId ? [{ _id: appointment.consultationId }] : [])
+          ],
+          ...hospitalFilter
+        })
+          .sort({ createdAt: -1 })
+          .populate('patientId')
+          .populate({
+            path: 'doctorId',
+            select: 'name email departmentId doctorProfile employeeCode',
+            populate: {
+              path: 'departmentId',
+              select: 'name code description'
+            }
+          });
       }
     }
 
@@ -3178,30 +3294,50 @@ const getConsultationSnapshot = async (req, res, next) => {
 
       const allRxItems = targetRx ? (targetRx.items || []) : (rxDocs.length > 0 ? rxDocs[0].items || [] : []);
       if (allRxItems.length > 0) {
-        prescriptions = allRxItems.map(item => ({
+        prescriptions = allRxItems.map(item => {
+          const rawDose = item.dosage || item.dose || '';
+          const parts = rawDose.includes('-') ? rawDose.split('-') : ['', '', ''];
+          return {
+            _id: item._id,
+            medicineId: item.medicineId,
+            medicineName: item.medicineName || item.name || '',
+            morning: item.morning !== undefined && item.morning !== null ? String(item.morning) : (parts[0] || ''),
+            afternoon: item.afternoon !== undefined && item.afternoon !== null ? String(item.afternoon) : (parts[1] || ''),
+            night: item.night !== undefined && item.night !== null ? String(item.night) : (parts[2] || ''),
+            dosage: item.dosage || (item.morning || item.afternoon || item.night ? `${item.morning || '0'}-${item.afternoon || '0'}-${item.night || '0'}` : ''),
+            frequency: item.frequency || '',
+            duration: item.duration || '',
+            dose: item.dosage || `${item.morning || '1'}-${item.afternoon || '0'}-${item.night || '1'}`,
+            timing: item.instructions || item.foodTiming || item.food || '',
+            food: item.food || item.foodTiming || item.instructions || item.timing || '',
+            foodTiming: item.foodTiming || item.instructions || item.food || item.timing || '',
+            quantity: item.quantity || 1,
+            remarks: item.notes || item.remarks || ''
+          };
+        });
+      }
+    } else {
+      prescriptions = prescriptions.map(item => {
+        const rawDose = item.dosage || item.dose || '';
+        const parts = rawDose.includes('-') ? rawDose.split('-') : ['', '', ''];
+        return {
           _id: item._id,
           medicineId: item.medicineId,
           medicineName: item.medicineName || item.name || '',
-          dosage: item.dosage || (item.morning || item.afternoon || item.night ? `${item.morning || '0'}-${item.afternoon || '0'}-${item.night || '0'}` : ''),
+          morning: item.morning !== undefined && item.morning !== null ? String(item.morning) : (parts[0] || ''),
+          afternoon: item.afternoon !== undefined && item.afternoon !== null ? String(item.afternoon) : (parts[1] || ''),
+          night: item.night !== undefined && item.night !== null ? String(item.night) : (parts[2] || ''),
+          dosage: item.dosage || item.dose || '',
           frequency: item.frequency || '',
           duration: item.duration || '',
-          dose: item.dosage || `${item.morning || '1'}-${item.afternoon || '0'}-${item.night || '1'}`,
-          timing: item.instructions || item.foodTiming || '',
+          dose: item.dosage || item.dose || '',
+          timing: item.timing || item.instructions || item.foodTiming || item.food || '',
+          food: item.food || item.foodTiming || item.instructions || item.timing || '',
+          foodTiming: item.foodTiming || item.instructions || item.food || item.timing || '',
           quantity: item.quantity || 1,
-          remarks: item.notes || item.remarks || ''
-        }));
-      }
-    } else {
-      prescriptions = prescriptions.map(item => ({
-        _id: item._id,
-        medicineName: item.medicineName || item.name || '',
-        dosage: item.dosage || item.dose || '',
-        frequency: item.frequency || '',
-        duration: item.duration || '',
-        timing: item.timing || item.instructions || item.foodTiming || '',
-        quantity: item.quantity || 1,
-        remarks: item.remarks || item.notes || ''
-      }));
+          remarks: item.remarks || item.notes || ''
+        };
+      });
     }
 
     // 4. Resolve Vitals (merge consultation and appointment vitals)
@@ -3382,10 +3518,19 @@ const getConsultationSnapshot = async (req, res, next) => {
       consultationStatus: consultObj.status === 'past' || consultObj.status === 'Completed' || appObj.status === 'Completed' ? 'Completed' : (appObj.status || 'Completed'),
       // Section 3
       chiefComplaint: consultObj.chiefComplaint || appObj.chiefComplaint || consultObj.symptoms || (isFollowUp ? 'Follow-Up Review' : null),
+      primaryDiagnosis: consultObj.primaryDiagnosis || appObj.diagnosis || consultObj.diagnosis || null,
+      diagnoses: (consultObj.diagnoses && Array.isArray(consultObj.diagnoses) && consultObj.diagnoses.length > 0)
+        ? consultObj.diagnoses
+        : (appObj.diagnoses && Array.isArray(appObj.diagnoses) && appObj.diagnoses.length > 0
+            ? appObj.diagnoses
+            : (consultObj.primaryDiagnosis ? [consultObj.primaryDiagnosis] : (consultObj.diagnosis ? [consultObj.diagnosis] : []))),
       diagnosis: consultObj.primaryDiagnosis || (Array.isArray(consultObj.diagnoses) && consultObj.diagnoses.length > 0 ? consultObj.diagnoses.join(', ') : consultObj.diagnosis) || (isFollowUp ? 'Follow-Up Review & Consultation' : (appObj.chiefComplaint ? `OPD: ${appObj.chiefComplaint}` : 'Clinical Consultation')),
       advice: consultObj.advice || consultObj.clinicalNotes || consultObj.generalInstructions || appObj.advice || appObj.notes || (isFollowUp ? 'Continue prescribed regimen. Review on next scheduled date.' : null),
+      doctorAdvice: consultObj.advice || consultObj.clinicalNotes || appObj.advice || '',
       clinicalNotes: consultObj.clinicalNotes || consultObj.assessmentNotes || appObj.notes || null,
       followupDate: consultObj.followupDate || null,
+      followupRequired: consultObj.followupRequired !== undefined ? consultObj.followupRequired : Boolean(consultObj.followupDate),
+      followupReason: consultObj.followupReason || '',
       allergies: patObj.allergies || appObj.allergies || consultObj.allergies || []
     };
 
@@ -3501,26 +3646,22 @@ const getConsultations = async (req, res, next) => {
         matchedAppt.workflow?.queueState === 'COMPLETED'
       );
 
-      const apptObj = typeof c.appointmentId === 'object' ? c.appointmentId : null;
-      const isApptObjCompleted = apptObj && (
-        apptObj.status === 'Completed' ||
-        apptObj.status === 'Consulted' ||
-        apptObj.status === 'Sent to Pharmacy' ||
-        apptObj.status === 'Sent To Pharmacy' ||
-        apptObj.queueStatus === 'Completed' ||
-        apptObj.queueStatus === 'Sent to Pharmacy' ||
-        apptObj.workflow?.consultationState === 'COMPLETED' ||
-        apptObj.workflow?.queueState === 'SENT_TO_PHARMACY' ||
-        apptObj.workflow?.queueState === 'COMPLETED'
-      );
+      // A follow-up is completed ONLY IF:
+      // 1. Explicitly marked completed on the consultation itself (c.followupCompleted or c.followupStatus === 'Completed')
+      // 2. OR the matched follow-up appointment on that follow-up date was actually completed (isMatchedApptCompleted)
+      // NOTE: c.appointmentId is the PREVIOUS visit that prescribed the follow-up, so it must NEVER mark the future follow-up as completed!
+      let isFollowupCompleted = Boolean(c.followupCompleted || c.followupStatus === 'Completed' || isMatchedApptCompleted);
 
-      let isFollowupCompleted = Boolean(c.followupCompleted || c.followupStatus === 'Completed' || isMatchedApptCompleted || isApptObjCompleted);
-      if (!isFollowupCompleted && c.patientId?._id) {
+      // If the follow-up date is in the future and there is a matched scheduled appointment, it's definitely Scheduled (NOT completed!)
+      if (fDateStr && fDateStr > todayStr && matchedAppt && (matchedAppt.status === 'Scheduled' || matchedAppt.queueStatus === 'Scheduled')) {
+        isFollowupCompleted = false;
+      } else if (!isFollowupCompleted && c.patientId?._id && fDate) {
+        // Subsequent consultation or completed appointment only fulfills the follow-up if it occurred ON OR AFTER the follow-up date!
         const subsequentConsultation = await Consultation.findOne({
           ...hospitalFilter,
           patientId: c.patientId._id,
           _id: { $ne: c._id },
-          createdAt: { $gt: c.createdAt }
+          createdAt: { $gte: fDate }
         }).select('_id createdAt date status').lean();
 
         if (subsequentConsultation) {
@@ -3530,7 +3671,7 @@ const getConsultations = async (req, res, next) => {
             ...hospitalFilter,
             patientId: c.patientId._id,
             status: { $in: ['Completed', 'Consulted', 'Sent to Pharmacy', 'Sent To Pharmacy'] },
-            createdAt: { $gt: c.createdAt }
+            date: { $gte: fDate }
           }).select('_id').lean();
 
           if (completedAppt) {
@@ -3577,6 +3718,7 @@ const getConsultations = async (req, res, next) => {
 
       return {
         ...c,
+        tokenNumber: matchedAppt?.tokenNumber || c.tokenNumber || c.appointmentId?.tokenNumber,
         followupDate: activeInConsultAppt ? (c.followupDate || new Date()) : (c.followupDate || c.appointmentId?.date),
         date: activeInConsultAppt ? (c.followupDate || new Date()) : (c.followupDate || c.appointmentId?.date),
         followupTime: resolvedTime,
@@ -3585,7 +3727,7 @@ const getConsultations = async (req, res, next) => {
         followupStatus: computedStatus,
         status: computedStatus,
         isInConsultation: computedStatus === 'In Consultation',
-        activeAppointmentId: activeInConsultAppt?._id || c.appointmentId?._id || c.appointmentId
+        activeAppointmentId: activeInConsultAppt?._id || matchedAppt?._id || c.appointmentId?._id || c.appointmentId
       };
     }));
 
@@ -3605,7 +3747,7 @@ const getConsultations = async (req, res, next) => {
         ]
       };
       if (query.doctorId) {
-        apptQuery.doctorId = query.doctorId;
+        apptQuery.doctorId = { $in: [query.doctorId, String(query.doctorId)] };
       }
 
       const existingApptIds = new Set(
@@ -3694,6 +3836,11 @@ const getConsultations = async (req, res, next) => {
             appointmentId: app,
             patientId: app.patientId,
             doctorId: app.doctorId,
+            tokenNumber: app.tokenNumber || '',
+            consultationType: app.consultationType || 'Appointment',
+            bookingSource: app.bookingSource || 'RECEPTION',
+            isFutureBooking: Boolean(app.isFutureBooking || (appDateStr > todayStr)),
+            appointmentSlot: app.appointmentSlot || null,
             diagnosis: app.diagnosis || 'Follow-up Appointment',
             clinicalNotes: app.reason || app.notes || '',
             followupDate: app.date,
@@ -3837,20 +3984,22 @@ const startFollowupConsultation = async (req, res, next) => {
           .populate('doctorId', 'name roomNo doctorProfile');
 
         const WorkflowEventHub = require('../services/WorkflowEventHub');
+        const fHospId = targetAppointment.hospitalId || req.user?.hospitalId || req.hospitalId;
         const followUpCallData = {
           appointmentId: populatedAppt._id,
           _id: populatedAppt._id,
           tokenNumber: populatedAppt.tokenNumber,
           tokenNo: populatedAppt.tokenNumber,
           queueState: 'IN_CONSULTATION',
-          patientId: populatedAppt.patientId,
-          doctorId: populatedAppt.doctorId,
-          patientName: populatedAppt.patientId?.name,
-          doctorName: populatedAppt.doctorId?.name,
-          roomNo: populatedAppt.doctorId?.roomNo || populatedAppt.doctorId?.doctorProfile?.roomNo || 'Room 1'
+          patientId: populatedAppt.patientId?._id || populatedAppt.patientId,
+          doctorId: populatedAppt.doctorId?._id || populatedAppt.doctorId,
+          patientName: populatedAppt.patientId?.name || '',
+          doctorName: populatedAppt.doctorId?.name || '',
+          roomNo: populatedAppt.doctorId?.roomNo || populatedAppt.doctorId?.doctorProfile?.roomNo || 'Room 1',
+          hospitalId: fHospId ? String(fHospId) : undefined,
+          type: 'TriggerVoiceCall'
         };
         WorkflowEventHub.publish('TriggerVoiceCall', followUpCallData);
-        WorkflowEventHub.publish('PatientCalled', followUpCallData);
       } catch (e) {
         console.warn('Failed to broadcast follow-up voice call event:', e?.message);
       }
@@ -3904,20 +4053,22 @@ const startFollowupConsultation = async (req, res, next) => {
         .populate('doctorId', 'name roomNo doctorProfile');
 
       const WorkflowEventHub = require('../services/WorkflowEventHub');
+      const fHospId2 = createdAppt.hospitalId || req.user?.hospitalId || req.hospitalId;
       const followUpCallData = {
         appointmentId: populatedAppt._id,
         _id: populatedAppt._id,
         tokenNumber: populatedAppt.tokenNumber,
         tokenNo: populatedAppt.tokenNumber,
         queueState: 'IN_CONSULTATION',
-        patientId: populatedAppt.patientId,
-        doctorId: populatedAppt.doctorId,
-        patientName: populatedAppt.patientId?.name,
-        doctorName: populatedAppt.doctorId?.name,
-        roomNo: populatedAppt.doctorId?.roomNo || populatedAppt.doctorId?.doctorProfile?.roomNo || 'Room 1'
+        patientId: populatedAppt.patientId?._id || populatedAppt.patientId,
+        doctorId: populatedAppt.doctorId?._id || populatedAppt.doctorId,
+        patientName: populatedAppt.patientId?.name || '',
+        doctorName: populatedAppt.doctorId?.name || '',
+        roomNo: populatedAppt.doctorId?.roomNo || populatedAppt.doctorId?.doctorProfile?.roomNo || 'Room 1',
+        hospitalId: fHospId2 ? String(fHospId2) : undefined,
+        type: 'TriggerVoiceCall'
       };
       WorkflowEventHub.publish('TriggerVoiceCall', followUpCallData);
-      WorkflowEventHub.publish('PatientCalled', followUpCallData);
     } catch (e) {
       console.warn('Failed to broadcast follow-up voice call event:', e?.message);
     }
@@ -5872,6 +6023,32 @@ const createMedicineForm = async (req, res, next) => {
   }
 };
 
+const updateMedicineForm = async (req, res, next) => {
+  try {
+    const MedicineForm = require('../models/MedicineForm');
+    const { id } = req.params;
+    const { name, code, description } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'Form name is required' });
+    }
+    const updateData = {
+      name: name.trim(),
+      code: code ? code.trim().toUpperCase() : name.substring(0, 3).toUpperCase()
+    };
+    if (description !== undefined) {
+      updateData.description = description ? description.trim() : '';
+    }
+    const form = await MedicineForm.findByIdAndUpdate(id, updateData, { new: true });
+    if (!form) {
+      return res.status(404).json({ success: false, message: 'Medicine form not found' });
+    }
+    await logAudit(req.user._id, 'UPDATE_MEDICINE_FORM', 'MEDICINE', { formId: form._id, name: form.name }, req);
+    res.status(200).json({ success: true, data: form });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const deleteMedicineForm = async (req, res, next) => {
   try {
     const MedicineForm = require('../models/MedicineForm');
@@ -6342,6 +6519,7 @@ module.exports = {
   getAllClinicalDiagnoses,
   getMedicineForms,
   createMedicineForm,
+  updateMedicineForm,
   deleteMedicineForm,
   getMedicineFrequencies,
   createMedicineFrequency,

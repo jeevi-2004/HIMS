@@ -189,10 +189,14 @@ const ReceptionistLiveQueue = () => {
 
       const isCallEvent =
         eventType === 'TriggerVoiceCall' ||
-        eventType === 'ConsultationStarted' ||
-        (eventType === 'PatientCalled' && (qState === 'CALLED' || qState.includes('CONSULTATION')));
+        (eventType === 'PatientCalled' && qState === 'CALLED');
 
       if (isCallEvent && (event.tokenNumber || event.token || event.patientName || event.patientId || event.appointmentId || event._id)) {
+        const myHospId = String(user?.hospitalId || user?.hospital?._id || user?.hospital || '');
+        const evtHospId = String(event.hospitalId || '');
+        if (myHospId && evtHospId && myHospId !== evtHospId) {
+          return;
+        }
         voiceAnnouncement.announceCall({
           tokenNumber: event.tokenNumber || event.token || event.tokenNo || '',
           tokenNo: event.tokenNumber || event.token || event.tokenNo || '',
@@ -440,9 +444,6 @@ const ReceptionistLiveQueue = () => {
                   <div>
                     <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
                       Dr. {selectedDocQueue.name.replace(/^Dr\.\s*/i, '')}
-                      <span className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full">
-                        {selectedDocQueue.roomNumber}
-                      </span>
                     </h2>
                     <p className="text-xs text-slate-500 font-semibold flex items-center gap-2 mt-0.5">
                       <span>{selectedDocQueue.specialization}</span>
@@ -472,7 +473,7 @@ const ReceptionistLiveQueue = () => {
               </div>
 
               {/* Filters & Search Toolbar */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex flex-col sm:flex-row items-start justify-between gap-3">
                 {/* Filter Tabs */}
                 <div className="flex bg-slate-100 p-1 rounded-xl gap-1 border border-slate-200 w-full sm:w-auto flex-wrap">
                   {[
@@ -497,7 +498,7 @@ const ReceptionistLiveQueue = () => {
                 </div>
 
                 {/* Search Box */}
-                <div className="relative w-full sm:w-64">
+                <div className="relative w-full sm:w-64 shrink-0">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
                     type="text"

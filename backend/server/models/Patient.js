@@ -99,6 +99,18 @@ const PatientSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  vitals: {
+    weight: Number,
+    height: Number,
+    bpSystolic: Number,
+    bpDiastolic: Number,
+    pulse: Number,
+    temperature: Number,
+    spo2: Number,
+    bloodSugar: Number,
+    bmi: Number,
+    remarks: String
+  },
 
   // Enterprise Multi-Tenancy & Audit Fields
   hospitalId: {

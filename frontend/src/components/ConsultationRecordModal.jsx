@@ -164,8 +164,29 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
   // Extract prescribed medicines (Plan 2 only)
   const prescriptions = Array.isArray(data?.prescriptions) ? data.prescriptions : [];
 
-  // Extract investigations (Plan 2 only)
-  const investigations = Array.isArray(data?.investigations) ? data.investigations : [];
+  // Extract investigations (Plan 2 only) thoroughly
+  const rawInvestigations = (Array.isArray(data?.investigations) && data.investigations.length > 0)
+    ? data.investigations
+    : (Array.isArray(appointment?.investigations) && appointment.investigations.length > 0)
+      ? appointment.investigations
+      : (Array.isArray(appointment?.appointmentId?.investigations) && appointment.appointmentId.investigations.length > 0)
+        ? appointment.appointmentId.investigations
+        : (Array.isArray(data?.appointmentId?.investigations) && data.appointmentId.investigations.length > 0)
+          ? data.appointmentId.investigations
+          : [];
+
+  const investigations = rawInvestigations.map(inv => {
+    if (typeof inv === 'string') {
+      return { serviceType: 'Laboratory', name: inv, code: '—', price: 0 };
+    }
+    return {
+      _id: inv._id,
+      serviceType: inv.serviceType || inv.category || 'Laboratory',
+      name: inv.name || inv.investigationName || inv.serviceName || '—',
+      code: inv.code || inv.serviceCode || '—',
+      price: inv.price !== undefined && inv.price !== null ? Number(inv.price) || 0 : 0
+    };
+  });
 
   // Extract billing
   const billing = data?.billing || {};
@@ -231,6 +252,32 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
             max-height: none !important;
             overflow: visible !important;
           }
+          .consultation-record-patient-section {
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 16px !important;
+            flex-wrap: nowrap !important;
+          }
+          .consultation-record-patient-details-row {
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            gap: 8px !important;
+            flex-wrap: nowrap !important;
+          }
+          .consultation-details-grid {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 16px !important;
+          }
+          .billing-payment-row {
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            gap: 16px !important;
+          }
           @page {
             size: A4 portrait;
             margin: 10mm;
@@ -276,33 +323,29 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
           ) : (
             <>
               {/* SECTION 1: Patient & Consultation Information */}
-              <div className="border border-slate-200/90 rounded-2xl p-4 bg-white flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-2xs">
+              <div className="consultation-record-patient-section border border-slate-200/90 rounded-2xl p-4 bg-white flex flex-row items-center justify-between gap-4 flex-wrap sm:flex-nowrap shadow-2xs">
                 {/* Patient Profile info */}
-                <div className="flex items-center gap-3.5">
-                  <div className="w-12 h-12 rounded-full bg-blue-100/70 text-[#2563EB] flex items-center justify-center shrink-0">
-                    <User className="w-6 h-6 stroke-[2.2]" />
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-blue-100/70 text-[#2563EB] flex items-center justify-center shrink-0">
+                    <User className="w-5 h-5 stroke-[2.2]" />
                   </div>
                   <div>
                     <h3 className="text-base font-extrabold text-slate-900 leading-tight">
                       {patientName}
                     </h3>
-                    <div className="text-xs text-slate-500 font-medium mt-0.5 space-x-1">
-                      <span>UHID:</span>
-                      <span className="font-bold text-slate-700 font-mono">{uhid}</span>
-                    </div>
-                    <div className="text-xs text-slate-500 font-medium">
-                      <span>Age/Sex:</span>{' '}
-                      <span className="font-semibold text-slate-700">{ageGenderStr}</span>
+                    <div className="consultation-record-patient-details-row flex items-center gap-2 text-xs text-slate-500 font-medium mt-0.5 flex-wrap">
+                      <span>UHID: <strong className="text-slate-700 font-mono">{uhid}</strong></span>
+                      <span>•</span>
+                      <span>Age/Sex: <strong className="text-slate-700">{ageGenderStr}</strong></span>
                       {mobile && (
-                        <span className="ml-2 font-mono text-slate-600">
-                          • {mobile}
-                        </span>
+                        <>
+                          <span>•</span>
+                          <span className="font-mono text-slate-600">{mobile}</span>
+                        </>
                       )}
                     </div>
                   </div>
                 </div>
-
-                <div className="hidden md:block w-px h-10 bg-slate-200/90" />
 
                 {/* Token No. */}
                 <div>
@@ -312,8 +355,6 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                   </span>
                 </div>
 
-                <div className="hidden md:block w-px h-10 bg-slate-200/90" />
-
                 {/* Consultation Date */}
                 <div>
                   <span className="text-xs text-slate-500 font-medium block">Consultation Date</span>
@@ -322,8 +363,6 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                     <Calendar className="w-3.5 h-3.5 text-slate-400" />
                   </div>
                 </div>
-
-                <div className="hidden md:block w-px h-10 bg-slate-200/90" />
 
                 {/* Doctor */}
                 <div>
@@ -337,7 +376,7 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                 </div>
 
                 {/* Status Badge */}
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-1.5">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-1.5 shrink-0">
                   {isPlan1 && !isFollowUp && (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
                       Plan 1
@@ -392,7 +431,7 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                 </div>
               )}
 
-              {/* SECTION 3: Consultation Details / Patient Intake */}
+              {/* SECTION 3: Consultation Details / Patient Intake (Aligned in 2 Rows x 2 Columns) */}
               {isPlan1 && !isFollowUp ? (
                 <div>
                   <div className="bg-[#F0F5FF] border border-[#DCE7F9] rounded-t-xl px-4 py-2 flex items-center justify-between">
@@ -407,14 +446,16 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                     </span>
                   </div>
                   <div className="border-x border-b border-[#DCE7F9] rounded-b-xl bg-white p-4">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                    <div className="consultation-details-grid grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                      {/* Row 1, Col 1 */}
                       <div>
                         <span className="text-xs text-slate-500 font-medium block">Chief Complaint / Symptoms Recorded</span>
                         <p className="text-sm font-bold text-slate-900 mt-1 leading-relaxed">
                           {chiefComplaint}
                         </p>
                       </div>
-                      <div className="pt-3 md:pt-0 md:pl-4">
+                      {/* Row 1, Col 2 */}
+                      <div>
                         <span className="text-xs text-slate-500 font-medium block">Consultation Type</span>
                         <p className="text-sm font-semibold text-slate-800 mt-1">
                           {consultationType}
@@ -423,7 +464,8 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                           Department: <strong className="text-slate-700">{departmentName}</strong>
                         </span>
                       </div>
-                      <div className="pt-3 md:pt-0 md:pl-4">
+                      {/* Row 2, Col 1 */}
+                      <div>
                         <span className="text-xs text-slate-500 font-medium block">Contact Information</span>
                         <p className="text-sm font-semibold text-slate-800 mt-1">
                           {mobile ? mobile : '—'}
@@ -437,6 +479,14 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                           </p>
                         )}
                       </div>
+                      {/* Row 2, Col 2 */}
+                      <div>
+                        <span className="text-xs text-slate-500 font-medium block">Follow-up Date</span>
+                        <p className="text-xs md:text-sm font-bold text-slate-800 mt-1 flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{followupDateStr}</span>
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -446,36 +496,40 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                     <ClipboardList className="w-4 h-4 text-[#2563EB] stroke-[2.2]" />
                     <span className="text-xs font-bold text-slate-800 tracking-wide">Consultation Details</span>
                   </div>
-                  <div className="border-x border-b border-[#DCE7F9] rounded-b-xl bg-white p-4 space-y-3.5">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                  <div className="border-x border-b border-[#DCE7F9] rounded-b-xl bg-white p-4">
+                    <div className="consultation-details-grid grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                      {/* Row 1, Col 1: Chief Complaint */}
                       <div>
                         <span className="text-xs text-slate-500 font-medium block">Chief Complaint</span>
                         <p className="text-xs md:text-sm font-semibold text-slate-800 mt-1 leading-relaxed">
                           {chiefComplaint}
                         </p>
                       </div>
-                      <div className="pt-3 md:pt-0 md:pl-4">
+
+                      {/* Row 1, Col 2: Diagnosis */}
+                      <div>
                         <span className="text-xs text-slate-500 font-medium block">Diagnosis</span>
                         <p className="text-xs md:text-sm font-semibold text-slate-800 mt-1 leading-relaxed">
                           {diagnosis}
                         </p>
                       </div>
-                      <div className="pt-3 md:pt-0 md:pl-4">
+
+                      {/* Row 2, Col 1: Medical Advice */}
+                      <div>
                         <span className="text-xs text-slate-500 font-medium block">Medical Advice</span>
                         <p className="text-xs md:text-sm font-semibold text-slate-800 mt-1 leading-relaxed">
                           {medicalAdvice}
                         </p>
                       </div>
-                    </div>
 
-                    <div className="pt-2 border-t border-slate-100/80">
-                      <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
-                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Follow-up Date</span>
+                      {/* Row 2, Col 2: Follow-up Date */}
+                      <div>
+                        <span className="text-xs text-slate-500 font-medium block">Follow-up Date</span>
+                        <p className="text-xs md:text-sm font-bold text-slate-800 mt-1 flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{followupDateStr}</span>
+                        </p>
                       </div>
-                      <span className="text-xs md:text-sm font-bold text-slate-800 block mt-0.5">
-                        {followupDateStr}
-                      </span>
                     </div>
                   </div>
                 </div>
@@ -566,25 +620,25 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                     </div>
                   </div>
 
-                  {/* Investigations (Plan 2) */}
-                  <div>
-                    <div className="bg-[#F0F5FF] border border-[#DCE7F9] rounded-t-xl px-4 py-2 flex items-center gap-2">
-                      <FlaskConical className="w-4 h-4 text-[#2563EB] stroke-[2.2]" />
-                      <span className="text-xs font-bold text-slate-800 tracking-wide">Investigations</span>
-                    </div>
-                    <div className="border-x border-b border-[#DCE7F9] rounded-b-xl overflow-hidden bg-white">
-                      <table className="w-full text-left text-xs">
-                        <thead className="bg-slate-50/80 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500">
-                          <tr>
-                            <th className="py-2.5 px-4 font-semibold">Type</th>
-                            <th className="py-2.5 px-4 font-semibold">Service Name</th>
-                            <th className="py-2.5 px-4 font-semibold">Service Code</th>
-                            <th className="py-2.5 px-4 font-semibold">Price</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 text-slate-800">
-                          {investigations.length > 0 ? (
-                            investigations.map((inv, idx) => (
+                  {/* Investigations (Plan 2) - Render ONLY if patient has investigations */}
+                  {investigations.length > 0 && (
+                    <div>
+                      <div className="bg-[#F0F5FF] border border-[#DCE7F9] rounded-t-xl px-4 py-2 flex items-center gap-2">
+                        <FlaskConical className="w-4 h-4 text-[#2563EB] stroke-[2.2]" />
+                        <span className="text-xs font-bold text-slate-800 tracking-wide">Investigations</span>
+                      </div>
+                      <div className="border-x border-b border-[#DCE7F9] rounded-b-xl overflow-hidden bg-white">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-50/80 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500">
+                            <tr>
+                              <th className="py-2.5 px-4 font-semibold">Type</th>
+                              <th className="py-2.5 px-4 font-semibold">Service Name</th>
+                              <th className="py-2.5 px-4 font-semibold">Service Code</th>
+                              <th className="py-2.5 px-4 font-semibold">Price</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 text-slate-800">
+                            {investigations.map((inv, idx) => (
                               <tr key={inv._id || idx} className="hover:bg-slate-50/50">
                                 <td className="py-3 px-4 font-medium text-slate-800">
                                   {inv.serviceType || 'Laboratory'}
@@ -601,18 +655,12 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                                     : '—'}
                                 </td>
                               </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td colSpan={4} className="py-5 text-center text-xs text-slate-400 italic">
-                                No laboratory or radiology investigations ordered for this visit.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </>
               )}
 
@@ -634,42 +682,42 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                   )}
                 </div>
                 <div className="border-x border-b border-[#DCE7F9] rounded-b-xl bg-white p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  {/* Left columns */}
+                  {/* Left columns - Center lines removed */}
                   {isPlan1 && !isFollowUp ? (
-                    <div className="grid grid-cols-2 gap-4 divide-x divide-slate-100 flex-1">
+                    <div className="grid grid-cols-2 gap-4 flex-1">
                       <div>
                         <span className="text-[11px] text-slate-500 font-medium block">OPD Consultation Fee</span>
                         <span className="text-sm font-bold text-slate-900 mt-0.5 block">{consultationFee}</span>
                       </div>
                       {discountNum > 0 ? (
-                        <div className="pl-4">
+                        <div>
                           <span className="text-[11px] text-slate-500 font-medium block">Discount</span>
                           <span className="text-sm font-bold text-slate-900 mt-0.5 block">{discount}</span>
                         </div>
                       ) : (
-                        <div className="pl-4">
+                        <div>
                           <span className="text-[11px] text-slate-500 font-medium block">Service Category</span>
                           <span className="text-sm font-semibold text-slate-700 mt-0.5 block">General OPD Token</span>
                         </div>
                       )}
                     </div>
                   ) : (
-                    <div className={`grid ${additionalChargesNum > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'} gap-4 divide-x divide-slate-100 flex-1`}>
+                    <div className={`grid ${additionalChargesNum > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'} gap-4 flex-1`}>
                       <div>
                         <span className="text-[11px] text-slate-500 font-medium block">Consultation Fee</span>
                         <span className="text-sm font-bold text-slate-900 mt-0.5 block">{consultationFee}</span>
                       </div>
-                      <div className="pl-4">
+                      <div>
                         <span className="text-[11px] text-slate-500 font-medium block">Investigation Charges</span>
                         <span className="text-sm font-bold text-slate-900 mt-0.5 block">{investigationCharges}</span>
                       </div>
                       {additionalChargesNum > 0 && (
-                        <div className="pl-4">
+                        <div>
                           <span className="text-[11px] text-slate-500 font-medium block">Additional Charges</span>
                           <span className="text-sm font-bold text-blue-600 mt-0.5 block">{additionalChargesStr}</span>
                         </div>
                       )}
-                      <div className="pl-4">
+                      <div>
                         <span className="text-[11px] text-slate-500 font-medium block">Discount</span>
                         <span className="text-sm font-bold text-slate-900 mt-0.5 block">{discount}</span>
                       </div>
@@ -686,10 +734,10 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                     </span>
                   </div>
 
-                  {/* Right columns: Payment Status & Payment Date */}
-                  <div className="flex flex-col gap-2 shrink-0 md:text-right border-t md:border-t-0 pt-3 md:pt-0 border-slate-100">
-                    <div className="flex items-center gap-2 md:justify-end">
-                      <span className="text-[11px] text-slate-500 font-medium">Payment Status</span>
+                  {/* Right columns: Payment Status & Payment Date in SAME ROW */}
+                  <div className="billing-payment-row flex items-center gap-4 shrink-0 flex-wrap sm:flex-nowrap border-t md:border-t-0 pt-3 md:pt-0 border-slate-100">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-slate-500 font-medium">Payment Status:</span>
                       {isPaid ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                           <CheckCircle2 className="w-3 h-3 text-emerald-600 fill-emerald-100" />
@@ -701,8 +749,8 @@ const ConsultationRecordModal = ({ isOpen, onClose, appointment, consultationId 
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 md:justify-end">
-                      <span className="text-[11px] text-slate-500 font-medium">Payment Date</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-slate-500 font-medium">Payment Date:</span>
                       <span className="text-xs font-semibold text-slate-800">{paymentDateStr}</span>
                     </div>
                   </div>

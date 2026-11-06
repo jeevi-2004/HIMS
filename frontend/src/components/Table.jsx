@@ -53,7 +53,8 @@ const Table = ({
   renderMobileCard = null,
   paginate = true,
   showPagination = true,
-  actionsAlign = 'right'
+  actionsAlign = 'right',
+  actionsTitle
 }) => {
   const isOnlyThreeDots = !inlineActions && actions.length > 0 && !actions.some(act => act.isPrimary);
   const effectiveActionsAlign = actionsAlign === 'center' || isOnlyThreeDots ? 'center' : actionsAlign;
@@ -222,7 +223,7 @@ const Table = ({
                 <th 
                   key={header.key} 
                   onClick={() => header.sortable && handleSort(header.key)}
-                  className={`p-4 sticky top-0 bg-slate-50 z-10 select-none ${
+                  className={`p-4 sticky top-0 bg-slate-50 z-10 select-none ${header.className || ''} ${
                     header.sortable ? 'cursor-pointer hover:bg-slate-100/80' : ''
                   }`}
                 >
@@ -239,7 +240,7 @@ const Table = ({
                   effectiveActionsAlign === 'center' ? 'text-center' : 'text-right pr-11'
                 }`}>
                   <div className={`w-full flex items-center ${effectiveActionsAlign === 'center' ? 'justify-center text-center' : 'justify-end'}`}>
-                    Actions
+                    {actionsTitle !== undefined ? actionsTitle : 'Actions'}
                   </div>
                 </th>
               )}
@@ -256,7 +257,7 @@ const Table = ({
                   const cellVal = resolveVal(row, header.key);
 
                   return (
-                    <td key={header.key} className="p-4">
+                    <td key={header.key} className={`p-4 ${header.className || ''}`}>
                       {header.render ? (
                         header.render(row)
                       ) : header.isStatus ? (
@@ -285,7 +286,7 @@ const Table = ({
                             const actLabel = typeof act.label === 'function' ? act.label(row) : act.label;
                             const labelLower = String(actLabel || '').toLowerCase();
                             const isDisabled = typeof act.disabled === 'function' ? act.disabled(row) : !!act.disabled;
-                            const variant = act.variant;
+                            const variant = typeof act.variant === 'function' ? act.variant(row) : act.variant;
 
                             let btnStyle = act.iconOnly 
                               ? 'p-1.5 rounded-lg flex items-center justify-center transition-all cursor-pointer border '

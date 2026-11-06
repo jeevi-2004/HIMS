@@ -556,46 +556,93 @@ exports.getAdmissionById = async (req, res) => {
     if (!admission.billingDetails) admission.billingDetails = {};
     if (!Array.isArray(admission.billingDetails.billingItems)) admission.billingDetails.billingItems = [];
 
-    // 1. Scan dailyReviews for investigations
+    // 1. Scan dailyReviews for investigations and aggregate quantities across rounds
+    const reviewInvCounts = new Map();
     if (Array.isArray(admission.dailyReviews)) {
       for (const rev of admission.dailyReviews) {
         if (Array.isArray(rev.investigations) && rev.investigations.length > 0) {
           for (const inv of rev.investigations) {
             const invName = inv.name || inv.serviceName;
             if (!invName) continue;
-            const alreadyExists = admission.billingDetails.billingItems.some(
-              b => (b.serviceName || '').toLowerCase() === invName.toLowerCase()
-            );
-            if (!alreadyExists) {
-              const invPrice = Number(inv.price || inv.unitPrice || inv.amount || 0);
-              const isRad = (inv.serviceType || inv.category || '').toLowerCase().includes('radiology') ||
-                            (inv.serviceType || inv.category || '').toLowerCase().includes('imaging') ||
-                            invName.toLowerCase().includes('x-ray') ||
-                            invName.toLowerCase().includes('scan') ||
-                            invName.toLowerCase().includes('ultrasound') ||
-                            invName.toLowerCase().includes('mri') ||
-                            invName.toLowerCase().includes('ct');
-              const invCategory = isRad ? 'Radiology' : 'Laboratory';
+            const key = invName.trim().toLowerCase();
+            const invPrice = Number(inv.price || inv.unitPrice || inv.amount || 0);
+            const isRad = (inv.serviceType || inv.category || '').toLowerCase().includes('radiology') ||
+                          (inv.serviceType || inv.category || '').toLowerCase().includes('imaging') ||
+                          invName.toLowerCase().includes('x-ray') ||
+                          invName.toLowerCase().includes('scan') ||
+                          invName.toLowerCase().includes('ultrasound') ||
+                          invName.toLowerCase().includes('mri') ||
+                          invName.toLowerCase().includes('ct');
+            const invCategory = isRad ? 'Radiology' : 'Laboratory';
 
-              admission.billingDetails.billingItems.push({
-                serviceCategory: invCategory,
-                serviceName: invName,
-                description: `Ordered in Round ${rev.dayNumber || 1}`,
-                quantity: 1,
-                unitPrice: invPrice,
-                amount: invPrice,
+            if (reviewInvCounts.has(key)) {
+              const item = reviewInvCounts.get(key);
+              item.count += 1;
+              if (invPrice > 0 && (!item.price || item.price === 0)) item.price = invPrice;
+              if (rev.dayNumber) item.rounds.push(rev.dayNumber);
+            } else {
+              reviewInvCounts.set(key, {
+                name: invName,
+                category: invCategory,
+                price: invPrice,
+                count: 1,
+                rounds: rev.dayNumber ? [rev.dayNumber] : [1],
                 dateTime: rev.reviewDate || new Date(),
-                status: 'Added to Bill',
-                isManual: false,
-                addedBy: rev.doctorId || admission.attendingDoctorId,
-                createdAt: new Date()
+                doctorId: rev.doctorId || admission.attendingDoctorId
               });
-              admission.billingDetails.labCharges = (admission.billingDetails.labCharges || 0) + invPrice;
-              admission.billingDetails.totalBill = (admission.billingDetails.totalBill || 0) + invPrice;
-              hasBillingItemsChanged = true;
             }
           }
         }
+      }
+    }
+
+    // Now update or insert into admission.billingDetails.billingItems
+    for (const [key, data] of reviewInvCounts.entries()) {
+      const existingItem = admission.billingDetails.billingItems.find(
+        b => (b.serviceName || '').trim().toLowerCase() === key
+      );
+
+      if (existingItem) {
+        // If the review count is greater than the current recorded quantity, update quantity and amount!
+        if (data.count > (existingItem.quantity || 1)) {
+          const oldQty = existingItem.quantity || 1;
+          const oldAmount = existingItem.amount || (oldQty * (existingItem.unitPrice || data.price));
+          const unitPrice = Number(existingItem.unitPrice || data.price || 0);
+          const newQty = data.count;
+          const newAmount = newQty * unitPrice;
+          const diff = newAmount - oldAmount;
+
+          existingItem.quantity = newQty;
+          existingItem.unitPrice = unitPrice;
+          existingItem.amount = newAmount;
+          existingItem.description = `Ordered across ${newQty} Rounds (${data.rounds.map(r => `Round ${r}`).join(', ')})`;
+
+          admission.billingDetails.labCharges = (admission.billingDetails.labCharges || 0) + diff;
+          admission.billingDetails.totalBill = (admission.billingDetails.totalBill || 0) + diff;
+          hasBillingItemsChanged = true;
+        }
+      } else {
+        const unitPrice = data.price;
+        const totalAmount = data.count * unitPrice;
+        admission.billingDetails.billingItems.push({
+          serviceCategory: data.category,
+          serviceName: data.name,
+          description: data.count > 1 
+            ? `Ordered across ${data.count} Rounds (${data.rounds.map(r => `Round ${r}`).join(', ')})`
+            : `Ordered in Round ${data.rounds[0] || 1}`,
+          quantity: data.count,
+          unitPrice: unitPrice,
+          amount: totalAmount,
+          dateTime: data.dateTime,
+          status: 'Added to Bill',
+          isManual: false,
+          addedBy: data.doctorId,
+          createdAt: new Date()
+        });
+
+        admission.billingDetails.labCharges = (admission.billingDetails.labCharges || 0) + totalAmount;
+        admission.billingDetails.totalBill = (admission.billingDetails.totalBill || 0) + totalAmount;
+        hasBillingItemsChanged = true;
       }
     }
 
@@ -603,12 +650,18 @@ exports.getAdmissionById = async (req, res) => {
     try {
       const Consultation = req.tenantDb ? req.tenantDb.model('Consultation') : require('../models/Consultation');
       const targetPatientId = admission.patientId?._id || admission.patientId;
+      const consultOrConditions = [
+        { appointmentId: admission._id },
+        { admissionId: admission._id },
+        { patientId: targetPatientId, isIpd: true }
+      ];
+      if (admission.admissionId && mongoose.Types.ObjectId.isValid(admission.admissionId)) {
+        consultOrConditions.push({ appointmentId: admission.admissionId });
+        consultOrConditions.push({ admissionId: admission.admissionId });
+      }
+
       const consultations = await Consultation.find({
-        $or: [
-          { appointmentId: admission._id },
-          { appointmentId: admission.admissionId },
-          { patientId: targetPatientId, isIpd: true }
-        ],
+        $or: consultOrConditions,
         'investigations.0': { $exists: true }
       }).lean();
 
@@ -2551,11 +2604,27 @@ exports.saveDailyReview = async (req, res) => {
                       invName.toLowerCase().includes('ct');
         const invCategory = isRad ? 'Radiology' : 'Laboratory';
 
-        const alreadyAdded = admission.billingDetails.billingItems.some(
-          b => (b.serviceName || '').toLowerCase() === invName.toLowerCase() &&
+        const existingItem = admission.billingDetails.billingItems.find(
+          b => (b.serviceName || '').trim().toLowerCase() === invName.trim().toLowerCase()
+        );
+
+        const isAlreadyAddedForThisRound = admission.billingDetails.billingItems.some(
+          b => (b.serviceName || '').trim().toLowerCase() === invName.trim().toLowerCase() &&
                (b.description || '').includes(`Round ${reviewData.dayNumber}`)
         );
-        if (!alreadyAdded) {
+
+        if (existingItem) {
+          if (!isAlreadyAddedForThisRound) {
+            const currentQty = Number(existingItem.quantity) || 1;
+            const unitPrice = Number(existingItem.unitPrice || invPrice);
+            const newQty = currentQty + 1;
+            existingItem.quantity = newQty;
+            existingItem.unitPrice = unitPrice;
+            existingItem.amount = newQty * unitPrice;
+            existingItem.description = `Ordered across ${newQty} Rounds (Round ${reviewData.dayNumber})`;
+            additionalLabTotal += unitPrice;
+          }
+        } else {
           admission.billingDetails.billingItems.push({
             serviceCategory: invCategory,
             serviceName: invName,

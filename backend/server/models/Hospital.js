@@ -120,7 +120,7 @@ const HospitalSchema = new mongoose.Schema({
     default: {
       OPD: true,
       Appointments: true,
-      IPD: true,
+      IPD: false,
       Billing: true,
       Pharmacy: true,
       digitalPrescription: true,

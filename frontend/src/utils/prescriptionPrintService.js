@@ -7,7 +7,10 @@ export const generatePrescriptionPrintHTML = (consultation = {}, doctor = {}, te
   const rawDiag = (consultation.diagnoses && Array.isArray(consultation.diagnoses) && consultation.diagnoses.length > 0) ? consultation.diagnoses : (consultation.diagnosis || []);
   const diagnosisList = Array.isArray(rawDiag) ? rawDiag : (typeof rawDiag === 'string' && rawDiag.includes(',') ? rawDiag.split(',').map(s => s.trim()).filter(Boolean) : (rawDiag ? [rawDiag] : []));
   const adviceList = consultation.advice || [];
-  const investigationList = consultation.investigations || [];
+  const rawRx = consultation.prescriptions || consultation.prescription || consultation.medicines || consultation.rxList || [];
+  const rxList = Array.isArray(rawRx) ? rawRx : [];
+  const rawInv = consultation.investigations || consultation.investigation || [];
+  const investigationList = Array.isArray(rawInv) ? rawInv : (rawInv ? [rawInv] : []);
   const doctorProfile = doctor.doctorProfile || {};
 
   const paperSize = template.paperSize || 'A4';
@@ -247,6 +250,21 @@ export const generatePrescriptionPrintHTML = (consultation = {}, doctor = {}, te
   const displayDoctorName = isPlaceholder ? '{{Doctor Name}}' : (doctor.name ? `Dr. ${String(doctor.name).replace(/^(Dr\.?\s*)+/i, '').trim()}` : (isSample ? 'Dr. Sample Doctor' : 'Doctor Name Not Available'));
   const displayQualification = isPlaceholder ? '{{Doctor Qualification}}' : (doctorProfile.qualification || (isSample ? 'MBBS, MD' : ''));
 
+  const displayDiagnosisList = diagnosisList.length > 0 ? diagnosisList : (
+    isPlaceholder ? ['{{Clinical Diagnosis}}'] : (isSample ? ['Sample Clinical Diagnosis'] : [])
+  );
+  const displayRxList = rxList.length > 0 ? rxList : (
+    isPlaceholder ? [
+      { medicineName: '{{Medicine Name}}', dosage: '{{Dosage}}', frequency: '{{Frequency}}', duration: '{{Duration}}', food: '{{Food Timing}}' }
+    ] : (isSample ? [
+      { medicineName: 'Sample Medication 500mg', dosage: '500mg', frequency: '1-0-1', duration: '5 Days', food: 'After Food' },
+      { medicineName: 'Sample Medication 10mg', dosage: '10mg', frequency: '0-0-1', duration: '5 Days', food: 'After Food' }
+    ] : [])
+  );
+  const displayInvestigationList = investigationList.length > 0 ? investigationList : (
+    isPlaceholder ? ['{{Diagnostic Investigation}}'] : (isSample ? ['Complete Blood Count (CBC)', 'Chest X-Ray (PA View)'] : [])
+  );
+
   return `
     <!DOCTYPE html>
     <html>
@@ -310,13 +328,13 @@ export const generatePrescriptionPrintHTML = (consultation = {}, doctor = {}, te
             </div>
           ` : ''}
         </div>
-        ${config.sections.diagnosis && diagnosisList.length > 0 ? `
+        ${config.sections.diagnosis && displayDiagnosisList.length > 0 ? `
           <div class="section">
             <div class="section-title">Clinical Diagnosis</div>
-            <div style="font-size:13px; font-weight:700; color:#0f172a;">${Array.isArray(diagnosisList) ? diagnosisList.join(', ') : diagnosisList}</div>
+            <div style="font-size:13px; font-weight:700; color:#0f172a;">${Array.isArray(displayDiagnosisList) ? displayDiagnosisList.join(', ') : displayDiagnosisList}</div>
           </div>
         ` : ''}
-        ${config.sections.medicines && rxList.length > 0 ? `
+        ${config.sections.medicines && displayRxList.length > 0 ? `
           <div class="section">
             <div class="section-title">Rx — Prescribed Medications</div>
             <table class="rx-table">
@@ -329,7 +347,7 @@ export const generatePrescriptionPrintHTML = (consultation = {}, doctor = {}, te
                 </tr>
               </thead>
               <tbody>
-                ${rxList.map(m => `
+                ${displayRxList.map(m => `
                   <tr>
                     <td style="font-weight:700;">${m.medicineName || m.name || 'Medication'}</td>
                     <td>${m.dosage || m.frequency || '-'}</td>
@@ -341,11 +359,11 @@ export const generatePrescriptionPrintHTML = (consultation = {}, doctor = {}, te
             </table>
           </div>
         ` : ''}
-        ${config.sections.investigations && investigationList.length > 0 ? `
+        ${config.sections.investigations && displayInvestigationList.length > 0 ? `
           <div class="section">
             <div class="section-title">Diagnostic Investigations & Scans Ordered</div>
             <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;">
-              ${investigationList.map(inv => {
+              ${displayInvestigationList.map(inv => {
                 const name = typeof inv === 'object' ? (inv.name || inv.investigationName) : inv;
                 const type = typeof inv === 'object' ? (inv.serviceType || '') : '';
                 return `

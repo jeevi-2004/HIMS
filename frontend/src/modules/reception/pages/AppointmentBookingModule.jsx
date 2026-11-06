@@ -47,6 +47,12 @@ const normalizeTimeTo24Hr = (tStr) => {
   return s;
 };
 
+// Helper to capitalize first letter of each word
+const capitalizeWords = (str) => {
+  if (!str) return '';
+  return str.replace(/(^|[\s,.\-/])([a-z])/g, (_, prefix, char) => prefix + char.toUpperCase());
+};
+
 // Helper to get local date string YYYY-MM-DD
 const getLocalDateStr = (d = new Date()) => {
   const year = d.getFullYear();
@@ -62,6 +68,24 @@ const formatHumanDate = (dateStr) => {
   if (!y || !m || !d) return dateStr;
   const dateObj = new Date(y, m - 1, d);
   return dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+// Format scheduled date and time: e.g. "2026-11-05 at 02:30 PM"
+const formatScheduledDateTime = (dateVal, timeVal) => {
+  if (!dateVal) return '';
+  let cleanDate = '';
+  if (typeof dateVal === 'string') {
+    cleanDate = dateVal.split('T')[0];
+  } else if (dateVal instanceof Date) {
+    cleanDate = getLocalDateStr(dateVal);
+  } else {
+    cleanDate = String(dateVal).split('T')[0];
+  }
+  const cleanTime = timeVal ? format24To12Hr(timeVal) : '';
+  if (cleanDate && cleanTime) {
+    return `${cleanDate} at ${cleanTime}`;
+  }
+  return cleanDate || cleanTime || '';
 };
 
 // Snap targeted H12:M AM/PM to closest valid available appointment slot
@@ -647,7 +671,11 @@ export default function AppointmentBookingModule() {
                           type="text"
                           placeholder="Search patient by Name, UHID, or Mobile Number..."
                           value={patientSearch}
-                          onChange={(e) => handlePatientSearchChange(e.target.value)}
+                          onChange={(e) => {
+                            const noNums = e.target.value.replace(/[0-9]/g, '');
+                            const formatted = capitalizeWords(noNums);
+                            handlePatientSearchChange(formatted);
+                          }}
                           className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#3563F6] focus:bg-white transition-all"
                         />
                       </div>
@@ -689,7 +717,11 @@ export default function AppointmentBookingModule() {
                       type="text"
                       placeholder="Full Name"
                       value={patientForm.name}
-                      onChange={(e) => setPatientForm({ ...patientForm, name: e.target.value })}
+                      onChange={(e) => {
+                        const noNums = e.target.value.replace(/[0-9]/g, '');
+                        const formatted = capitalizeWords(noNums);
+                        setPatientForm({ ...patientForm, name: formatted });
+                      }}
                       className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white"
                     />
                   </div>
@@ -700,8 +732,13 @@ export default function AppointmentBookingModule() {
                     <input
                       type="text"
                       placeholder="10-digit Mobile"
+                      maxLength={10}
+                      inputMode="numeric"
                       value={patientForm.mobileNumber}
-                      onChange={(e) => setPatientForm({ ...patientForm, mobileNumber: e.target.value })}
+                      onChange={(e) => {
+                        const onlyNums = e.target.value.replace(/\D/g, '').slice(0, 10);
+                        setPatientForm({ ...patientForm, mobileNumber: onlyNums });
+                      }}
                       className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white"
                     />
                   </div>
@@ -710,10 +747,15 @@ export default function AppointmentBookingModule() {
                       Age *
                     </label>
                     <input
-                      type="number"
+                      type="text"
                       placeholder="Years"
+                      maxLength={2}
+                      inputMode="numeric"
                       value={patientForm.age}
-                      onChange={(e) => setPatientForm({ ...patientForm, age: e.target.value })}
+                      onChange={(e) => {
+                        const onlyNums = e.target.value.replace(/\D/g, '').slice(0, 2);
+                        setPatientForm({ ...patientForm, age: onlyNums });
+                      }}
                       className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white"
                     />
                   </div>
@@ -752,7 +794,10 @@ export default function AppointmentBookingModule() {
                       type="text"
                       placeholder="City/Town"
                       value={patientForm.place}
-                      onChange={(e) => setPatientForm({ ...patientForm, place: e.target.value })}
+                      onChange={(e) => {
+                        const formatted = capitalizeWords(e.target.value);
+                        setPatientForm({ ...patientForm, place: formatted });
+                      }}
                       className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:border-[#3563F6] focus:bg-white"
                     />
                   </div>
@@ -1206,7 +1251,7 @@ export default function AppointmentBookingModule() {
               <div className="flex justify-between">
                 <span className="text-slate-500 font-bold">Scheduled Time:</span>
                 <span className="font-extrabold text-[#3563F6]">
-                  {formatHumanDate(completedBooking.date)} @ {completedBooking.time}
+                  {formatScheduledDateTime(completedBooking.date, completedBooking.time)}
                 </span>
               </div>
               <div className="flex justify-between">

@@ -21,48 +21,6 @@ import { ROUTES } from '../constants/routes';
 import { useAuth } from '../context/AuthContext';
 import { voiceAnnouncement } from '../utils/voiceAnnouncementService';
 
-const DoctorFollowUps = () => {
-  const { user } = useAuth();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-
-  // Tab & Filters state
-  const [activeTab, setActiveTab] = useState('TODAY'); // 'TODAY' | 'UPCOMING' | 'ALL'
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('ALL'); // 'ALL' | 'Scheduled' | 'Completed' | 'Missed' | 'Cancelled'
-  const [dateFilter, setDateFilter] = useState('ALL'); // 'ALL' | 'TODAY' | 'TOMORROW' | 'THIS_WEEK' | 'THIS_MONTH' | 'CUSTOM'
-  const [customStartDate, setCustomStartDate] = useState('');
-  const [customEndDate, setCustomEndDate] = useState('');
-  const [groupByMode, setGroupByMode] = useState('NONE'); // 'NONE' | 'DAY' | 'WEEK' | 'MONTH'
-  const [collapsedGroups, setCollapsedGroups] = useState({});
-
-  // Modals
-  const [selectedPatientForNotes, setSelectedPatientForNotes] = useState(null);
-  const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
-  const [selectedConsultationRecord, setSelectedConsultationRecord] = useState(null);
-  const [isConsultationRecordOpen, setIsConsultationRecordOpen] = useState(false);
-  const [advanceAlertRecord, setAdvanceAlertRecord] = useState(null);
-  const [isStartingConsultation, setIsStartingConsultation] = useState(false);
-
-  // Fetch Consultations / Appointments with Follow-up schedules
-  const { data: rawFollowUpsData, isLoading, isError, refetch } = useQuery({
-    queryKey: ['doctorFollowUps', user?._id, activeTab, dateFilter, customStartDate, customEndDate],
-    queryFn: async () => {
-      try {
-        const res = await api.get('/operations/consultations', {
-          params: { followup: true, limit: 200, doctorId: user?._id }
-        });
-        return res.data?.data || res.data || [];
-      } catch (err) {
-        // Fallback fetch appointments if consultations endpoint defaults
-        const res = await api.get('/operations/appointments', {
-          params: { type: 'Follow-up', limit: 200, doctorId: user?._id }
-        });
-        return res.data?.data || res.data || [];
-      }
-    }
-  });
-
 // Robust Local Date (YYYY-MM-DD) helper resilient to timezone offsets
 const getLocalDateString = (val) => {
   if (!val) return '';
@@ -93,6 +51,127 @@ const getItemDateString = (item) => {
   return '';
 };
 
+const DoctorFollowUps = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  // Tab & Filters state
+  const [activeTab, setActiveTab] = useState('TODAY'); // 'TODAY' | 'UPCOMING' | 'ALL'
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL'); // 'ALL' | 'Scheduled' | 'Completed' | 'Missed' | 'Cancelled'
+  const [dateFilter, setDateFilter] = useState('ALL'); // 'ALL' | 'TODAY' | 'TOMORROW' | 'THIS_WEEK' | 'THIS_MONTH' | 'CUSTOM'
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [groupByMode, setGroupByMode] = useState('NONE'); // 'NONE' | 'DAY' | 'WEEK' | 'MONTH'
+  const [collapsedGroups, setCollapsedGroups] = useState({});
+
+  // Modals
+  const [selectedPatientForNotes, setSelectedPatientForNotes] = useState(null);
+  const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
+  const [selectedConsultationRecord, setSelectedConsultationRecord] = useState(null);
+  const [isConsultationRecordOpen, setIsConsultationRecordOpen] = useState(false);
+  const [advanceAlertRecord, setAdvanceAlertRecord] = useState(null);
+  const [isStartingConsultation, setIsStartingConsultation] = useState(false);
+
+  // Fetch Consultations / Appointments with Follow-up schedules
+  const { data: rawFollowUpsData, isLoading, isError, refetch } = useQuery({
+    queryKey: ['doctorFollowUps', user?._id, activeTab, dateFilter, customStartDate, customEndDate],
+    queryFn: async () => {
+      try {
+        const [consultRes, appRes] = await Promise.all([
+          api.get('/operations/consultations', {
+            params: { followup: true, limit: 200, doctorId: user?._id }
+          }).catch(() => ({ data: { data: [] } })),
+          api.get('/operations/appointments', {
+            params: { doctorId: user?._id, limit: 200 }
+          }).catch(() => ({ data: { data: [] } }))
+        ]);
+
+        const consultList = consultRes.data?.data || consultRes.data || [];
+        const appList = appRes.data?.data || appRes.data || [];
+
+        // Build quick lookup for appointments by patient and scheduled date
+        const appMap = new Map();
+        appList.forEach(app => {
+          const pId = String(app.patientId?._id || app.patientId || '');
+          const dStr = getItemDateString(app);
+          if (pId && dStr) {
+            appMap.set(`${pId}_${dStr}`, app);
+          }
+        });
+
+        const seenKeys = new Set();
+        const merged = [];
+
+        consultList.forEach(item => {
+          const pId = String(item.patientId?._id || item.patientId || '');
+          const dStr = getItemDateString(item);
+          const key = `${pId}_${dStr}`;
+          seenKeys.add(key);
+          if (item._id) seenKeys.add(String(item._id));
+          if (item.appointmentId?._id) seenKeys.add(String(item.appointmentId._id));
+
+          // Link matched scheduled appointment on that target follow-up date if one exists
+          const matchedApp = appMap.get(key);
+          merged.push({
+            ...item,
+            scheduledAppointment: matchedApp || null,
+            tokenNumber: matchedApp?.tokenNumber || item.tokenNumber || '',
+            appointmentSlot: matchedApp?.appointmentSlot || matchedApp?.slotTime || item.appointmentSlot || item.followupTime || ''
+          });
+        });
+
+        const todayStr = getLocalDateString(new Date());
+
+        appList.forEach(app => {
+          // Strictly only include genuine follow-up or scheduled appointments
+          const cType = String(app.consultationType || '').toLowerCase();
+          const isFollowupType = cType === 'follow-up' || cType === 'followup' || app.isFollowup || app.isFollowUp || Boolean(app.followupDate) || Boolean(app.followUpAppointmentId);
+          const isScheduledType = cType === 'appointment' || (app.bookingSource === 'DOCTOR' && isFollowupType) || String(app.status || '').toLowerCase() === 'scheduled' || String(app.queueStatus || '').toLowerCase() === 'scheduled' || String(app.workflow?.queueState || '').toUpperCase() === 'SCHEDULED';
+
+          // Exclude regular walk-in OPD tokens (Walk-In, General Consultation, Emergency) that are not genuine scheduled follow-ups
+          if (cType === 'walk-in' || cType === 'emergency' || (!isFollowupType && !isScheduledType)) {
+            return;
+          }
+
+          const pId = String(app.patientId?._id || app.patientId || '');
+          const dStr = getItemDateString(app);
+          const key = `${pId}_${dStr}`;
+          const appId = String(app._id);
+
+          if (!seenKeys.has(key) && !seenKeys.has(appId)) {
+            seenKeys.add(key);
+            seenKeys.add(appId);
+            merged.push({
+              _id: app._id,
+              appointmentId: app,
+              patientId: app.patientId,
+              doctorId: app.doctorId,
+              followupDate: app.date,
+              date: app.date,
+              followupTime: app.time || app.slotTime || '10:00 AM',
+              time: app.time || app.slotTime || '10:00 AM',
+              slotTime: app.time || app.slotTime || '10:00 AM',
+              tokenNumber: app.tokenNumber || '',
+              status: app.status,
+              queueStatus: app.queueStatus,
+              followupStatus: app.status,
+              consultationType: app.consultationType || 'Appointment',
+              bookingSource: app.bookingSource || 'RECEPTION',
+              workflow: app.workflow,
+              createdAt: app.createdAt
+            });
+          }
+        });
+
+        return merged;
+      } catch (err) {
+        return [];
+      }
+    }
+  });
+
   // Robust Follow-up Status Evaluator:
   // Strictly distinguishes between past completed consultations, active in-consultation, and scheduled follow-ups.
   const getFollowUpStatus = useCallback((item) => {
@@ -100,19 +179,34 @@ const getItemDateString = (item) => {
     const todayStr = getLocalDateString(new Date());
     const itemDateStr = getItemDateString(item) || todayStr;
 
+    // Check if the linked appointment is for the target date or if it's the previous visit
+    const isLinkedApptForTargetDate = item.scheduledAppointment 
+      ? true 
+      : Boolean(item.appointmentId?.date && getItemDateString(item.appointmentId) === itemDateStr);
+
+    const targetAppt = item.scheduledAppointment || (isLinkedApptForTargetDate ? item.appointmentId : null);
+
     const rawStatus = (
       item.followupStatus || 
       item.status || 
-      item.appointmentId?.status || 
-      item.appointmentId?.queueStatus || 
+      targetAppt?.status || 
+      targetAppt?.queueStatus || 
       ''
     ).toLowerCase();
 
-    const wfQueueState = (item.appointmentId?.workflow?.queueState || item.workflow?.queueState || '').toUpperCase();
-    const wfConsultState = (item.appointmentId?.workflow?.consultationState || item.workflow?.consultationState || '').toUpperCase();
-    const pharmacyStatus = (item.appointmentId?.pharmacyStatus || item.pharmacyStatus || '').toUpperCase();
+    const wfQueueState = (targetAppt?.workflow?.queueState || (!item.followupDate ? item.workflow?.queueState : '') || '').toUpperCase();
+    const wfConsultState = (targetAppt?.workflow?.consultationState || (!item.followupDate ? item.workflow?.consultationState : '') || '').toUpperCase();
+    const pharmacyStatus = (targetAppt?.pharmacyStatus || (!item.followupDate ? item.pharmacyStatus : '') || '').toUpperCase();
 
-    // Priority 1: If consulted / completed / prescription sent to pharmacy
+    // Priority 1: Future follow-up or future scheduled appointments (date > today)
+    if (itemDateStr > todayStr) {
+      if (item.followupCompleted === true || (item.followupStatus && item.followupStatus.toLowerCase() === 'completed')) {
+        return 'Completed';
+      }
+      return 'Scheduled';
+    }
+
+    // Priority 2: If consulted / completed / prescription sent to pharmacy today or in the past
     const isCompleted =
       rawStatus === 'completed' || 
       rawStatus === 'consulted' || 
@@ -126,14 +220,14 @@ const getItemDateString = (item) => {
       wfQueueState === 'SENT_TO_PHARMACY' ||
       pharmacyStatus === 'SENT' ||
       pharmacyStatus === 'DISPENSED' ||
-      Boolean(item.sentToPharmacyAt || item.appointmentId?.sentToPharmacyAt) ||
-      Boolean(item.completedByDoctorId || item.appointmentId?.completedByDoctorId);
+      Boolean(targetAppt?.sentToPharmacyAt) ||
+      Boolean(targetAppt?.completedByDoctorId);
 
     if (isCompleted) {
       return 'Completed';
     }
 
-    // Priority 2: In Consultation (Active in consultation right now)
+    // Priority 3: In Consultation (Active in consultation right now)
     const isInConsultation =
       item.isInConsultation ||
       rawStatus === 'in consultation' ||
@@ -146,11 +240,6 @@ const getItemDateString = (item) => {
       return 'In Consultation';
     }
     if (rawStatus === 'cancelled' || wfQueueState === 'CANCELLED') return 'Cancelled';
-
-    // Priority 3: Upcoming follow-ups (future date):
-    if (itemDateStr > todayStr) {
-      return 'Scheduled';
-    }
 
     // Priority 4: Follow-up scheduled for today:
     if (itemDateStr === todayStr) {
@@ -167,7 +256,7 @@ const getItemDateString = (item) => {
     if (user?._id) {
       list = list.filter(item => {
         const docId = item.doctorId?._id || item.doctorId;
-        return !docId || String(docId) === String(user._id);
+        return Boolean(docId && String(docId) === String(user._id));
       });
     }
     const today = new Date();
@@ -212,8 +301,8 @@ const getItemDateString = (item) => {
       const itemDateStr = getItemDateString(item);
 
       if (activeTab === 'TODAY') {
-        // Patients scheduled for today OR patients currently IN CONSULTATION
-        if (!isStatusInConsult && (!itemDateStr || itemDateStr !== todayStr)) return false;
+        // Place ONLY if the follow-up or scheduled patient's date is TODAY
+        if (!itemDateStr || itemDateStr !== todayStr) return false;
       } else if (activeTab === 'UPCOMING') {
         // Patients currently in consultation must NEVER appear in Upcoming!
         if (isStatusInConsult) return false;
@@ -225,7 +314,7 @@ const getItemDateString = (item) => {
 
       // 4. Secondary Date Filter (Dropdown)
       if (dateFilter === 'TODAY') {
-        if (!isStatusInConsult && (!itemDateStr || itemDateStr !== todayStr)) return false;
+        if (!itemDateStr || itemDateStr !== todayStr) return false;
       } else if (dateFilter === 'TOMORROW') {
         if (!itemDateStr || itemDateStr !== tomorrowStr) return false;
       } else if (dateFilter === 'THIS_WEEK') {
@@ -294,7 +383,7 @@ const getItemDateString = (item) => {
     if (user?._id) {
       list = list.filter(item => {
         const docId = item.doctorId?._id || item.doctorId;
-        return !docId || String(docId) === String(user._id);
+        return Boolean(docId && String(docId) === String(user._id));
       });
     }
 
@@ -326,11 +415,10 @@ const getItemDateString = (item) => {
     uniqueList.forEach(item => {
       const d = getItemDateString(item);
       const st = getFollowUpStatus(item);
-      const isStatusInConsult = st.toLowerCase() === 'in consultation';
 
-      if (d === todayStr || isStatusInConsult) {
+      if (d === todayStr) {
         todayCount++;
-      } else if (d > todayStr && st.toLowerCase() !== 'completed' && st.toLowerCase() !== 'cancelled' && !isStatusInConsult) {
+      } else if (d > todayStr && st.toLowerCase() !== 'completed' && st.toLowerCase() !== 'cancelled') {
         upcomingCount++;
       }
     });
@@ -344,14 +432,13 @@ const getItemDateString = (item) => {
     if (user?._id) {
       list = list.filter(item => {
         const docId = item.doctorId?._id || item.doctorId;
-        return !docId || String(docId) === String(user._id);
+        return Boolean(docId && String(docId) === String(user._id));
       });
     }
     const todayStr = getLocalDateString(new Date());
     const todayItems = list.filter(item => {
       const d = getItemDateString(item);
-      const st = getFollowUpStatus(item).toLowerCase();
-      return d === todayStr || st === 'in consultation';
+      return d === todayStr;
     });
 
     let completed = 0;
@@ -574,14 +661,10 @@ const getItemDateString = (item) => {
         doctorName,
         roomNumber,
         roomNo: roomNumber,
+        hospitalId: user?.hospitalId || user?.hospital?._id || user?.hospital,
         type: 'TriggerVoiceCall'
       };
       api.post('/workflow/events/trigger-call', callPayload).catch(() => {});
-      voiceAnnouncement.enqueueAnnouncement({
-        ...callPayload,
-        patientObj: record,
-        broadcastOnly: true
-      });
 
       queryClient.invalidateQueries(['doctorQueue']);
       queryClient.invalidateQueries(['appointments']);
@@ -606,14 +689,10 @@ const getItemDateString = (item) => {
           doctorName: record.doctorId?.name || record.doctorName || user?.name || 'Doctor',
           roomNumber: record.doctorId?.roomNo || record.doctorId?.doctorProfile?.roomNo || 'Consultation Room',
           roomNo: record.doctorId?.roomNo || record.doctorId?.doctorProfile?.roomNo || 'Consultation Room',
+          hospitalId: user?.hospitalId || user?.hospital?._id || user?.hospital,
           type: 'TriggerVoiceCall'
         };
         api.post('/workflow/events/trigger-call', callPayload).catch(() => {});
-        voiceAnnouncement.enqueueAnnouncement({
-          ...callPayload,
-          patientObj: record,
-          broadcastOnly: true
-        });
         queryClient.invalidateQueries(['doctorQueue']);
         queryClient.invalidateQueries(['appointments']);
         queryClient.invalidateQueries(['doctorFollowUps']);
@@ -758,6 +837,7 @@ const getItemDateString = (item) => {
       label: (row) => getFollowUpStatus(row) === 'In Consultation' ? 'Continue Consultation' : 'Start Consultation',
       icon: Stethoscope,
       variant: (row) => getFollowUpStatus(row) === 'In Consultation' ? 'purple' : 'primary',
+      isPrimary: (row) => getFollowUpStatus(row) !== 'In Consultation',
       onClick: (row) => handleStartConsultation(row),
       show: (row) => getFollowUpStatus(row) !== 'Completed' && getFollowUpStatus(row) !== 'Cancelled'
     }
@@ -829,7 +909,7 @@ const getItemDateString = (item) => {
               variant="primary" 
               icon={Stethoscope} 
               onClick={() => handleStartConsultation(item)} 
-              className={`flex-1 text-xs py-1.5 h-[36px] font-bold ${status === 'In Consultation' ? 'bg-purple-600 hover:bg-purple-700 text-white border-purple-600' : 'bg-[#3563F6]'}`}
+              className={`flex-1 text-xs py-1.5 h-[36px] font-bold ${status === 'In Consultation' ? 'bg-purple-600 hover:bg-purple-700 text-white border-purple-600' : 'bg-[#2F63F2] text-white border-[#2F63F2]'}`}
             >
               {status === 'In Consultation' ? 'Continue Consultation' : 'Start Consultation'}
             </Button>
@@ -1227,7 +1307,7 @@ const getItemDateString = (item) => {
                     setIsNotesModalOpen(false);
                     handleStartConsultation(selectedPatientForNotes);
                   }} 
-                  className="text-xs px-6 bg-[#3563F6] font-bold"
+                  className="text-xs px-6 bg-[#2F63F2] text-white font-bold"
                 >
                   Start Consultation
                 </Button>
@@ -1302,7 +1382,7 @@ const getItemDateString = (item) => {
                 icon={Stethoscope}
                 onClick={() => proceedStartConsultation(advanceAlertRecord)}
                 loading={isStartingConsultation}
-                className="text-xs px-5 bg-[#3563F6] font-bold shadow-sm"
+                className="text-xs px-5 bg-[#2F63F2] text-white font-bold shadow-sm"
               >
                 Start Consultation
               </Button>

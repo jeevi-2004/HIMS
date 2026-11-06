@@ -81,9 +81,8 @@ const DigitalDisplayBoard = () => {
         (eventType === 'PatientCalled' && (qState === 'CALLED' || qState.includes('CONSULTATION'))) ||
         qState === 'IN_CONSULTATION';
 
-      if (isCallEvent && (event.tokenNumber || event.token)) {
-        voiceAnnouncement.announceCall(event);
-      }
+      // Note: Voice playback is strictly centralized to the OPD Reception Desk
+      // Digital Display Board updates display visuals via refetch() without playing duplicate audio
     });
 
     return () => unsubscribe();

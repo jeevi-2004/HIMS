@@ -104,6 +104,77 @@ export const saveMasterList = (key, data) => {
 };
 
 /**
+ * Analyze and synchronize a medicine into Medicine Master (mlist).
+ * If the medicine is already in Medicine Master, it is left untouched.
+ * If not present, it is added to mlist and a sync event is dispatched.
+ */
+export const syncMedicineToMaster = (medInput) => {
+  if (!medInput) return null;
+  const rawName = typeof medInput === 'string' ? medInput : (medInput.medicineName || medInput.name || '');
+  const cleanName = String(rawName).trim();
+  if (!cleanName || cleanName.length < 2) return null;
+
+  const cleanLower = cleanName.toLowerCase();
+  const currentMlist = getMasterList('mlist') || [];
+
+  // Check if medicine is already available in Medicine Master (leave it if already available)
+  const isAvailable = currentMlist.some(m => {
+    if (!m) return false;
+    const mName = String(m.name || '').trim().toLowerCase();
+    const mBrand = String(m.brand || '').trim().toLowerCase();
+    const mGen = String(m.generic || m.genericName || '').trim().toLowerCase();
+    return mName === cleanLower || (mBrand && mBrand === cleanLower) || (mGen && mGen === cleanLower);
+  });
+
+  if (isAvailable) {
+    return null; // Already available, leave it as is
+  }
+
+  // Detect strength (e.g. 650mg, 500 mg, 10ml, etc.)
+  const strMatch = cleanName.match(/\b\d+(\.\d+)?\s*(mg|mcg|ml|g|iu|%)\b/i);
+  const detectedStrength = strMatch ? strMatch[0] : (typeof medInput === 'object' ? medInput.strength || '-' : '-');
+
+  // Detect category from name or provided input
+  let detectedCategory = 'Tablet';
+  if (/\b(syrup|suspension|susp)\b/i.test(cleanName)) detectedCategory = 'Syrup';
+  else if (/\b(inj|injection)\b/i.test(cleanName)) detectedCategory = 'Injection';
+  else if (/\b(drop|drops|eye\s*drops|ear\s*drops)\b/i.test(cleanName)) detectedCategory = 'Drops';
+  else if (/\b(inhaler|respules|rotacap)\b/i.test(cleanName)) detectedCategory = 'Inhaler';
+  else if (/\b(capsule|cap|caps)\b/i.test(cleanName)) detectedCategory = 'Capsule';
+  else if (/\b(ointment|cream|gel)\b/i.test(cleanName)) detectedCategory = 'Ointment';
+  else if (typeof medInput === 'object' && medInput.category) detectedCategory = medInput.category;
+
+  const newItem = {
+    id: String(Date.now() + Math.floor(Math.random() * 10000)),
+    name: cleanName,
+    generic: (typeof medInput === 'object' ? medInput.generic || medInput.genericName : '') || '',
+    brand: (typeof medInput === 'object' ? medInput.brand : '') || '',
+    strength: detectedStrength,
+    category: detectedCategory,
+    morning: (typeof medInput === 'object' ? medInput.morning : '') || '1',
+    afternoon: (typeof medInput === 'object' ? medInput.afternoon : '') || '0',
+    night: (typeof medInput === 'object' ? medInput.night : '') || '1',
+    duration: (typeof medInput === 'object' ? medInput.duration : '') || '5 Days',
+    food: (typeof medInput === 'object' ? medInput.food : '') || 'After Food',
+    status: 'Active',
+    maxDailyDose: '',
+    controlled: false,
+    addedFromConsultation: true,
+    createdAt: new Date().toISOString()
+  };
+
+  const updated = [...currentMlist, newItem];
+  saveMasterList('mlist', updated);
+
+  try {
+    window.dispatchEvent(new CustomEvent('clinical_master_updated', { detail: { key: 'mlist', item: newItem } }));
+    window.dispatchEvent(new Event('storage'));
+  } catch (_) {}
+
+  return newItem;
+};
+
+/**
  * Universal Clinical Search across Diagnosis, Medicines, Investigations, Advice, Procedures.
  */
 export const universalClinicalSearch = (query = '') => {

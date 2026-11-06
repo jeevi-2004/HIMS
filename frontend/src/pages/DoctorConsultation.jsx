@@ -11,7 +11,7 @@ import Button from '../components/Button';
 import Input from '../components/Input';
 import Modal from '../components/Modal';
 import {
-  getMasterList, initClinicalMasters, checkAllergyConflict, normalizeFoodTiming, getDefaultFoodTimingForMedicine
+  getMasterList, initClinicalMasters, checkAllergyConflict, normalizeFoodTiming, getDefaultFoodTimingForMedicine, syncMedicineToMaster
 } from '../utils/clinicalMasters';
 import {
   Pill, ShieldCheck, Check, CheckCircle2, Trash2, Plus, ArrowLeft, Volume2,
@@ -763,29 +763,37 @@ const DoctorConsultation = () => {
     appointment?.isFollowUp
   );
 
+  const isConsultationCompleted = Boolean(
+    appointment && (
+      isIpdConsultation
+        ? (
+            appointment.status === 'Discharged' ||
+            appointment.admissionStatus === 'Discharged' ||
+            appointment.dischargeSummaryStatus === 'Sent to Reception' ||
+            appointment.dischargeSummaryStatus === 'Completed' ||
+            appointment.clinicalDischargeSummary?.status === 'Sent to Reception'
+          )
+        : (
+            isCompletedVisit(getVisitStatus(appointment)) ||
+            appointment.status === 'Completed' ||
+            appointment.queueStatus === 'Completed' ||
+            appointment.status === 'Sent to Pharmacy' ||
+            appointment.status === 'Sent To Pharmacy' ||
+            appointment.queueStatus === 'Sent to Pharmacy' ||
+            appointment.queueStatus === 'Sent To Pharmacy' ||
+            appointment.consultationStatus === 'Completed' ||
+            appointment.consultationFinished === true ||
+            appointment.followupCompleted === true ||
+            appointment.workflow?.consultationState === 'COMPLETED' ||
+            appointment.workflow?.queueState === 'COMPLETED' ||
+            appointment.workflow?.queueState === 'SENT_TO_PHARMACY'
+          )
+    )
+  );
+
   const isReadOnly = Boolean(
     searchParams.get('mode') === 'view' ||
-    (
-      appointment && !isFollowupConsultation && searchParams.get('fresh') !== 'true' && (
-        isIpdConsultation
-          ? (
-              appointment.status === 'Discharged' ||
-              appointment.admissionStatus === 'Discharged' ||
-              appointment.dischargeSummaryStatus === 'Sent to Reception' ||
-              appointment.dischargeSummaryStatus === 'Completed' ||
-              appointment.clinicalDischargeSummary?.status === 'Sent to Reception'
-            )
-          : (
-              isCompletedVisit(getVisitStatus(appointment)) ||
-              appointment.status === 'Completed' ||
-              appointment.queueStatus === 'Completed' ||
-              appointment.status === 'Sent to Pharmacy' ||
-              appointment.status === 'Sent To Pharmacy' ||
-              appointment.consultationStatus === 'Completed' ||
-              appointment.consultationFinished === true
-            )
-      )
-    )
+    (isConsultationCompleted && searchParams.get('fresh') !== 'true')
   );
 
   // Clinical Review Rounds Management State
@@ -1401,7 +1409,7 @@ const DoctorConsultation = () => {
           checkedInvestigations: [], // Fresh round: do not duplicate previous round's tests!
           customInvestigation: '',
           investigations: [],
-          vitals: {},
+          vitals: appointment?.vitals || {},
           followupRequired: false,
           followupDate: '',
           followupReason: 'Follow-up Checkup'
@@ -1626,26 +1634,73 @@ const DoctorConsultation = () => {
         return null;
       }
     },
-    enabled: !!consultationId && isReadOnly,
+    enabled: !!consultationId && Boolean(isReadOnly || searchParams.get('mode') === 'view' || isConsultationCompleted),
     retry: false
   });
 
   // Sync state from snapshot when snapshot data is available
   useEffect(() => {
-    if (snapshotData && !isFollowupConsultation && searchParams.get('fresh') !== 'true') {
-      if (snapshotData.diagnoses && snapshotData.diagnoses.length > 0) {
-        setDiagnoses(snapshotData.diagnoses);
+    if (snapshotData && (isReadOnly || searchParams.get('fresh') !== 'true')) {
+      if (snapshotData.diagnoses && Array.isArray(snapshotData.diagnoses) && snapshotData.diagnoses.length > 0) {
+        const cleanDiags = snapshotData.diagnoses
+          .map(d => (typeof d === 'string' ? d : (d?.name || d?.diagnosis || '')))
+          .filter(Boolean);
+        if (cleanDiags.length > 0) {
+          setDiagnoses(cleanDiags);
+        }
+      } else if (snapshotData.primaryDiagnosis) {
+        setDiagnoses([String(snapshotData.primaryDiagnosis)]);
       } else if (snapshotData.diagnosis) {
-        setDiagnoses([snapshotData.diagnosis]);
+        const splitDiags = String(snapshotData.diagnosis).split(',').map(s => s.trim()).filter(Boolean);
+        setDiagnoses(splitDiags.length > 0 ? splitDiags : [String(snapshotData.diagnosis)]);
       }
-      if (snapshotData.primaryDiagnosis) setPrimaryDiagnosis(snapshotData.primaryDiagnosis);
-      if (snapshotData.clinicalNotes) setClinicalNotes(snapshotData.clinicalNotes);
-      if (snapshotData.vitals) setVitals(snapshotData.vitals);
-      if (snapshotData.doctorAdvice) setCustomAdvice(snapshotData.doctorAdvice);
-      if (snapshotData.followupRequired !== undefined) setFollowupRequired(snapshotData.followupRequired);
-      if (snapshotData.followupDate) setFollowupDate(new Date(snapshotData.followupDate).toISOString().split('T')[0]);
-      if (snapshotData.followupReason) setFollowupReason(snapshotData.followupReason);
-      if (snapshotData.prescriptions && snapshotData.prescriptions.length > 0) {
+
+      if (snapshotData.primaryDiagnosis) {
+        setPrimaryDiagnosis(String(snapshotData.primaryDiagnosis));
+      } else if (snapshotData.diagnosis) {
+        setPrimaryDiagnosis(String(snapshotData.diagnosis));
+      }
+
+      if (snapshotData.clinicalNotes) {
+        setClinicalNotes(snapshotData.clinicalNotes);
+      }
+
+      if (snapshotData.vitals && typeof snapshotData.vitals === 'object') {
+        const snapVitals = snapshotData.vitals;
+        setVitals(prev => ({
+          ...prev,
+          bpSystolic: snapVitals.bpSystolic !== undefined && snapVitals.bpSystolic !== null ? String(snapVitals.bpSystolic) : prev.bpSystolic,
+          bpDiastolic: snapVitals.bpDiastolic !== undefined && snapVitals.bpDiastolic !== null ? String(snapVitals.bpDiastolic) : prev.bpDiastolic,
+          pulse: snapVitals.pulse !== undefined && snapVitals.pulse !== null ? String(snapVitals.pulse) : prev.pulse,
+          temperature: snapVitals.temperature !== undefined && snapVitals.temperature !== null ? String(snapVitals.temperature) : prev.temperature,
+          spo2: snapVitals.spo2 !== undefined && snapVitals.spo2 !== null ? String(snapVitals.spo2) : prev.spo2,
+          weight: snapVitals.weight !== undefined && snapVitals.weight !== null ? String(snapVitals.weight) : prev.weight,
+          height: snapVitals.height !== undefined && snapVitals.height !== null ? String(snapVitals.height) : prev.height,
+          bmi: snapVitals.bmi !== undefined && snapVitals.bmi !== null ? String(snapVitals.bmi) : prev.bmi,
+          bloodSugar: snapVitals.bloodSugar !== undefined && snapVitals.bloodSugar !== null ? String(snapVitals.bloodSugar) : prev.bloodSugar
+        }));
+      }
+
+      const resolvedAdvice = snapshotData.advice || snapshotData.doctorAdvice || snapshotData.generalInstructions || '';
+      if (resolvedAdvice) {
+        setCustomAdvice(resolvedAdvice);
+        setIsAdviceExpanded(true);
+      }
+
+      if (snapshotData.followupRequired !== undefined) {
+        setFollowupRequired(Boolean(snapshotData.followupRequired));
+      }
+      if (snapshotData.followupDate) {
+        try {
+          const dStr = new Date(snapshotData.followupDate).toISOString().split('T')[0];
+          setFollowupDate(dStr);
+        } catch (_) {}
+      }
+      if (snapshotData.followupReason) {
+        setFollowupReason(snapshotData.followupReason);
+      }
+
+      if (snapshotData.prescriptions && Array.isArray(snapshotData.prescriptions) && snapshotData.prescriptions.length > 0) {
         setPrescriptionsList(snapshotData.prescriptions.map(p => {
           const rawDose = p.dose || p.dosage || p.frequency || '';
           const parts = rawDose.includes('-') ? rawDose.split('-') : ['', '', ''];
@@ -1653,21 +1708,26 @@ const DoctorConsultation = () => {
             id: p._id || String(Date.now() + Math.random()),
             medicineId: p.medicineId || '',
             medicineName: p.medicineName || p.name || '',
-            morning: parts[0] || '',
-            afternoon: parts[1] || '',
-            night: parts[2] || '',
-            food: p.timing || p.foodInstruction || p.food || p.instructions || '',
+            morning: p.morning !== undefined && p.morning !== '' ? String(p.morning) : (parts[0] || ''),
+            afternoon: p.afternoon !== undefined && p.afternoon !== '' ? String(p.afternoon) : (parts[1] || ''),
+            night: p.night !== undefined && p.night !== '' ? String(p.night) : (parts[2] || ''),
+            food: p.food || p.foodTiming || p.timing || p.foodInstruction || p.instructions || '',
             duration: p.duration || '',
             quantity: p.quantity || '',
             remarks: p.remarks || p.notes || ''
           };
         }));
       }
-      if (snapshotData.investigations && snapshotData.investigations.length > 0) {
-        setCheckedInvestigations(snapshotData.investigations.map(inv => inv.investigationName));
+
+      if (snapshotData.investigations && Array.isArray(snapshotData.investigations) && snapshotData.investigations.length > 0) {
+        const invNames = snapshotData.investigations.map(inv => inv.name || inv.investigationName || (typeof inv === 'string' ? inv : '')).filter(Boolean);
+        setCheckedInvestigations(invNames);
+        if (invNames.length > 0) {
+          setIsInvestigationExpanded(true);
+        }
       }
     }
-  }, [snapshotData, isFollowupConsultation]);
+  }, [snapshotData, isReadOnly]);
 
   // Helper function to trigger centralized PrescriptionPrintEngine
   const handleEnginePrint = async () => {
@@ -1766,6 +1826,7 @@ const DoctorConsultation = () => {
         visitType: snapshotData?.visitType || consultationType || appointment?.appointmentType || 'General OPD',
         chiefComplaint: snapshotData?.chiefComplaint || appointment?.chiefComplaint || 'Consultation Visit',
         clinicalNotes: snapshotData?.clinicalNotes || clinicalNotes || 'General consultation notes.',
+        vitals: snapshotData?.vitals || (vitals && Object.values(vitals).some(Boolean) ? vitals : appointment?.vitals) || {},
         diagnosis: (snapshotData?.diagnosis && snapshotData.diagnosis.length > 0)
           ? snapshotData.diagnosis
           : (diagnoses.length > 0 ? diagnoses : (primaryDiagnosis ? [primaryDiagnosis] : [])),
@@ -1881,25 +1942,10 @@ const DoctorConsultation = () => {
         return;
       }
 
-      // Auto-select Next Waiting / Emergency Patient in Queue
-      try {
-        const today = new Date().toLocaleDateString('en-CA');
-        const res = await api.get(`/operations/appointments?date=${today}&doctorId=${user?._id}`);
-        const freshQueue = res.data?.data || [];
-        const nextWaiting = freshQueue.find(a => {
-          const st = getVisitStatus(a);
-          return (st === 'Waiting' || st === 'Scheduled' || a.queueStatus === 'Waiting') && a._id !== consultationId;
-        });
-
-        if (nextWaiting) {
-          toast.success(`Loading next patient: ${nextWaiting.patientId?.name || nextWaiting.tokenNumber}`);
-          navigate(`/doctor/consultation/${nextWaiting._id}`, { replace: true });
-        } else {
-          navigate('/clinical/today-patients', { replace: true });
-        }
-      } catch (err) {
-        navigate('/clinical/today-patients', { replace: true });
-      }
+      // Cleanly return to Doctor Today's Queue.
+      // Do NOT automatically open or place the next patient's prescription.
+      // The next patient's consultation prescription opens ONLY when the doctor explicitly clicks "Start Consultation" or calls the patient.
+      navigate('/doctor/queue', { replace: true });
     },
     onError: (err) => {
       toast.error(err.response?.data?.message || 'Unable to finalize consultation. Please try again.');
@@ -1921,16 +1967,33 @@ const DoctorConsultation = () => {
 
   // Seed vitals from receptionist log on start
   useEffect(() => {
-    if (appointment?.vitals) {
+    if (!appointment) return;
+    const vSource = (appointment?.vitals && Object.values(appointment.vitals).some(v => v !== null && v !== undefined && v !== ''))
+      ? appointment.vitals
+      : null;
+    if (vSource) {
       setVitals({
-        bpSystolic: appointment.vitals.bpSystolic || '',
-        bpDiastolic: appointment.vitals.bpDiastolic || '',
-        pulse: appointment.vitals.pulse || '',
-        temperature: appointment.vitals.temperature || '',
-        RR: appointment.vitals.RR || '',
-        weight: appointment.vitals.weight || '',
-        height: appointment.vitals.height || '',
-        spo2: appointment.vitals.spo2 || '',
+        bpSystolic: vSource.bpSystolic ? String(vSource.bpSystolic) : '',
+        bpDiastolic: vSource.bpDiastolic ? String(vSource.bpDiastolic) : '',
+        pulse: vSource.pulse ? String(vSource.pulse) : '',
+        temperature: vSource.temperature ? String(vSource.temperature) : '',
+        RR: vSource.RR ? String(vSource.RR) : '',
+        weight: vSource.weight ? String(vSource.weight) : '',
+        height: vSource.height ? String(vSource.height) : '',
+        spo2: vSource.spo2 ? String(vSource.spo2) : '',
+        bmi: vSource.bmi ? String(vSource.bmi) : ''
+      });
+    } else {
+      // Cleanly reset vitals so values from previous consultation do NOT persist or duplicate!
+      setVitals({
+        bpSystolic: '',
+        bpDiastolic: '',
+        pulse: '',
+        temperature: '',
+        RR: '',
+        weight: '',
+        height: '',
+        spo2: '',
         bmi: ''
       });
     }
@@ -1977,6 +2040,12 @@ const DoctorConsultation = () => {
     }
 
     if (hasRestored.current) return;
+
+    // For read-only completed consultations, do not restore drafts over authentic saved records
+    if (isReadOnly) {
+      hasRestored.current = true;
+      return;
+    }
 
     // For fresh follow-up visits, do not restore previous draft or old prescriptions
     if (searchParams.get('fresh') === 'true') {
@@ -2028,7 +2097,12 @@ const DoctorConsultation = () => {
         if (d.followupReason) setFollowupReason(d.followupReason);
         if (d.checkedInvestigations && Array.isArray(d.checkedInvestigations)) setCheckedInvestigations(d.checkedInvestigations);
         if (d.customInvestigation) setCustomInvestigation(d.customInvestigation);
-        if (d.vitals && typeof d.vitals === 'object') setVitals(d.vitals);
+        if (d.vitals && typeof d.vitals === 'object') {
+          const hasDraftVitals = Object.values(d.vitals).some(v => v !== null && v !== undefined && String(v).trim() !== '');
+          if (hasDraftVitals) {
+            setVitals(d.vitals);
+          }
+        }
 
         hasRestored.current = true;
         toast.success('Restored unsaved consultation draft!');
@@ -2335,8 +2409,8 @@ const DoctorConsultation = () => {
       setIsInvestigationExpanded(true);
     }
 
-    // Auto-populate Follow-up date (only for OPD; in IPD, next review date must never be defaulted)
-    if (!isIpdConsultation && tpl.followup) {
+    // Auto-populate Follow-up date only if doctor explicitly has follow-up enabled
+    if (!isIpdConsultation && followupRequired && tpl.followup) {
       const days = parseInt(tpl.followup);
       if (!isNaN(days)) {
         const fDate = new Date();
@@ -2657,7 +2731,7 @@ const DoctorConsultation = () => {
 
     const payload = {
       appointmentId: appointment._id,
-      patientId: appointment.patientId?._id,
+      patientId: appointment.patientId?._id || appointment.patientId || patient?._id || patient,
       consultationFee: customConsultationFee !== '' ? Number(customConsultationFee) : (appointment?.consultationFee || 500),
       consultationType: isIpdConsultation ? `Round ${activeRoundNumber}` : (consultationType || appointment?.consultationType || 'New Consultation'),
       roundNumber: activeRoundNumber,
@@ -2667,7 +2741,7 @@ const DoctorConsultation = () => {
       primaryDiagnosis: activeDiagnoses[0],
       clinicalNotes: isIpdConsultation ? (ipdAssessmentPlan || clinicalNotes) : clinicalNotes,
       advice: [checkedAdvice.join(', '), customAdvice].filter(Boolean).join(' | '),
-      followupDate: followupRequired ? followupDate : undefined,
+      followupDate: (followupRequired && Boolean(followupDate)) ? followupDate : undefined,
       chiefComplaint: (isIpdConsultation && ipdChiefComplaints) ? ipdChiefComplaints : (appointment?.chiefComplaint || activeDiagnoses.join(', ')),
       allergies: getPatientAllergiesList(appointment),
       historyOfPresentIllness: isIpdConsultation ? (ipdAssessmentPlan || clinicalNotes) : clinicalNotes,
@@ -2675,7 +2749,7 @@ const DoctorConsultation = () => {
       vitals,
       icd10Code: '',
       diagnosisStatus,
-      followupRequired,
+      followupRequired: Boolean(followupRequired && followupDate),
       followupReason,
       documents: uploadedDocs,
       investigations: payloadInvestigations,
@@ -2685,6 +2759,13 @@ const DoctorConsultation = () => {
       consultationDate: (isFollowupConsultation || searchParams.get('fresh') === 'true') ? new Date().toISOString() : undefined,
       date: (isFollowupConsultation || searchParams.get('fresh') === 'true') ? new Date().toISOString() : undefined
     };
+
+    // Auto-sync any doctor added medicines into Medicine Master if missing
+    (activeMeds || []).forEach(med => {
+      try {
+        syncMedicineToMaster(med);
+      } catch (_) {}
+    });
 
     completeConsultationMutation.mutate(payload);
   };
@@ -3494,7 +3575,7 @@ const DoctorConsultation = () => {
                       <div className="min-w-0 flex-1">
                         <span className="text-[10px] font-black text-slate-600 block uppercase tracking-wider">BP</span>
                         <span className="text-xs font-black text-slate-900 font-mono block whitespace-nowrap overflow-hidden text-ellipsis">
-                          {vitals.bpSystolic || '120'}/{vitals.bpDiastolic || '80'}
+                          {vitals.bpSystolic ? `${vitals.bpSystolic}/${vitals.bpDiastolic || '--'}` : '--'}
                         </span>
                       </div>
                     </div>
@@ -3507,7 +3588,11 @@ const DoctorConsultation = () => {
                       <div className="min-w-0 flex-1">
                         <span className="text-[10px] font-black text-slate-600 block uppercase tracking-wider">Pulse</span>
                         <span className="text-xs font-black text-slate-900 font-mono block whitespace-nowrap overflow-hidden text-ellipsis">
-                          {vitals.pulse || '72'} <span className="text-[8px] font-normal text-slate-500 hidden xl:inline">bpm</span>
+                          {vitals.pulse ? (
+                            <>
+                              {vitals.pulse} <span className="text-[8px] font-normal text-slate-500 hidden xl:inline">bpm</span>
+                            </>
+                          ) : '--'}
                         </span>
                       </div>
                     </div>
@@ -3520,7 +3605,11 @@ const DoctorConsultation = () => {
                       <div className="min-w-0 flex-1">
                         <span className="text-[10px] font-black text-slate-600 block uppercase tracking-wider">Temp</span>
                         <span className="text-xs font-black text-slate-900 font-mono block whitespace-nowrap overflow-hidden text-ellipsis">
-                          {vitals.temperature || '36.8'} <span className="text-[8px] font-normal text-slate-500 hidden xl:inline">°C</span>
+                          {vitals.temperature ? (
+                            <>
+                              {vitals.temperature} <span className="text-[8px] font-normal text-slate-500 hidden xl:inline">°F</span>
+                            </>
+                          ) : '--'}
                         </span>
                       </div>
                     </div>
@@ -3533,7 +3622,11 @@ const DoctorConsultation = () => {
                       <div className="min-w-0 flex-1">
                         <span className="text-[10px] font-black text-slate-600 block uppercase tracking-wider">SpO₂</span>
                         <span className="text-xs font-black text-slate-900 font-mono block whitespace-nowrap overflow-hidden text-ellipsis">
-                          {vitals.spo2 || '98'} <span className="text-[8px] font-normal text-slate-500 hidden xl:inline">%</span>
+                          {vitals.spo2 ? (
+                            <>
+                              {vitals.spo2} <span className="text-[8px] font-normal text-slate-500 hidden xl:inline">%</span>
+                            </>
+                          ) : '--'}
                         </span>
                       </div>
                     </div>
@@ -3546,7 +3639,11 @@ const DoctorConsultation = () => {
                       <div className="min-w-0 flex-1">
                         <span className="text-[10px] font-black text-slate-600 block uppercase tracking-wider">Height</span>
                         <span className="text-xs font-black text-slate-900 font-mono block whitespace-nowrap overflow-hidden text-ellipsis">
-                          {vitals.height || '145'} <span className="text-[8px] font-normal text-slate-500 hidden xl:inline">cm</span>
+                          {vitals.height ? (
+                            <>
+                              {vitals.height} <span className="text-[8px] font-normal text-slate-500 hidden xl:inline">cm</span>
+                            </>
+                          ) : '--'}
                         </span>
                       </div>
                     </div>
@@ -3559,7 +3656,11 @@ const DoctorConsultation = () => {
                       <div className="min-w-0 flex-1">
                         <span className="text-[10px] font-black text-slate-600 block uppercase tracking-wider">Weight</span>
                         <span className="text-xs font-black text-slate-900 font-mono block whitespace-nowrap overflow-hidden text-ellipsis">
-                          {vitals.weight || '42'} <span className="text-[8px] font-normal text-slate-500 hidden xl:inline">kg</span>
+                          {vitals.weight ? (
+                            <>
+                              {vitals.weight} <span className="text-[8px] font-normal text-slate-500 hidden xl:inline">kg</span>
+                            </>
+                          ) : '--'}
                         </span>
                       </div>
                     </div>
@@ -3572,7 +3673,7 @@ const DoctorConsultation = () => {
                       <div className="min-w-0 flex-1">
                         <span className="text-[10px] font-black text-slate-600 block uppercase tracking-wider">BMI</span>
                         <span className="text-xs font-black text-emerald-700 font-mono block whitespace-nowrap overflow-hidden text-ellipsis">
-                          {vitals.bmi || '20.0'}
+                          {vitals.bmi || '--'}
                         </span>
                       </div>
                     </div>
@@ -3593,7 +3694,7 @@ const DoctorConsultation = () => {
                           </span>
                         </span>
                         <span className="text-[11px] font-semibold text-slate-700 font-mono tracking-tight mt-0.5">
-                          BP {vitals.bpSystolic || '120'}/{vitals.bpDiastolic || '80'} • Pulse {vitals.pulse || '72'} • Temp {vitals.temperature || '36.8'}°C
+                          BP {vitals.bpSystolic ? `${vitals.bpSystolic}/${vitals.bpDiastolic || '--'}` : '--'} • Pulse {vitals.pulse ? `${vitals.pulse} bpm` : '--'} • Temp {vitals.temperature ? `${vitals.temperature}°F` : '--'}
                         </span>
                       </div>
 
@@ -3626,7 +3727,7 @@ const DoctorConsultation = () => {
                             <div className="bg-rose-50/70 border border-rose-200/80 rounded-xl p-2 text-center">
                               <span className="text-[9px] font-black text-slate-500 block uppercase">BP</span>
                               <span className="text-xs font-black text-slate-900 font-mono block">
-                                {vitals.bpSystolic || '120'}/{vitals.bpDiastolic || '80'}
+                                {vitals.bpSystolic ? `${vitals.bpSystolic}/${vitals.bpDiastolic || '--'}` : '--'}
                               </span>
                             </div>
 
@@ -3634,7 +3735,7 @@ const DoctorConsultation = () => {
                             <div className="bg-purple-50/70 border border-purple-200/80 rounded-xl p-2 text-center">
                               <span className="text-[9px] font-black text-slate-500 block uppercase">Pulse</span>
                               <span className="text-xs font-black text-slate-900 font-mono block">
-                                {vitals.pulse || '72'}
+                                {vitals.pulse ? `${vitals.pulse} bpm` : '--'}
                               </span>
                             </div>
 
@@ -3642,7 +3743,7 @@ const DoctorConsultation = () => {
                             <div className="bg-cyan-50/70 border border-cyan-200/80 rounded-xl p-2 text-center">
                               <span className="text-[9px] font-black text-slate-500 block uppercase">Temp</span>
                               <span className="text-xs font-black text-slate-900 font-mono block">
-                                {vitals.temperature || '36.8'}°C
+                                {vitals.temperature ? `${vitals.temperature}°F` : '--'}
                               </span>
                             </div>
 
@@ -3650,7 +3751,7 @@ const DoctorConsultation = () => {
                             <div className="bg-blue-50/70 border border-blue-200/80 rounded-xl p-2 text-center">
                               <span className="text-[9px] font-black text-slate-500 block uppercase">SpO₂</span>
                               <span className="text-xs font-black text-slate-900 font-mono block">
-                                {vitals.spo2 || '98'}%
+                                {vitals.spo2 ? `${vitals.spo2}%` : '--'}
                               </span>
                             </div>
 
@@ -3658,7 +3759,7 @@ const DoctorConsultation = () => {
                             <div className="bg-indigo-50/70 border border-indigo-200/80 rounded-xl p-2 text-center">
                               <span className="text-[9px] font-black text-slate-500 block uppercase">Height</span>
                               <span className="text-xs font-black text-slate-900 font-mono block">
-                                {vitals.height || '145'}cm
+                                {vitals.height ? `${vitals.height}cm` : '--'}
                               </span>
                             </div>
 
@@ -3666,14 +3767,14 @@ const DoctorConsultation = () => {
                             <div className="bg-slate-50/90 border border-slate-200/80 rounded-xl p-2 text-center">
                               <span className="text-[9px] font-black text-slate-500 block uppercase">Weight</span>
                               <span className="text-xs font-black text-slate-900 font-mono block">
-                                {vitals.weight || '42'}kg
+                                {vitals.weight ? `${vitals.weight}kg` : '--'}
                               </span>
                             </div>
                           </div>
 
                           <div className="flex items-center justify-between pt-2 border-t border-slate-100 mt-2">
                             <span className="text-xs font-black text-emerald-700 font-mono">
-                              BMI {vitals.bmi || '20.0'}
+                              BMI {vitals.bmi || '--'}
                             </span>
 
                             {!isEffectiveReadOnly && (
@@ -4263,7 +4364,12 @@ const DoctorConsultation = () => {
                                                   updateCoords(e.target);
                                                 }
                                               }}
-                                              onBlur={() => setActiveSuggestionRowId(null)}
+                                              onBlur={() => {
+                                                setActiveSuggestionRowId(null);
+                                                if (row?.medicineName && String(row.medicineName).trim().length >= 2) {
+                                                  try { syncMedicineToMaster(row); } catch (_) {}
+                                                }
+                                              }}
                                             />
                                             {!isEffectiveReadOnly && activeSuggestionRowId === row.id && String(row?.medicineName || '').trim() && dropdownCoords && createPortal(
                                               <div
@@ -4470,6 +4576,9 @@ const DoctorConsultation = () => {
                                             }}
                                             onBlur={() => {
                                               setActiveSuggestionRowId(null);
+                                              if (row?.medicineName && String(row.medicineName).trim().length >= 2) {
+                                                try { syncMedicineToMaster(row); } catch (_) {}
+                                              }
                                             }}
                                           />
                                           {!isEffectiveReadOnly && activeSuggestionRowId === row.id && String(row?.medicineName || '').trim() && dropdownCoords && createPortal(
@@ -5184,36 +5293,36 @@ const DoctorConsultation = () => {
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 <div className="space-y-1 min-w-0">
                   <label className="font-extrabold text-[10px] uppercase text-slate-500">BP Systolic (mmHg)</label>
-                  <input type="text" className="enterprise-input" value={vitals.bpSystolic} onChange={(e) => setVitals({ ...vitals, bpSystolic: e.target.value })} placeholder="120" />
+                  <input type="text" className="enterprise-input" value={vitals.bpSystolic} onChange={(e) => setVitals({ ...vitals, bpSystolic: e.target.value })} placeholder="e.g. 120" />
                 </div>
                 <div className="space-y-1 min-w-0">
                   <label className="font-extrabold text-[10px] uppercase text-slate-500">BP Diastolic (mmHg)</label>
-                  <input type="text" className="enterprise-input" value={vitals.bpDiastolic} onChange={(e) => setVitals({ ...vitals, bpDiastolic: e.target.value })} placeholder="80" />
+                  <input type="text" className="enterprise-input" value={vitals.bpDiastolic} onChange={(e) => setVitals({ ...vitals, bpDiastolic: e.target.value })} placeholder="e.g. 80" />
                 </div>
                 <div className="space-y-1 min-w-0">
                   <label className="font-extrabold text-[10px] uppercase text-slate-500">Pulse (bpm)</label>
-                  <input type="text" className="enterprise-input" value={vitals.pulse} onChange={(e) => setVitals({ ...vitals, pulse: e.target.value })} placeholder="72" />
+                  <input type="text" className="enterprise-input" value={vitals.pulse} onChange={(e) => setVitals({ ...vitals, pulse: e.target.value })} placeholder="e.g. 72" />
                 </div>
                 <div className="space-y-1 min-w-0">
                   <label className="font-extrabold text-[10px] uppercase text-slate-500">Temperature (°F)</label>
-                  <input type="text" className="enterprise-input" value={vitals.temperature} onChange={(e) => setVitals({ ...vitals, temperature: e.target.value })} placeholder="98.6" />
+                  <input type="text" className="enterprise-input" value={vitals.temperature} onChange={(e) => setVitals({ ...vitals, temperature: e.target.value })} placeholder="e.g. 98.6" />
                 </div>
                 <div className="space-y-1 min-w-0">
                   <label className="font-extrabold text-[10px] uppercase text-slate-500">SpO₂ (%)</label>
-                  <input type="text" className="enterprise-input" value={vitals.spo2} onChange={(e) => setVitals({ ...vitals, spo2: e.target.value })} placeholder="98" />
+                  <input type="text" className="enterprise-input" value={vitals.spo2} onChange={(e) => setVitals({ ...vitals, spo2: e.target.value })} placeholder="e.g. 98" />
                 </div>
                 <div className="space-y-1 min-w-0">
                   <label className="font-extrabold text-[10px] uppercase text-slate-500">Height (cm)</label>
-                  <input type="text" className="enterprise-input" value={vitals.height} onChange={(e) => setVitals({ ...vitals, height: e.target.value })} placeholder="145" />
+                  <input type="text" className="enterprise-input" value={vitals.height} onChange={(e) => setVitals({ ...vitals, height: e.target.value })} placeholder="e.g. 165" />
                 </div>
                 <div className="space-y-1 min-w-0">
                   <label className="font-extrabold text-[10px] uppercase text-slate-500">Weight (kg)</label>
-                  <input type="text" className="enterprise-input" value={vitals.weight} onChange={(e) => setVitals({ ...vitals, weight: e.target.value })} placeholder="42" />
+                  <input type="text" className="enterprise-input" value={vitals.weight} onChange={(e) => setVitals({ ...vitals, weight: e.target.value })} placeholder="e.g. 60" />
                 </div>
                 <div className="space-y-1 min-w-0 col-span-2 sm:col-span-1">
                   <label className="font-extrabold text-[10px] uppercase text-slate-500">Calculated BMI</label>
                   <div className="h-10 border border-slate-200 rounded-xl px-3 bg-slate-50 flex items-center font-extrabold font-mono text-[#3563F6]">
-                    {vitals.bmi || '20.0'} kg/m²
+                    {vitals.bmi ? `${vitals.bmi} kg/m²` : '--'}
                   </div>
                 </div>
               </div>
@@ -5222,18 +5331,19 @@ const DoctorConsultation = () => {
                 <button
                   type="button"
                   onClick={() => {
+                    const initV = (appointment?.vitals && Object.values(appointment.vitals).some(Boolean)) ? appointment.vitals : {};
                     setVitals({
-                      bpSystolic: appointment?.vitals?.bpSystolic || '',
-                      bpDiastolic: appointment?.vitals?.bpDiastolic || '',
-                      pulse: appointment?.vitals?.pulse || '',
-                      temperature: appointment?.vitals?.temperature || '',
-                      RR: appointment?.vitals?.RR || '',
-                      weight: appointment?.vitals?.weight || '',
-                      height: appointment?.vitals?.height || '',
-                      spo2: appointment?.vitals?.spo2 || '',
-                      bmi: ''
+                      bpSystolic: initV.bpSystolic ? String(initV.bpSystolic) : '',
+                      bpDiastolic: initV.bpDiastolic ? String(initV.bpDiastolic) : '',
+                      pulse: initV.pulse ? String(initV.pulse) : '',
+                      temperature: initV.temperature ? String(initV.temperature) : '',
+                      RR: initV.RR ? String(initV.RR) : '',
+                      weight: initV.weight ? String(initV.weight) : '',
+                      height: initV.height ? String(initV.height) : '',
+                      spo2: initV.spo2 ? String(initV.spo2) : '',
+                      bmi: initV.bmi ? String(initV.bmi) : ''
                     });
-                    toast.success('Reset vitals to initial values');
+                    toast.success('Reset vitals to token intake values');
                   }}
                   className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold"
                 >

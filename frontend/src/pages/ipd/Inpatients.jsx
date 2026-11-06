@@ -1244,7 +1244,7 @@ const Inpatients = () => {
                   ADMISSION STATUS
                 </th>
                 {!isOnlyDischarged && (
-                  <th className={`${isDoctorDesk ? 'w-[21%]' : 'w-[15.5%] min-w-[165px]'} pl-5 pr-4 sm:pr-5 py-2.5 text-[11px] font-bold text-slate-600 tracking-wide uppercase text-center whitespace-nowrap`}>
+                  <th className={`${isDoctorDesk ? 'w-[21%]' : 'w-[16.5%] min-w-[180px]'} pl-3 pr-6 sm:pr-8 py-2.5 text-[11px] font-bold text-slate-600 tracking-wide uppercase text-center whitespace-nowrap`}>
                     ACTIONS
                   </th>
                 )}
@@ -1468,11 +1468,11 @@ const Inpatients = () => {
 
                       {/* 8. ACTIONS: Consultation & Discharge Buttons */}
                       {!isOnlyDischarged && (
-                        <td className="pl-5 pr-4 sm:pr-5 py-2 sm:py-2.5 align-middle text-center whitespace-nowrap">
+                        <td className="pl-3 pr-6 sm:pr-8 py-2 sm:py-2.5 align-middle text-center whitespace-nowrap">
                           {isDischarged ? (
                             <span className="text-slate-400 text-xs font-medium">—</span>
                           ) : (
-                            <div className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap">
+                            <div className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap pr-2">
                               {/* Discharge Button: Primary action on Reception Desk */}
                               {!isDoctorDesk && (
                                 <button
@@ -1533,7 +1533,7 @@ const Inpatients = () => {
                               <button
                                 type="button"
                                 onClick={(e) => handleToggleRowDropdown(row._id, e)}
-                                className={`p-1.5 rounded-xl transition-all cursor-pointer border ${activeDropdownId === row._id
+                                className={`p-1.5 rounded-xl transition-all cursor-pointer border mr-1.5 ${activeDropdownId === row._id
                                   ? "bg-blue-50 text-[#2F63F2] border-blue-200 shadow-xs"
                                   : "text-slate-500 hover:text-slate-800 hover:bg-slate-50 border-slate-200/60 shadow-2xs"
                                   }`}

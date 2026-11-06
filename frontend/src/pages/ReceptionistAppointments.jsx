@@ -1359,7 +1359,7 @@ const CompleteProfileModal = ({ patient, isOpen, onClose, onSuccess }) => {
       title={patient.isProfileCompleted ? 'EDIT PATIENT PROFILE' : 'COMPLETE PATIENT PROFILE'}
       maxWidth="max-w-[650px]"
     >
-      <form onSubmit={handleSubmit} className="space-y-4 text-left font-sans text-xs max-h-[500px] overflow-y-auto pr-1">
+      <form onSubmit={handleSubmit} className="space-y-4 text-left font-sans text-xs">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Input
             label="Patient Name"
@@ -1544,6 +1544,15 @@ const ReceptionistAppointments = () => {
     place: '',
     allergies: ''
   });
+  const [tokenVitals, setTokenVitals] = useState({
+    bpSystolic: '',
+    bpDiastolic: '',
+    temperature: '',
+    pulse: '',
+    spo2: '',
+    weight: '',
+    height: ''
+  });
   const [tokenSelectedComplaints, setTokenSelectedComplaints] = useState([]);
   const [tokenAdditionalNotes, setTokenAdditionalNotes] = useState('');
   const [tokenDoctorId, setTokenDoctorId] = useState('');
@@ -1641,7 +1650,34 @@ const ReceptionistAppointments = () => {
   const [workspaceTab, setWorkspaceTab] = useState('ACTIVE_QUEUE');
 
   // Voice Announcement Language State Mode: 'BOTH' | 'EN_ONLY' | 'TA_ONLY'
-  const [voiceLangMode, setVoiceLangMode] = useState('BOTH');
+  const [voiceLangMode, setVoiceLangMode] = useState(() => {
+    try {
+      const stored = localStorage.getItem('hims_voice_settings');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.languageMode) return parsed.languageMode;
+      }
+    } catch (_) {}
+    return voiceAnnouncement.settings?.languageMode || 'BOTH';
+  });
+
+  useEffect(() => {
+    const handleVoiceSync = () => {
+      try {
+        const stored = localStorage.getItem('hims_voice_settings');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed.languageMode) setVoiceLangMode(parsed.languageMode);
+        }
+      } catch (_) {}
+    };
+    window.addEventListener('storage', handleVoiceSync);
+    window.addEventListener('hims_voice_settings_changed', handleVoiceSync);
+    return () => {
+      window.removeEventListener('storage', handleVoiceSync);
+      window.removeEventListener('hims_voice_settings_changed', handleVoiceSync);
+    };
+  }, []);
 
   // Emergency Intake Module State
   const [isEmergencyDrawerOpen, setIsEmergencyDrawerOpen] = useState(false);
@@ -1879,6 +1915,24 @@ const ReceptionistAppointments = () => {
         } catch (e) {}
       }
 
+      // Clean vitals entries from OPD Token intake form
+      const cleanedVitals = {};
+      if (tokenVitals.bpSystolic) cleanedVitals.bpSystolic = Number(tokenVitals.bpSystolic) || tokenVitals.bpSystolic;
+      if (tokenVitals.bpDiastolic) cleanedVitals.bpDiastolic = Number(tokenVitals.bpDiastolic) || tokenVitals.bpDiastolic;
+      if (tokenVitals.temperature) cleanedVitals.temperature = Number(tokenVitals.temperature) || tokenVitals.temperature;
+      if (tokenVitals.pulse) cleanedVitals.pulse = Number(tokenVitals.pulse) || tokenVitals.pulse;
+      if (tokenVitals.spo2) cleanedVitals.spo2 = Number(tokenVitals.spo2) || tokenVitals.spo2;
+      if (tokenVitals.weight) cleanedVitals.weight = Number(tokenVitals.weight) || tokenVitals.weight;
+      if (tokenVitals.height) cleanedVitals.height = Number(tokenVitals.height) || tokenVitals.height;
+
+      // Compute BMI if weight and height are entered
+      if (cleanedVitals.weight && cleanedVitals.height) {
+        const hM = Number(cleanedVitals.height) / 100;
+        if (hM > 0) {
+          cleanedVitals.bmi = Number((Number(cleanedVitals.weight) / (hM * hM)).toFixed(1));
+        }
+      }
+
       const appPayload = {
         patientId: targetPatientId,
         doctorId: tokenDoctorId,
@@ -1887,6 +1941,7 @@ const ReceptionistAppointments = () => {
         appointmentType: finalConsultType,
         chiefComplaint: complaintSummary || undefined,
         allergies: uniqueAllergies,
+        vitals: Object.keys(cleanedVitals).length > 0 ? cleanedVitals : undefined,
         isEmergency: isEmergencyConsult,
         billingStatus: initialBillingStatus,
         paymentMethod: (initialBillingStatus === 'Paid') ? panelPaymentMethod : undefined,
@@ -1917,6 +1972,15 @@ const ReceptionistAppointments = () => {
         bloodGroup: 'O+',
         place: '',
         allergies: ''
+      });
+      setTokenVitals({
+        bpSystolic: '',
+        bpDiastolic: '',
+        temperature: '',
+        pulse: '',
+        spo2: '',
+        weight: '',
+        height: ''
       });
       setTokenSelectedComplaints([]);
       setTokenAdditionalNotes('');
@@ -1971,10 +2035,11 @@ const ReceptionistAppointments = () => {
       let url = `/operations/appointments?`;
       if (filterDoctor) url += `doctorId=${filterDoctor}&`;
       if (filterFromDate) {
-        url += `date=${filterFromDate}&includeUpcomingScheduled=true&`;
+        url += `date=${filterFromDate}&`;
         const daysLimit = getDaysLimit(filterFromDate, filterToDate);
         if (daysLimit > 0) url += `daysLimit=${daysLimit}&`;
       }
+      url += `includeUpcomingScheduled=true&`;
       const res = await api.get(url);
       return res.data.data;
     }
@@ -1990,14 +2055,23 @@ const ReceptionistAppointments = () => {
       const eventType = event.type || '';
       const qState = (event.queueState || event.queueStatus || event.status || '').toUpperCase();
 
+      // Only process authorized OPD Patient-Calling events (TriggerVoiceCall or PatientCalled with CALLED)
       const isCallEvent =
         eventType === 'TriggerVoiceCall' ||
-        eventType === 'ConsultationStarted' ||
-        (eventType === 'PatientCalled' && (qState === 'CALLED' || qState.includes('CONSULTATION')));
+        (eventType === 'PatientCalled' && qState === 'CALLED');
 
       if (isCallEvent && (event.tokenNumber || event.token || event.patientName || event.patientId || event.appointmentId || event._id)) {
+        // Validate Hospital Matching if event is hospital-scoped
+        const myHospId = String(user?.hospitalId || user?.hospital?._id || user?.hospital || '');
+        const evtHospId = String(event.hospitalId || '');
+        if (myHospId && evtHospId && myHospId !== evtHospId) {
+          return; // Belongs to another hospital
+        }
+
         const tNo = event.tokenNumber || event.token || event.tokenNo || '';
         const pName = event.patientName || (typeof event.patientId === 'object' ? event.patientId?.name : '') || 'Patient';
+        const dName = event.doctorName || (typeof event.doctorId === 'object' ? event.doctorId?.name : '') || 'Doctor';
+        const rNo = event.roomNo || event.roomNumber || (typeof event.doctorId === 'object' ? (event.doctorId?.roomNo || event.doctorId?.doctorProfile?.roomNo) : 'Consultation Room');
         
         const pathname = typeof window !== 'undefined' ? (window.location.pathname || '').toLowerCase() : '';
         if (!pathname.includes('/doctor')) {
@@ -2006,16 +2080,17 @@ const ReceptionistAppointments = () => {
             tokenNumber: tNo,
             tokenNo: tNo,
             patientName: pName,
-            doctorName: event.doctorName || (typeof event.doctorId === 'object' ? event.doctorId?.name : '') || 'Doctor',
-            roomNo: event.roomNo || event.roomNumber || (typeof event.doctorId === 'object' ? (event.doctorId?.roomNo || event.doctorId?.doctorProfile?.roomNo) : 'Consultation Room'),
-            roomNumber: event.roomNo || event.roomNumber || 'Consultation Room'
+            doctorName: dName,
+            roomNo: rNo,
+            roomNumber: rNo,
+            mode: voiceLangMode || 'BOTH'
           });
         }
       }
     });
 
     return () => unsubscribe();
-  }, [queryClient]);
+  }, [queryClient, user, voiceLangMode]);
 
   // Sort doctors by live waiting queue count (lowest queue count first)
   const sortedDoctorsWithQueueCount = useMemo(() => {
@@ -2160,6 +2235,21 @@ const ReceptionistAppointments = () => {
     return ids;
   }, [appointments]);
 
+  const getAppDateStr = (app) => {
+    const dVal = app?.date || app?.appointmentDate;
+    if (!dVal) return '';
+    try {
+      const d = new Date(dVal);
+      if (isNaN(d.getTime())) return '';
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    } catch (_) {
+      return '';
+    }
+  };
+
   // KPI Summary Counts
   const kpiCounts = useMemo(() => {
     let scheduled = 0;
@@ -2200,15 +2290,24 @@ const ReceptionistAppointments = () => {
       // Workspace Segmented Tab Filter
       if (workspaceTab === 'SCHEDULED') {
         if (!isScheduled) return false;
-      } else if (workspaceTab === 'ACTIVE_QUEUE') {
-        if (isScheduled) return false;
-        if (st === 'Completed' || st === 'Cancelled') return false;
-      } else if (workspaceTab === 'IN_CONSULTATION') {
-        if (st !== 'In Consultation') return false;
-      } else if (workspaceTab === 'PHARMACY') {
-        if (st !== 'Sent to Pharmacy') return false;
-      } else if (workspaceTab === 'COMPLETED') {
-        if (st !== 'Completed') return false;
+      } else {
+        // Active Queue, In Consultation, Pharmacy, and Completed strictly follow the selected date filter:
+        if (filterFromDate) {
+          const appD = getAppDateStr(app);
+          const toD = filterToDate || filterFromDate;
+          if (appD && (appD < filterFromDate || appD > toD)) return false;
+        }
+
+        if (workspaceTab === 'ACTIVE_QUEUE') {
+          if (isScheduled) return false;
+          if (st === 'Completed' || st === 'Cancelled') return false;
+        } else if (workspaceTab === 'IN_CONSULTATION') {
+          if (st !== 'In Consultation') return false;
+        } else if (workspaceTab === 'PHARMACY') {
+          if (st !== 'Sent to Pharmacy') return false;
+        } else if (workspaceTab === 'COMPLETED') {
+          if (st !== 'Completed') return false;
+        }
       }
 
       // Status Chip Filter (if set)
@@ -2492,7 +2591,7 @@ const ReceptionistAppointments = () => {
               onChange={(e) => {
                 const mode = e.target.value;
                 setVoiceLangMode(mode);
-                voiceAnnouncement.updateSettings({ languageMode: mode });
+                voiceAnnouncement.saveVoiceSettings({ languageMode: mode });
                 const modeLabels = { BOTH: 'English + Tamil', EN_ONLY: 'English Only', TA_ONLY: 'Tamil Only' };
                 toast.success(`Voice Announcement set to ${modeLabels[mode] || mode}`);
               }}
@@ -2561,7 +2660,7 @@ const ReceptionistAppointments = () => {
               onChange={(e) => {
                 const mode = e.target.value;
                 setVoiceLangMode(mode);
-                voiceAnnouncement.updateSettings({ languageMode: mode });
+                voiceAnnouncement.saveVoiceSettings({ languageMode: mode });
                 const modeLabels = { BOTH: 'English + Tamil', EN_ONLY: 'English Only', TA_ONLY: 'Tamil Only' };
                 toast.success(`Voice Announcement set to ${modeLabels[mode] || mode}`);
               }}
@@ -2742,6 +2841,15 @@ const ReceptionistAppointments = () => {
                           setSelectedTokenPatient(null);
                           setTokenSearchQuery('');
                           setTokenPatientForm(prev => ({ ...prev, allergies: '' }));
+                          setTokenVitals({
+                            bpSystolic: '',
+                            bpDiastolic: '',
+                            temperature: '',
+                            pulse: '',
+                            spo2: '',
+                            weight: '',
+                            height: ''
+                          });
                         }}
                         className="text-[11px] font-bold text-rose-600 hover:underline cursor-pointer"
                       >
@@ -2785,6 +2893,16 @@ const ReceptionistAppointments = () => {
                                 place: p.address || p.place || '',
                                 allergies: patAllergies
                               }));
+                              // Cleanly reset vitals so no values from previous patient leak or duplicate
+                              setTokenVitals({
+                                bpSystolic: '',
+                                bpDiastolic: '',
+                                temperature: '',
+                                pulse: '',
+                                spo2: '',
+                                weight: '',
+                                height: ''
+                              });
                             }}
                             className="w-full p-2.5 text-left hover:bg-blue-50/60 transition-colors flex items-center justify-between"
                           >
@@ -2970,6 +3088,106 @@ const ReceptionistAppointments = () => {
                     />
                   </div>
                 )}
+              </div>
+
+              {/* VITALS SECTION (IN BETWEEN CHIEF COMPLAINT & CONSULTING DOCTOR) */}
+              <div className="border border-blue-400/90 rounded-xl p-3 bg-white space-y-2.5">
+                <span className="text-xs font-bold text-[#2F63F2] block">Vitals</span>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 items-start">
+                  {/* 1. BP */}
+                  <div>
+                    <div className="text-xs font-semibold text-slate-600 mb-1.5">
+                      BP
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Enter Systolic"
+                        value={tokenVitals.bpSystolic}
+                        onChange={(e) => setTokenVitals(prev => ({ ...prev, bpSystolic: e.target.value }))}
+                        className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-[#2F63F2] focus:bg-white transition-all text-center sm:text-left"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Enter Diastolic"
+                        value={tokenVitals.bpDiastolic}
+                        onChange={(e) => setTokenVitals(prev => ({ ...prev, bpDiastolic: e.target.value }))}
+                        className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-[#2F63F2] focus:bg-white transition-all text-center sm:text-left"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 2. Temperature */}
+                  <div>
+                    <div className="text-xs font-semibold text-slate-600 mb-1.5">
+                      Temperature
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Enter Temperature"
+                      value={tokenVitals.temperature}
+                      onChange={(e) => setTokenVitals(prev => ({ ...prev, temperature: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-[#2F63F2] focus:bg-white transition-all"
+                    />
+                  </div>
+
+                  {/* 3. Pulse (bpm) */}
+                  <div>
+                    <div className="text-xs font-semibold text-slate-600 mb-1.5">
+                      Pulse (bpm)
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Enter Pulse"
+                      value={tokenVitals.pulse}
+                      onChange={(e) => setTokenVitals(prev => ({ ...prev, pulse: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-[#2F63F2] focus:bg-white transition-all"
+                    />
+                  </div>
+
+                  {/* 4. SpO2 (%) */}
+                  <div>
+                    <div className="text-xs font-semibold text-slate-600 mb-1.5">
+                      SpO₂ (%)
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Enter SpO₂"
+                      value={tokenVitals.spo2}
+                      onChange={(e) => setTokenVitals(prev => ({ ...prev, spo2: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-[#2F63F2] focus:bg-white transition-all"
+                    />
+                  </div>
+
+                  {/* 5. Weight (kg) */}
+                  <div>
+                    <div className="text-xs font-semibold text-slate-600 mb-1.5">
+                      Weight (kg)
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Enter Weight"
+                      value={tokenVitals.weight}
+                      onChange={(e) => setTokenVitals(prev => ({ ...prev, weight: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-[#2F63F2] focus:bg-white transition-all"
+                    />
+                  </div>
+
+                  {/* 6. Height (cm) */}
+                  <div>
+                    <div className="text-xs font-semibold text-slate-600 mb-1.5">
+                      Height (cm)
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Enter Height"
+                      value={tokenVitals.height}
+                      onChange={(e) => setTokenVitals(prev => ({ ...prev, height: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-[#2F63F2] focus:bg-white transition-all"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* 4. CONSULTATION SECTION */}
@@ -4291,9 +4509,9 @@ const ReceptionistAppointments = () => {
         onClose={() => setTokenPrintModalApp(null)}
         appointment={tokenPrintModalApp}
         hospitalInfo={{
-          name: user?.hospitalName,
-          address: user?.hospitalAddress,
-          phone: user?.hospitalPhone
+          name: user?.hospital?.name || user?.hospitalName,
+          address: user?.hospital?.prescriptionSettings?.clinicAddress || user?.hospitalAddress,
+          phone: user?.hospital?.ownerMobile || user?.hospital?.contactNumber || user?.hospitalPhone
         }}
       />
 

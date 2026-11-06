@@ -91,15 +91,16 @@ const IPDDischargeWorkspaceModal = ({
     }));
   };
 
+  const targetId = admission?._id || admission?.id;
+
   // Fetch complete fresh admission record from backend when modal opens
   const refreshAdmissionRecord = useCallback(async () => {
-    const targetId = admission?._id || admission?.id;
     if (!targetId) return;
     try {
       setIsLoadingLive(true);
       const res = await ipdService.getAdmissionById(targetId);
       const data = res?.data || res;
-      if (data && data._id) {
+      if (data && (data._id === targetId || data.id === targetId)) {
         setLiveAdmission(data);
       }
     } catch (err) {
@@ -107,13 +108,18 @@ const IPDDischargeWorkspaceModal = ({
     } finally {
       setIsLoadingLive(false);
     }
-  }, [admission?._id, admission?.id]);
+  }, [targetId]);
 
   useEffect(() => {
+    setLiveAdmission(null);
+    setChargesList([]);
+    setCurrentChargesAdmissionId(null);
     refreshAdmissionRecord();
-  }, [refreshAdmissionRecord]);
+  }, [targetId, refreshAdmissionRecord]);
 
-  const currentAdm = liveAdmission || admission || {};
+  const currentAdm = (liveAdmission && (liveAdmission._id === targetId || liveAdmission.id === targetId))
+    ? liveAdmission
+    : (admission || {});
   const isDischarged = currentAdm.status === 'Discharged';
   const patient = currentAdm.patientId || {};
   const bedInfo = currentAdm.bedId || {};
@@ -140,16 +146,6 @@ const IPDDischargeWorkspaceModal = ({
   const formattedAdmDate = !isNaN(admDateObj.getTime()) ? admDateObj.toISOString().split('T')[0] : '—';
   const formattedAdmTime = currentAdm.admissionTime || (!isNaN(admDateObj.getTime()) ? admDateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—');
 
-  // Dynamic Stay Duration & Chargeable Days Calculation
-  const stayDays = useMemo(() => {
-    if (!currentAdm?.admissionDate) return 4; // default reference
-    const start = new Date(currentAdm.admissionDate).getTime();
-    const end = isDischarged && currentAdm.dischargeDate ? new Date(currentAdm.dischargeDate).getTime() : Date.now();
-    const diffMs = Math.max(0, end - start);
-    const diffDaysExact = diffMs / (1000 * 60 * 60 * 24);
-    return Math.max(1, Math.ceil(diffDaysExact));
-  }, [currentAdm, isDischarged]);
-
   // Bed Rate Resolution (Exact configured rate or ₹200 / Day standard default)
   const bedRate = useMemo(() => {
     if (currentAdm?.billingDetails?.dailyRate !== undefined && Number(currentAdm.billingDetails.dailyRate) > 0) {
@@ -175,11 +171,32 @@ const IPDDischargeWorkspaceModal = ({
       currentAdm?.status === 'Discharged' ||
       currentAdm?.isDischarged === true ||
       admission?.status === 'Discharged' ||
-      admission?.isDischarged === true ||
-      liveAdmission?.status === 'Discharged' ||
-      liveAdmission?.isDischarged === true
+      admission?.isDischarged === true
     );
-  }, [currentAdm, admission, liveAdmission]);
+  }, [currentAdm, admission]);
+
+  // Robust check if doctor has finalized clinical summary and sent to reception
+  const isSentToReception = useMemo(() => {
+    if (isAlreadyDischarged) return true;
+    const checkTarget = (target) => {
+      if (!target) return false;
+      const statusCandidates = [
+        target.dischargeSummaryStatus,
+        target.raw?.dischargeSummaryStatus,
+        target.clinicalDischargeSummary?.status,
+        target.raw?.clinicalDischargeSummary?.status
+      ];
+      return statusCandidates.some(st => {
+        if (!st || typeof st !== 'string') return false;
+        const lower = st.trim().toLowerCase();
+        return lower === 'sent to reception' || lower === 'completed';
+      });
+    };
+    return (
+      checkTarget(currentAdm) ||
+      checkTarget(admission)
+    );
+  }, [isAlreadyDischarged, currentAdm, admission]);
 
   // ----------------------------------------------------
   // 1. Clinical Summary Form State
@@ -196,6 +213,28 @@ const IPDDischargeWorkspaceModal = ({
     nextReviewDate: '',
     followupAdvice: ''
   });
+
+  // Dynamic Stay Duration & Chargeable Days Calculation (From Admission Date to Current Discharge Date)
+  const stayDays = useMemo(() => {
+    if (!currentAdm?.admissionDate) return 1;
+    const admD = new Date(currentAdm.admissionDate);
+    if (isNaN(admD.getTime())) return 1;
+    const admDateMidnight = new Date(admD.getFullYear(), admD.getMonth(), admD.getDate()).getTime();
+
+    // Effective discharge date: user-selected clinicalForm.dischargeDate > currentAdm.dischargeDate > today
+    let disDateMidnight = new Date().setHours(0, 0, 0, 0);
+    const effectiveDischarge = clinicalForm?.dischargeDate || currentAdm?.dischargeDate || currentAdm?.clinicalDischargeSummary?.dischargeDate;
+    if (effectiveDischarge) {
+      const disD = new Date(effectiveDischarge);
+      if (!isNaN(disD.getTime())) {
+        disDateMidnight = new Date(disD.getFullYear(), disD.getMonth(), disD.getDate()).getTime();
+      }
+    }
+
+    const diffMs = Math.max(0, disDateMidnight - admDateMidnight);
+    const calendarDays = Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1; // inclusive of admission and discharge days (e.g. 24 Oct to 4 Nov = 12 days)
+    return Math.max(1, calendarDays);
+  }, [currentAdm?.admissionDate, currentAdm?.dischargeDate, currentAdm?.clinicalDischargeSummary?.dischargeDate, clinicalForm?.dischargeDate]);
 
   useEffect(() => {
     if (!currentAdm) return;
@@ -218,7 +257,7 @@ const IPDDischargeWorkspaceModal = ({
     const reviewDateStr = reviewDate.toISOString().split('T')[0];
 
     // Fetch discharge date and time ONLY if doctor has finalized & sent to reception or if already discharged
-    const isDoctorFinalized = currentAdm.dischargeSummaryStatus === 'Sent to Reception' || currentAdm.status === 'Discharged';
+    const isDoctorFinalized = isSentToReception || currentAdm.status === 'Discharged';
 
     let initialDischargeDate = '';
     let initialDischargeTime = '';
@@ -256,6 +295,7 @@ const IPDDischargeWorkspaceModal = ({
   // 2. IPD Charges Breakdown State & Table
   // ----------------------------------------------------
   const [chargesList, setChargesList] = useState([]);
+  const [currentChargesAdmissionId, setCurrentChargesAdmissionId] = useState(null);
   const [isEditingCharges, setIsEditingCharges] = useState(false);
 
   useEffect(() => {
@@ -263,13 +303,44 @@ const IPDDischargeWorkspaceModal = ({
     const bd = currentAdm.billingDetails || {};
 
     // Exact dynamic calculations based on stay days and configured rates:
-    // e.g. 5 days stay * ₹200/day bed charge = ₹1,000
+    // Bed charges: stay days * bed rate
     const calculatedBedAmount = bedRate * stayDays;
-    // Doctor consultation fee: flat consultation fee (default ₹200)
-    const initialDoctorFee = (bd.isCustomized && bd.consultationCharges !== undefined && Number(bd.consultationCharges) > 0)
-      ? Number(bd.consultationCharges)
-      : doctorRate;
-    const calculatedConsultAmount = initialDoctorFee;
+    // Daily doctor consultation fee: calculated from admission date to current discharge date * rate
+    const existingDoctorRow = chargesList.find(r => r.id === 'doctor');
+    const doctorFee = (existingDoctorRow && existingDoctorRow.rate !== undefined && existingDoctorRow.rate !== '')
+      ? Number(existingDoctorRow.rate)
+      : (bd.consultationRate !== undefined && Number(bd.consultationRate) > 0)
+        ? Number(bd.consultationRate)
+        : (bd.isCustomized && bd.consultationCharges !== undefined && Number(bd.consultationCharges) > 0 && stayDays > 0)
+          ? Math.round(Number(bd.consultationCharges) / stayDays) || doctorRate
+          : doctorRate;
+    const calculatedConsultAmount = Math.round(doctorFee * stayDays);
+
+    // If chargesList is already initialized for this admission, dynamically update stay-dependent rows (bed and doctor)
+    if (chargesList.length > 0 && currentChargesAdmissionId === targetId) {
+      setChargesList(prev => prev.map(row => {
+        if (row.id === 'bed') {
+          const currentRate = (row.rate !== undefined && row.rate !== '') ? Number(row.rate) : bedRate;
+          return {
+            ...row,
+            qtyDuration: `${stayDays} Days`,
+            rate: currentRate,
+            amount: Math.round(currentRate * stayDays)
+          };
+        }
+        if (row.id === 'doctor') {
+          const currentRate = (row.rate !== undefined && row.rate !== '') ? Number(row.rate) : doctorFee;
+          return {
+            ...row,
+            qtyDuration: `${stayDays} Days`,
+            rate: currentRate,
+            amount: Math.round(currentRate * stayDays)
+          };
+        }
+        return row;
+      }));
+      return;
+    }
 
     const rows = [
       {
@@ -287,65 +358,27 @@ const IPDDischargeWorkspaceModal = ({
         category: 'Doctor Consultation',
         icon: 'doctor',
         details: 'Daily Doctor Consultation & Rounds',
-        qtyDuration: '1 Consultation',
-        rate: initialDoctorFee,
-        rateText: String(initialDoctorFee),
+        qtyDuration: `${stayDays} Days`,
+        rate: doctorFee,
+        rateText: String(doctorFee),
         amount: calculatedConsultAmount
       }
     ];
 
-    const addedServiceNames = new Set();
+    // Aggregate all investigations & diagnostic billing items by normalized service name across rounds
+    const investigationMap = new Map();
 
-    // 1. Append actual investigation & service billing items from database
-    if (Array.isArray(bd.billingItems) && bd.billingItems.length > 0) {
-      bd.billingItems.forEach(item => {
-        const itemQty = Number(item.quantity) || 1;
-        const itemRate = Number(item.unitPrice || item.amount || 0);
-        const itemAmount = Number(item.amount) || (itemQty * itemRate);
-        const sName = item.serviceName || 'Diagnostic Service';
-        addedServiceNames.add(sName.trim().toLowerCase());
-
-        const isRad = (item.serviceCategory || '').toLowerCase().includes('radiology') ||
-                      (item.serviceCategory || '').toLowerCase().includes('imaging') ||
-                      sName.toLowerCase().includes('x-ray') ||
-                      sName.toLowerCase().includes('scan') ||
-                      sName.toLowerCase().includes('ultrasound') ||
-                      sName.toLowerCase().includes('mri') ||
-                      sName.toLowerCase().includes('ct');
-        const isLab = (item.serviceCategory || '').toLowerCase().includes('lab') ||
-                      sName.toLowerCase().includes('test') ||
-                      sName.toLowerCase().includes('blood') ||
-                      sName.toLowerCase().includes('urine') ||
-                      sName.toLowerCase().includes('thyroid') ||
-                      sName.toLowerCase().includes('diabetes');
-
-        const categoryName = isRad ? 'Radiology' : (isLab ? 'Laboratory' : (item.serviceCategory || 'Other Services'));
-        const iconType = isRad ? 'scan' : (isLab ? 'lab' : 'other');
-
-        rows.push({
-          id: item._id || `billing_item_${Math.random()}`,
-          category: categoryName,
-          icon: iconType,
-          details: sName,
-          qtyDuration: String(itemQty),
-          rate: itemRate,
-          rateText: String(itemRate),
-          amount: itemAmount,
-          isCustom: true
-        });
-      });
-    }
-
-    // 2. Also scan currentAdm.dailyReviews for any investigations ordered in rounds
+    // 1. Scan dailyReviews for all investigations ordered across doctor rounds
     if (Array.isArray(currentAdm.dailyReviews)) {
       currentAdm.dailyReviews.forEach(rev => {
         if (Array.isArray(rev.investigations)) {
           rev.investigations.forEach(inv => {
             const invName = inv.name || inv.serviceName;
-            if (!invName || addedServiceNames.has(invName.trim().toLowerCase())) return;
-            addedServiceNames.add(invName.trim().toLowerCase());
-
+            if (!invName) return;
+            const key = invName.trim().toLowerCase();
+            const invQty = Number(inv.quantity) || 1;
             const invPrice = Number(inv.price || inv.unitPrice || inv.amount || 0);
+
             const isRad = (inv.serviceType || inv.category || '').toLowerCase().includes('radiology') ||
                           (inv.serviceType || inv.category || '').toLowerCase().includes('imaging') ||
                           invName.toLowerCase().includes('x-ray') ||
@@ -354,19 +387,98 @@ const IPDDischargeWorkspaceModal = ({
                           invName.toLowerCase().includes('mri') ||
                           invName.toLowerCase().includes('ct');
 
-            rows.push({
-              id: inv._id || inv.serviceId || `review_inv_${Math.random()}`,
-              category: isRad ? 'Radiology' : 'Laboratory',
-              icon: isRad ? 'scan' : 'lab',
-              details: invName,
-              qtyDuration: '1',
-              rate: invPrice,
-              rateText: String(invPrice),
-              amount: invPrice,
-              isCustom: true
-            });
+            if (investigationMap.has(key)) {
+              const existing = investigationMap.get(key);
+              existing.quantity += invQty;
+              if (invPrice > 0 && (!existing.rate || existing.rate === 0)) {
+                existing.rate = invPrice;
+                existing.rateText = String(invPrice);
+              }
+              existing.amount = existing.quantity * (Number(existing.rate) || 0);
+            } else {
+              investigationMap.set(key, {
+                id: inv._id || inv.serviceId || `review_inv_${key}`,
+                category: isRad ? 'Radiology' : 'Laboratory',
+                icon: isRad ? 'scan' : 'lab',
+                details: invName,
+                quantity: invQty,
+                rate: invPrice,
+                rateText: String(invPrice),
+                amount: invQty * invPrice,
+                isCustom: true
+              });
+            }
           });
         }
+      });
+    }
+
+    // 2. Scan bd.billingItems for any additional/manual items or higher recorded quantities
+    if (Array.isArray(bd.billingItems) && bd.billingItems.length > 0) {
+      bd.billingItems.forEach(item => {
+        const sName = item.serviceName || 'Diagnostic Service';
+        const key = sName.trim().toLowerCase();
+        const itemQty = Number(item.quantity) || 1;
+        const itemRate = Number(item.unitPrice || item.amount || 0);
+
+        if (investigationMap.has(key)) {
+          const existing = investigationMap.get(key);
+          if (itemRate > 0 && (!existing.rate || existing.rate === 0)) {
+            existing.rate = itemRate;
+            existing.rateText = String(itemRate);
+          }
+          if (item.isManual) {
+            existing.quantity += itemQty;
+          } else if (itemQty > existing.quantity) {
+            existing.quantity = itemQty;
+          }
+          existing.amount = existing.quantity * (Number(existing.rate) || 0);
+          if (item._id) existing.id = item._id;
+        } else {
+          const isRad = (item.serviceCategory || '').toLowerCase().includes('radiology') ||
+                        (item.serviceCategory || '').toLowerCase().includes('imaging') ||
+                        sName.toLowerCase().includes('x-ray') ||
+                        sName.toLowerCase().includes('scan') ||
+                        sName.toLowerCase().includes('ultrasound') ||
+                        sName.toLowerCase().includes('mri') ||
+                        sName.toLowerCase().includes('ct');
+          const isLab = (item.serviceCategory || '').toLowerCase().includes('lab') ||
+                        sName.toLowerCase().includes('test') ||
+                        sName.toLowerCase().includes('blood') ||
+                        sName.toLowerCase().includes('urine') ||
+                        sName.toLowerCase().includes('thyroid') ||
+                        sName.toLowerCase().includes('diabetes');
+
+          const categoryName = isRad ? 'Radiology' : (isLab ? 'Laboratory' : (item.serviceCategory || 'Other Services'));
+          const iconType = isRad ? 'scan' : (isLab ? 'lab' : 'other');
+
+          investigationMap.set(key, {
+            id: item._id || `billing_item_${Math.random()}`,
+            category: categoryName,
+            icon: iconType,
+            details: sName,
+            quantity: itemQty,
+            rate: itemRate,
+            rateText: String(itemRate),
+            amount: Number(item.amount) || (itemQty * itemRate),
+            isCustom: true
+          });
+        }
+      });
+    }
+
+    // 3. Append all consolidated investigation items into rows
+    for (const [key, invData] of investigationMap.entries()) {
+      rows.push({
+        id: invData.id,
+        category: invData.category,
+        icon: invData.icon,
+        details: invData.details,
+        qtyDuration: String(invData.quantity),
+        rate: invData.rate,
+        rateText: invData.rateText,
+        amount: invData.amount,
+        isCustom: true
       });
     }
 
@@ -402,6 +514,7 @@ const IPDDischargeWorkspaceModal = ({
     }
 
     setChargesList(rows);
+    setCurrentChargesAdmissionId(targetId);
   }, [currentAdm, bedRate, doctorRate, stayDays, wardName, bedNumber]);
 
   // Remove charge row handler
@@ -586,6 +699,9 @@ const IPDDischargeWorkspaceModal = ({
       const billingPayload = {
         bedCharges: chargesList.find(r => r.id === 'bed')?.amount || 0,
         consultationCharges: chargesList.find(r => r.id === 'doctor')?.amount || 0,
+        consultationRate: chargesList.find(r => r.id === 'doctor')?.rate || 0,
+        dailyRate: chargesList.find(r => r.id === 'bed')?.rate || bedRate,
+        chargeableDays: stayDays,
         labCharges: calculatedLab,
         medicationCharges: chargesList.find(r => r.id === 'meds')?.amount || 0,
         otherCharges: chargesList.filter(r => r.id !== 'bed' && r.id !== 'doctor' && r.id !== 'meds' && r.category !== 'Laboratory' && r.category !== 'Radiology' && r.category !== 'Lab / Diagnostics').reduce((sum, r) => sum + Number(r.amount || 0), 0),
@@ -619,6 +735,9 @@ const IPDDischargeWorkspaceModal = ({
   const handleSaveAndDischarge = async () => {
     if (isAlreadyDischarged) {
       return toast.info('This patient has already been discharged and settled.');
+    }
+    if (!isSentToReception) {
+      return toast.error("Cannot discharge: Doctor must finalize and click 'Save & Send to Reception' on the clinical summary first.");
     }
     if (!clinicalForm.finalDiagnosis.trim()) {
       return toast.error('Please enter the Final Diagnosis');
@@ -680,6 +799,9 @@ const IPDDischargeWorkspaceModal = ({
         billingDetails: {
           bedCharges: chargesList.find(r => r.id === 'bed')?.amount || 0,
           consultationCharges: chargesList.find(r => r.id === 'doctor')?.amount || 0,
+          consultationRate: chargesList.find(r => r.id === 'doctor')?.rate || 0,
+          dailyRate: chargesList.find(r => r.id === 'bed')?.rate || bedRate,
+          chargeableDays: stayDays,
           labCharges: chargesList
             .filter(r => r.category === 'Laboratory' || r.category === 'Radiology' || r.category === 'Lab / Diagnostics' || r.icon === 'lab' || r.icon === 'scan')
             .reduce((sum, r) => sum + Number(r.amount || 0), 0),
@@ -792,7 +914,7 @@ const IPDDischargeWorkspaceModal = ({
                 <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[2.5]" />
                 <span>Discharged & Settled</span>
               </span>
-            ) : currentAdm.dischargeSummaryStatus === 'Sent to Reception' ? (
+            ) : isSentToReception ? (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
                 <span>Pending Discharge (Doctor Finalized)</span>
@@ -901,6 +1023,19 @@ const IPDDischargeWorkspaceModal = ({
             </div>
           </div>
 
+          {/* Awaiting Doctor Discharge Summary Notice */}
+          {!isAlreadyDischarged && !isSentToReception && (
+            <div className="flex items-start gap-2.5 p-3.5 bg-amber-50/90 border border-amber-200 rounded-2xl text-amber-900 text-xs shadow-2xs">
+              <span className="text-base leading-none mt-0.5">⏳</span>
+              <div className="flex-1 space-y-0.5">
+                <span className="font-bold text-amber-950 block">Awaiting Doctor's Clinical Discharge Summary</span>
+                <p className="text-[11.5px] text-amber-800 leading-relaxed">
+                  The attending doctor has not yet finalized and sent the clinical discharge summary to reception. The <strong>Save &amp; Discharge</strong> button will automatically enable once the doctor clicks <strong>Save &amp; Send to Reception</strong>.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* ==================================================
               SECTION 1: CLINICAL SUMMARY (COLLAPSIBLE)
               ================================================== */}
@@ -929,7 +1064,7 @@ const IPDDischargeWorkspaceModal = ({
                       <label className="text-xs font-bold text-slate-700 block">
                         Date of Discharge & Time <span className="text-rose-500">*</span>
                       </label>
-                      {currentAdm.dischargeSummaryStatus === 'Sent to Reception' && (
+                      {isSentToReception && (
                         <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                           Doctor Finalized
                         </span>
@@ -1478,18 +1613,22 @@ const IPDDischargeWorkspaceModal = ({
             <button
               type="button"
               onClick={handleSaveAndDischarge}
-              disabled={isSubmitting || isAlreadyDischarged || remainingAmount > 0 || numAmountReceived < totalBillAmount}
+              disabled={isSubmitting || isAlreadyDischarged || !isSentToReception || remainingAmount > 0 || numAmountReceived < totalBillAmount}
               title={
                 isAlreadyDischarged
                   ? "Patient is already discharged"
-                  : remainingAmount > 0
-                    ? `Cannot discharge: Remaining balance of ₹${remainingAmount.toLocaleString('en-IN')} must be completed`
-                    : "Discharge patient and release bed"
+                  : !isSentToReception
+                    ? "Awaiting doctor clinical discharge summary. Doctor must click 'Save & Send to Reception' first."
+                    : remainingAmount > 0
+                      ? `Cannot discharge: Remaining balance of ₹${remainingAmount.toLocaleString('en-IN')} must be completed`
+                      : "Discharge patient and release bed"
               }
               className={`px-5 py-2 font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 ${
                 isAlreadyDischarged
                   ? 'bg-slate-200 text-slate-400 border border-slate-300 shadow-none cursor-not-allowed opacity-60 pointer-events-none'
-                  : 'bg-[#2F63F2] hover:bg-blue-700 active:bg-blue-800 text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed'
+                  : !isSentToReception
+                    ? 'bg-slate-200 text-slate-400 border border-slate-300 shadow-none cursor-not-allowed opacity-60'
+                    : 'bg-[#2F63F2] hover:bg-blue-700 active:bg-blue-800 text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed'
               }`}
             >
               <Check className="w-4 h-4 stroke-[2.5]" />

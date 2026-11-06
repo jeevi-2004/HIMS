@@ -253,7 +253,7 @@ const createHospital = async (req, res, next) => {
     const featureModules = {
       OPD: true,
       Appointments: true,
-      IPD: true,
+      IPD: false,
       Billing: true,
       Pharmacy: true,
       digitalPrescription: mode === 'FULL_DIGITAL',
@@ -864,7 +864,12 @@ const updateHospital = async (req, res, next) => {
   const { name, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo, opdOperationMode, planName, ipd_requested } = req.body;
   try {
     const updateData = { name, address, contactCountryCode, contactNumber, email, hospitalType, registrationNumber, gstNumber, ownerName, ownerCountryCode, ownerMobile, logo };
-    if (ipd_requested !== undefined) updateData.ipd_requested = Boolean(ipd_requested);
+    if (ipd_requested !== undefined) {
+      updateData.ipd_requested = Boolean(ipd_requested);
+      if (!ipd_requested) {
+        updateData['featureModules.IPD'] = false;
+      }
+    }
     if (opdOperationMode) {
       const mode = opdOperationMode === 'TOKEN_ONLY' ? 'TOKEN_ONLY' : 'FULL_DIGITAL';
       updateData.opdOperationMode = mode;
@@ -923,6 +928,9 @@ const toggleHospitalFeatures = async (req, res, next) => {
     const hospital = await Hospital.findById(id);
     if (!hospital) {
       return res.status(404).json({ success: false, message: 'Hospital not found' });
+    }
+    if (featureModules && (featureModules.IPD === true || featureModules['IPD'] === true) && !hospital.ipd_requested) {
+      return res.status(400).json({ success: false, message: 'Cannot enable IPD module because IPD was not requested during hospital registration.' });
     }
     hospital.featureModules = featureModules;
     await hospital.save();

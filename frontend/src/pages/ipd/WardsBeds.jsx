@@ -93,6 +93,8 @@ const WardsBeds = () => {
   const [editingWard, setEditingWard] = useState(null);
   const [isBedModalOpen, setIsBedModalOpen] = useState(false);
   const [statusMenuBedId, setStatusMenuBedId] = useState(null);
+  const [wardMenuId, setWardMenuId] = useState(null);
+  const [wardToDelete, setWardToDelete] = useState(null);
 
   // Ward Form State
   const [wardForm, setWardForm] = useState({
@@ -199,6 +201,23 @@ const WardsBeds = () => {
     },
     onError: (err) => {
       toast.error(err.response?.data?.message || 'Error updating ward details');
+    }
+  });
+
+  // Delete Ward Mutation
+  const deleteWardMutation = useMutation({
+    mutationFn: async (wardId) => {
+      return api.delete(`/ipd/wards/${wardId}`);
+    },
+    onSuccess: () => {
+      toast.success('Ward deleted successfully');
+      queryClient.invalidateQueries(['ipd-wards']);
+      queryClient.invalidateQueries(['ipd-beds']);
+      setWardToDelete(null);
+      setWardMenuId(null);
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.message || 'Error deleting ward');
     }
   });
 
@@ -321,6 +340,50 @@ const WardsBeds = () => {
     if (!bedForm.wardId) return toast.error('Please select a ward');
     if (!bedForm.bedNumber.trim()) return toast.error('Please enter bed number');
     createBedMutation.mutate(bedForm);
+  };
+
+  const getWardBaseRate = (w) => {
+    if (!w) return '';
+    if (w.dailyBaseRate !== undefined && w.dailyBaseRate !== null && w.dailyBaseRate !== '') {
+      return w.dailyBaseRate;
+    }
+    if (w.baseCharges !== undefined && w.baseCharges !== null && w.baseCharges !== '') {
+      return w.baseCharges;
+    }
+    return '';
+  };
+
+  const handleOpenCreateBed = () => {
+    setBedForm({
+      wardId: '',
+      bedNumber: '',
+      roomNumber: '',
+      bedType: 'STANDARD',
+      dailyCharge: '',
+      equipment: {
+        oxygen: false,
+        ventilator: false,
+        cardiacMonitor: false
+      }
+    });
+    setIsBedModalOpen(true);
+  };
+
+  const handleOpenCreateBedForWard = (targetWard) => {
+    const rate = getWardBaseRate(targetWard);
+    setBedForm({
+      wardId: targetWard?._id || '',
+      bedNumber: '',
+      roomNumber: '',
+      bedType: 'STANDARD',
+      dailyCharge: rate !== '' ? String(rate) : '',
+      equipment: {
+        oxygen: false,
+        ventilator: false,
+        cardiacMonitor: false
+      }
+    });
+    setIsBedModalOpen(true);
   };
 
   // Sort wards in ascending order (ward-1, ward-2, ward-3 etc.)
@@ -453,7 +516,7 @@ const WardsBeds = () => {
           </p>
         </div>
 
-        {/* Action Buttons: Add Ward & Add Bed */}
+        {/* Action Button: Add Ward */}
         <div className="flex items-center gap-2.5 self-start sm:self-auto shrink-0">
           <button
             type="button"
@@ -462,15 +525,6 @@ const WardsBeds = () => {
           >
             <Plus className="w-3.5 h-3.5 text-slate-700 stroke-[2.2]" />
             <span>Add Ward</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsBedModalOpen(true)}
-            className="inline-flex items-center justify-center gap-1.5 px-4 h-9 bg-[#2F63F2] hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-xs transition-colors cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5 text-white stroke-[2.2]" />
-            <span>Add Bed</span>
           </button>
         </div>
       </div>
@@ -606,16 +660,16 @@ const WardsBeds = () => {
             return (
               <div
                 key={ward._id}
-                className="bg-white rounded-2xl border border-slate-200/90 shadow-[0_1px_3px_rgba(0,0,0,0.04)] p-5 space-y-4"
+                className="relative bg-white rounded-2xl border border-slate-200/90 shadow-[0_1px_3px_rgba(0,0,0,0.04)] p-5 space-y-4"
               >
                 {/* Ward Header Row */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
+                  <div className="pr-8 sm:pr-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h2 className="text-base font-bold text-slate-900 tracking-tight">
                         {ward.name}
                       </h2>
-                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                      <span className="hidden sm:inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                         {wardCode}
                       </span>
                       <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
@@ -628,16 +682,16 @@ const WardsBeds = () => {
                     </p>
                   </div>
 
-                  {/* Bed status count badges & Edit button on right */}
+                  {/* Bed status count badges & actions on right */}
                   <div className="flex items-center gap-2 shrink-0 flex-wrap">
                     <button
                       type="button"
-                      onClick={() => handleOpenEditWard(ward)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:text-[#2F63F2] bg-white hover:bg-blue-50/70 border border-slate-200 hover:border-blue-200 rounded-lg shadow-2xs transition-all duration-150 cursor-pointer"
-                      title="Edit Ward Details (Floor, Base Rate)"
+                      onClick={() => handleOpenCreateBedForWard(ward)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold text-white bg-[#2F63F2] hover:bg-blue-700 active:bg-blue-800 rounded-lg shadow-2xs transition-all duration-150 cursor-pointer"
+                      title={`Add Bed to ${ward.name}`}
                     >
-                      <Pencil className="w-3.5 h-3.5 text-slate-500" />
-                      <span>Edit</span>
+                      <Plus className="w-3.5 h-3.5 text-white stroke-[2.2]" />
+                      <span>Bed</span>
                     </button>
                     <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                       {availableCount} Available
@@ -650,6 +704,51 @@ const WardsBeds = () => {
                         {cleaningCount} Cleaning
                       </span>
                     )}
+
+                    {/* Ward Three-Dot Dropdown Menu (Edit & Delete) - Top-right on mobile */}
+                    <div className="absolute top-4 sm:top-auto right-4 sm:right-auto sm:relative">
+                      <button
+                        type="button"
+                        onClick={() => setWardMenuId(wardMenuId === ward._id ? null : ward._id)}
+                        className="p-1.5 sm:p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg border border-slate-200 transition-colors cursor-pointer flex items-center justify-center bg-white shadow-2xs sm:shadow-none"
+                        title="Ward Options"
+                      >
+                        <MoreVertical className="w-3.5 h-3.5" />
+                      </button>
+
+                      {wardMenuId === ward._id && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-20 cursor-default"
+                            onClick={() => setWardMenuId(null)}
+                          />
+                          <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-30 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setWardMenuId(null);
+                                handleOpenEditWard(ward);
+                              }}
+                              className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-slate-700 font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                            >
+                              <Pencil className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                              <span>Edit</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setWardMenuId(null);
+                                setWardToDelete(ward);
+                              }}
+                              className="w-full text-left px-3 py-1.5 hover:bg-rose-50 text-rose-600 font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                              <span>Delete</span>
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -994,7 +1093,16 @@ const WardsBeds = () => {
               <select
                 required
                 value={bedForm.wardId}
-                onChange={(e) => setBedForm({ ...bedForm, wardId: e.target.value })}
+                onChange={(e) => {
+                  const selectedWardId = e.target.value;
+                  const selectedWard = wards.find(w => String(w._id) === String(selectedWardId));
+                  const rate = getWardBaseRate(selectedWard);
+                  setBedForm(prev => ({
+                    ...prev,
+                    wardId: selectedWardId,
+                    dailyCharge: rate !== '' ? String(rate) : prev.dailyCharge
+                  }));
+                }}
                 className="w-full appearance-none px-3.5 py-2 text-sm bg-white border border-slate-200 rounded-lg text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-[#2F63F2]/20 focus:border-[#2F63F2] cursor-pointer"
               >
                 <option value="">-- Choose Ward --</option>
@@ -1136,6 +1244,56 @@ const WardsBeds = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* ==================================================
+          MODAL 3: DELETE WARD CONFIRMATION POPUP
+          ================================================== */}
+      <Modal
+        isOpen={Boolean(wardToDelete)}
+        onClose={() => setWardToDelete(null)}
+        title={
+          <div className="flex items-center gap-2 text-rose-600">
+            <AlertCircle className="w-5 h-5 text-rose-600" />
+            <span>Delete Ward Confirmation</span>
+          </div>
+        }
+        size="sm"
+      >
+        <div className="space-y-4 pt-1">
+          <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-slate-800">
+            <p className="text-sm font-semibold text-rose-900">
+              Are you sure you want to delete ward <span className="font-bold underline">{wardToDelete?.name || ''}</span>?
+            </p>
+            <p className="text-xs text-rose-700 mt-1.5">
+              Please note: Wards with active beds cannot be deleted. If you proceed, this ward will be removed from active service.
+            </p>
+          </div>
+
+          <div className="flex justify-end items-center gap-2.5 pt-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setWardToDelete(null)}
+              disabled={deleteWardMutation.isPending}
+              className="px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (wardToDelete?._id) {
+                  deleteWardMutation.mutate(wardToDelete._id);
+                }
+              }}
+              disabled={deleteWardMutation.isPending}
+              className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-sm transition-colors cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-white" />
+              <span>{deleteWardMutation.isPending ? 'Deleting...' : 'Delete Ward'}</span>
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

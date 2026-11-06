@@ -91,14 +91,10 @@ const DoctorAppointments = () => {
           doctorName: app.doctorId?.name || app.doctorName || user?.name || 'Doctor',
           roomNumber: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
           roomNo: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
+          hospitalId: user?.hospitalId || user?.hospital?._id || user?.hospital,
           type: 'TriggerVoiceCall'
         };
         api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
-        voiceAnnouncement.enqueueAnnouncement({
-          ...callPayload,
-          patientObj: app,
-          broadcastOnly: true
-        });
       }
 
       await api.put(`/operations/appointments/${appId}/queue`, { queueStatus: 'In-Consultation', status: 'In Consultation' });
@@ -249,7 +245,7 @@ const DoctorAppointments = () => {
                 if (isCompletedVisit(visitSt)) {
                   return (
                     <button
-                      onClick={() => navigate(`/doctor/consultation/${row._id}`)}
+                      onClick={() => navigate(`/doctor/consultation/${row._id}?mode=view`)}
                       className="px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-1"
                     >
                       <Eye className="w-3 h-3" /> View Consultation

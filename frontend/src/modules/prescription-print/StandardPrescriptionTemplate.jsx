@@ -50,7 +50,7 @@ const StandardPrescriptionTemplate = ({ data, config }) => {
         </div>
       </div>
 
-      {/* 3. Clinical Summary (Chief Complaint & Diagnosis) */}
+      {/* 3. Clinical Summary (Chief Complaint, Vitals & Diagnosis) */}
       <div className="grid grid-cols-2 gap-4 text-xs">
         <div className="p-3 bg-slate-50/50 rounded-lg border border-slate-100 space-y-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Chief Complaint</span>
@@ -61,6 +61,48 @@ const StandardPrescriptionTemplate = ({ data, config }) => {
           <p className="font-extrabold text-slate-900">{clinical.diagnoses.join(', ')}</p>
         </div>
       </div>
+
+      {/* Vitals Summary Strip (when authentic measurements are recorded) */}
+      {clinical.vitals && (clinical.vitals.bpSystolic || clinical.vitals.pulse || clinical.vitals.temperature || clinical.vitals.spo2 || clinical.vitals.weight || clinical.vitals.height) && (
+        <div className="p-2.5 bg-slate-50/70 rounded-lg border border-slate-200/80 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs">
+          <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Vitals:</span>
+          {clinical.vitals.bpSystolic && (
+            <span className="font-medium text-slate-700">
+              <strong className="text-slate-900 font-bold">BP:</strong> {clinical.vitals.bpSystolic}/{clinical.vitals.bpDiastolic || '--'} mmHg
+            </span>
+          )}
+          {clinical.vitals.pulse && (
+            <span className="font-medium text-slate-700">
+              <strong className="text-slate-900 font-bold">Pulse:</strong> {clinical.vitals.pulse} bpm
+            </span>
+          )}
+          {clinical.vitals.temperature && (
+            <span className="font-medium text-slate-700">
+              <strong className="text-slate-900 font-bold">Temp:</strong> {clinical.vitals.temperature} °F
+            </span>
+          )}
+          {clinical.vitals.spo2 && (
+            <span className="font-medium text-slate-700">
+              <strong className="text-slate-900 font-bold">SpO₂:</strong> {clinical.vitals.spo2}%
+            </span>
+          )}
+          {clinical.vitals.weight && (
+            <span className="font-medium text-slate-700">
+              <strong className="text-slate-900 font-bold">Weight:</strong> {clinical.vitals.weight} kg
+            </span>
+          )}
+          {clinical.vitals.height && (
+            <span className="font-medium text-slate-700">
+              <strong className="text-slate-900 font-bold">Height:</strong> {clinical.vitals.height} cm
+            </span>
+          )}
+          {clinical.vitals.bmi && (
+            <span className="font-medium text-slate-700">
+              <strong className="text-slate-900 font-bold">BMI:</strong> {clinical.vitals.bmi}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* 4. Rx Medication Table */}
       <div className="space-y-2">

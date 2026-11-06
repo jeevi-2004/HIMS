@@ -287,12 +287,25 @@ const DoctorTodayQueue = () => {
     });
   }, [dateFilteredQueue]);
 
+  // Scheduled / Follow-up row contains patients ONLY if their scheduled date is TODAY
   const scheduledTodayQueue = useMemo(() => {
     return dateFilteredQueue.filter(a => {
       const st = getVisitStatus(a);
-      return st === VISIT_STATUSES.SCHEDULED;
+      if (st !== VISIT_STATUSES.SCHEDULED) return false;
+      const rawDate = a.date || a.createdAt;
+      let appDate = '';
+      if (typeof rawDate === 'string') {
+        appDate = rawDate.split('T')[0];
+      } else if (rawDate) {
+        try {
+          appDate = new Date(rawDate).toISOString().split('T')[0];
+        } catch (e) {
+          appDate = '';
+        }
+      }
+      return appDate === todayStr;
     });
-  }, [dateFilteredQueue]);
+  }, [dateFilteredQueue, todayStr]);
 
   const enableEmergency = billingSettings?.enableEmergencyModule !== false;
 
@@ -558,14 +571,10 @@ const DoctorTodayQueue = () => {
           doctorName: app.doctorId?.name || app.doctorName || user?.name || 'Doctor',
           roomNumber: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
           roomNo: app.doctorId?.roomNo || app.doctorId?.doctorProfile?.roomNo || app.doctorId?.doctorProfile?.roomNumber || app.roomNumber || 'Consultation Room',
+          hospitalId: user?.hospitalId || user?.hospital?._id || user?.hospital,
           type: 'TriggerVoiceCall'
         };
         api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
-        voiceAnnouncement.enqueueAnnouncement({
-          ...callPayload,
-          patientObj: app,
-          broadcastOnly: true
-        });
       }
 
       await api.put(`/operations/appointments/${appId}/queue`, { status: 'In Consultation', queueStatus: 'In-Consultation' });
@@ -677,15 +686,19 @@ const DoctorTodayQueue = () => {
   const isIpdEnabled = Boolean(isIpdAvailable(user?.hospital || user));
 
   const handleRecallVoice = (row) => {
-    voiceAnnouncement.enqueueAnnouncement({
+    const callPayload = {
       tokenNumber: row.tokenNumber,
+      tokenNo: row.tokenNumber,
       patientName: row.patientId?.name || 'Patient',
       doctorName: row.doctorId?.name || row.doctorName || user?.name || 'Doctor',
       roomNumber: row.doctorId?.roomNumber || row.roomNumber || '',
+      roomNo: row.doctorId?.roomNumber || row.roomNumber || '',
+      hospitalId: user?.hospitalId || user?.hospital?._id || user?.hospital,
       patientObj: row,
       isRepeat: true,
-      broadcastOnly: true
-    });
+      type: 'TriggerVoiceCall'
+    };
+    api.post('/workflow/events/trigger-call', callPayload).catch(() => {});
     toast.success(`📢 Re-calling Token #${row.tokenNumber} at Reception`);
   };
 
@@ -707,14 +720,10 @@ const DoctorTodayQueue = () => {
           patientName: row.patientId?.name || 'Patient',
           doctorName: row.doctorId?.name || row.doctorName || user?.name || 'Doctor',
           roomNumber: row.doctorId?.roomNumber || row.roomNumber || '',
+          hospitalId: user?.hospitalId || user?.hospital?._id || user?.hospital,
           type: 'TriggerVoiceCall'
         };
         api.post('/workflow/events/trigger-call', callPayload).catch(err => console.error('Failed to trigger remote call:', err));
-        voiceAnnouncement.enqueueAnnouncement({
-          ...callPayload,
-          patientObj: row,
-          broadcastOnly: true
-        });
         api.put(`/operations/appointments/${row._id}/queue`, { status: 'Completed', queueStatus: 'Completed' })
           .then(() => {
             toast.success(`✓ Token #${row.tokenNumber} Accepted & Completed! Voice call sent to Reception desk.`);
@@ -923,7 +932,7 @@ const DoctorTodayQueue = () => {
     {
       label: 'View Prescription Pad',
       icon: FileText,
-      onClick: (row) => navigate(`/doctor/consultation/${row._id}`),
+      onClick: (row) => navigate(`/doctor/consultation/${row._id}?mode=view`),
       show: (row) => {
         if (isTokenOnlyPlan) return false;
         const visitSt = getVisitStatus(row);
@@ -960,6 +969,187 @@ const DoctorTodayQueue = () => {
     queryClient,
     refetch
   ]);
+
+  // Mobile card renderer for Today's Queue with clean alignment & single-border container
+  const renderTodayQueueMobileCard = (row, idx) => {
+    const isEmg = row.isEmergency || row.priorityLevel === 'EMERGENCY' || row.priority === 'EMERGENCY' || String(row.tokenNumber || '').startsWith('EMG');
+    const patientName = row.patientId?.name || 'Walk-in Patient';
+    const p = row.patientId || {};
+    const age = p.age || row.age;
+    const gender = p.gender || row.gender;
+    const bloodGroup = p.bloodGroup || row.bloodGroup || row.patientBloodGroup;
+    const genderLetter = gender ? (gender.length === 1 ? gender.toUpperCase() : gender.charAt(0).toUpperCase()) : '';
+    const ageGenderText = age ? `${age} yrs / ${genderLetter || gender}` : (genderLetter || '—');
+
+    const rawDoc = row.doctorId?.name || row.doctorName || user?.name || '';
+    const cleanDoc = String(rawDoc).replace(/^(Dr\.?\s*)+/i, '').trim();
+    const doctorDisplay = cleanDoc ? `Dr. ${cleanDoc}` : 'Dr. On Duty';
+
+    const visitSt = getVisitStatus(row);
+    const appSt = (row.status || row.queueStatus || '').toLowerCase();
+
+    const renderStatusBadge = () => {
+      if (visitSt === VISIT_STATUSES.IN_CONSULTATION || appSt === 'in consultation' || appSt === 'in-consultation') {
+        return (
+          <span className="text-[10px] font-bold border border-purple-200 bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg uppercase tracking-wider inline-block">
+            In Consultation
+          </span>
+        );
+      }
+      if (isCompletedVisit(visitSt) || appSt === 'completed' || appSt === 'sent to pharmacy' || appSt === 'sent_to_pharmacy') {
+        return (
+          <span className="text-[10px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-lg uppercase tracking-wider inline-block">
+            Completed
+          </span>
+        );
+      }
+      if (appSt === 'cancelled') {
+        return (
+          <span className="text-[10px] font-bold border border-slate-200 bg-slate-100 text-slate-600 px-2.5 py-1 rounded-lg uppercase tracking-wider inline-block">
+            Cancelled
+          </span>
+        );
+      }
+      if (visitSt === VISIT_STATUSES.SKIPPED || appSt === 'skipped') {
+        return (
+          <span className="text-[10px] font-bold border border-amber-200 bg-amber-50 text-amber-700 px-2.5 py-1 rounded-lg uppercase tracking-wider inline-block">
+            Skipped
+          </span>
+        );
+      }
+      if (visitSt === VISIT_STATUSES.NO_SHOW || appSt === 'no show') {
+        return (
+          <span className="text-[10px] font-extrabold border border-rose-200 bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg uppercase tracking-wider inline-block">
+            No Show
+          </span>
+        );
+      }
+      return (
+        <span className="text-[10px] font-bold border border-blue-200 bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg uppercase tracking-wider inline-block">
+          Waiting
+        </span>
+      );
+    };
+
+    const visibleActions = tableActions.filter(act => !act.show || act.show(row));
+
+    return (
+      <div
+        key={row._id || row.id || idx}
+        className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 shadow-xs text-left font-sans transition-all hover:shadow-md"
+      >
+        {/* Top Header: Token (Left) vs Patient (Right) */}
+        <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
+          <div className="flex flex-col items-start gap-1">
+            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Token</span>
+            <span className={`font-bold font-mono px-2.5 py-1 rounded-lg border text-xs inline-block ${
+              isEmg ? 'text-rose-700 bg-rose-100/80 border-rose-300 ring-2 ring-rose-500/20 font-extrabold' : 'text-[#2F63F2] bg-blue-50 border-blue-200'
+            }`}>
+              #{row.tokenNumber || 'N/A'}
+            </span>
+          </div>
+          <div className="flex flex-col items-end text-right gap-1">
+            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Patient</span>
+            <button
+              type="button"
+              onClick={() => { setSelectedApp(row); setIsPatientDetailOpen(true); }}
+              className="font-bold text-slate-900 text-sm hover:text-[#2F63F2] hover:underline cursor-pointer text-right transition-colors"
+              title="Click to view Patient Medical History"
+            >
+              {patientName}
+            </button>
+          </div>
+        </div>
+
+        {/* Patient Details List with Clean Right-Aligned Values */}
+        <div className="space-y-2 py-0.5">
+          {/* Age / Gender */}
+          <div className="flex justify-between items-center text-xs py-0.5">
+            <span className="text-[11px] font-medium text-slate-500 shrink-0">Age / Gender</span>
+            <div className="flex items-center gap-1.5 font-semibold text-slate-800 text-right">
+              <span>{ageGenderText}</span>
+              {bloodGroup && bloodGroup !== 'Unknown' && bloodGroup !== 'N/A' && bloodGroup !== '—' && (
+                <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#fef2f2] border border-[#fecdd3] text-[#e11d48] leading-tight shadow-2xs">
+                  {bloodGroup}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Doctor */}
+          <div className="flex justify-between items-center text-xs py-0.5">
+            <span className="text-[11px] font-medium text-slate-500 shrink-0">Doctor</span>
+            <div className="text-slate-800 font-semibold text-right text-xs">
+              {doctorDisplay}
+            </div>
+          </div>
+
+          {/* Appointment Time */}
+          <div className="flex justify-between items-center text-xs py-0.5">
+            <span className="text-[11px] font-medium text-slate-500 shrink-0">Appointment Time</span>
+            <div className="font-mono text-xs font-semibold text-slate-700 text-right">
+              {row.time || '-'}
+            </div>
+          </div>
+
+          {/* Visit Status */}
+          <div className="flex justify-between items-center text-xs py-0.5">
+            <span className="text-[11px] font-medium text-slate-500 shrink-0">Visit Status</span>
+            <div className="text-right">
+              {renderStatusBadge()}
+            </div>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        {visibleActions.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+            {visibleActions.map((act, aIdx) => {
+              const actLabel = typeof act.label === 'function' ? act.label(row) : act.label;
+              const isDisabled = typeof act.disabled === 'function' ? act.disabled(row) : !!act.disabled;
+              const labelLower = String(actLabel || '').toLowerCase();
+              
+              let btnStyle = 'px-3 py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all border min-h-[42px] cursor-pointer ';
+              if (act.isPrimary || labelLower.includes('start') || labelLower.includes('accept') || labelLower.includes('recall')) {
+                btnStyle += 'bg-[#3563F6] text-white border-[#3563F6] hover:bg-blue-700 shadow-xs';
+              } else if (labelLower.includes('view') || act.variant === 'view') {
+                btnStyle += 'border-[#3563F6] text-[#3563F6] bg-blue-50/50 hover:bg-blue-100/70';
+              } else if (labelLower.includes('skip') || act.variant === 'amber') {
+                btnStyle += 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100';
+              } else if (labelLower.includes('complete')) {
+                btnStyle += 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 shadow-xs';
+              } else {
+                btnStyle += 'border-slate-200 text-slate-700 bg-white hover:bg-slate-50';
+              }
+
+              if (isDisabled) {
+                btnStyle += ' opacity-50 cursor-not-allowed';
+              }
+
+              const isOddLast = visibleActions.length % 2 !== 0 && aIdx === visibleActions.length - 1;
+              const sizingClass = isOddLast ? 'w-full flex-auto' : 'flex-1 min-w-[calc(50%-6px)]';
+
+              return (
+                <button
+                  key={aIdx}
+                  type="button"
+                  disabled={isDisabled}
+                  onClick={() => !isDisabled && act.onClick(row)}
+                  className={`${btnStyle} ${sizingClass}`}
+                  title={actLabel}
+                >
+                  {typeof act.icon === 'function'
+                    ? React.createElement(act.icon, { className: 'w-3.5 h-3.5' })
+                    : (React.isValidElement(act.icon) ? act.icon : null)}
+                  <span>{actLabel}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6 text-left px-4 sm:px-6 py-5 bg-[#F8FAFC] min-h-screen">
@@ -1174,12 +1364,13 @@ const DoctorTodayQueue = () => {
 
             {/* CASE 1: SINGLE-DAY VIEW (From Date == To Date) */}
             {!isMultiDayView && currentDisplayList.length > 0 && (
-              <div className="border border-[#E5E7EB] rounded-[16px] overflow-hidden bg-white shadow-xs">
+              <div className="border-0 sm:border border-[#E5E7EB] rounded-none sm:rounded-[16px] overflow-visible sm:overflow-hidden bg-transparent sm:bg-white shadow-none sm:shadow-xs">
                 <Table
                   headers={tableHeaders}
                   data={currentDisplayList}
                   actions={tableActions}
                   loading={queueLoading}
+                  renderMobileCard={renderTodayQueueMobileCard}
                 />
               </div>
             )}
@@ -1208,12 +1399,13 @@ const DoctorTodayQueue = () => {
                     </div>
 
                     {/* GROUP PATIENT TABLE */}
-                    <div className="border border-[#E5E7EB] rounded-[16px] overflow-hidden bg-white shadow-xs">
+                    <div className="border-0 sm:border border-[#E5E7EB] rounded-none sm:rounded-[16px] overflow-visible sm:overflow-hidden bg-transparent sm:bg-white shadow-none sm:shadow-xs">
                       <Table
                         headers={tableHeaders}
                         data={group.patients}
                         actions={tableActions}
                         loading={false}
+                        renderMobileCard={renderTodayQueueMobileCard}
                       />
                     </div>
                   </div>
